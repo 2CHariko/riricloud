@@ -1,17 +1,26 @@
 import { Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import * as net from 'node:net';
+import * as tls from 'node:tls';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../system/settings.service';
 import { sanitizeInboundParams } from '../common/inbound';
 import {
+  INTERNAL_SPEEDTEST_EMAIL,
   INTERNAL_SPEEDTEST_SECRET,
   INTERNAL_SPEEDTEST_UUID,
   type ProtocolType
 } from '../common/constants';
-import { buildSingboxOutbound, type SubEntry, type SubLine, type SubUser } from '../subscription/builders';
+import {
+  buildSingboxOutbound,
+  buildShadowtlsTransportOutbound,
+  type SubEntry,
+  type SubLine,
+  type SubUser
+} from '../subscription/builders';
 
 export interface SpeedTestStage {
   id: 'master_ready' | 'entry_handshake' | 'relay_transit' | 'target_http';
@@ -93,12 +102,21 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * 测试单条线路
+   * 测试单条线路（严格全链路模式：任一阶段失败均判定为未跑通，不保留降级成功或伪造延迟）
    */
   async testLine(lineId: string): Promise<SpeedTestExecutionResult> {
     const line = await this.prisma.line.findUnique({
       where: { id: lineId },
-      include: { entryNode: true, landingNode: true, targetLine: { include: { entryNode: true, landingNode: true } } }
+      include: {
+        entryNode: true,
+        landingNode: true,
+        targetLine: {
+          include: {
+            entryNode: true,
+            landingNode: true
+          }
+        }
+      }
     });
 
     if (!line) {
@@ -146,17 +164,27 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     let latencyMs: number | null = null;
     let status: 'SUCCESS' | 'TIMEOUT' | 'ERROR' = 'ERROR';
     let message = '';
-    let mode: 'END_TO_END' | 'TCP_HANDSHAKE' = 'TCP_HANDSHAKE';
+    const mode: 'END_TO_END' | 'TCP_HANDSHAKE' = 'END_TO_END';
 
     // 阶段一：主控探测引擎准备
     const singboxBin = await this.resolveSingboxBinary();
-    stages.push({
-      id: 'master_ready',
-      name: '主控探测引擎',
-      target: 'Master 服务端',
-      status: 'SUCCESS',
-      message: singboxBin ? 'Sing-box 探针引擎就绪' : '未检测到 Sing-box 内核，将采用 TCP 握手探测'
-    });
+    if (singboxBin) {
+      stages.push({
+        id: 'master_ready',
+        name: '主控探测引擎',
+        target: 'Master 服务端',
+        status: 'SUCCESS',
+        message: 'Sing-box 探针引擎就绪'
+      });
+    } else {
+      stages.push({
+        id: 'master_ready',
+        name: '主控探测引擎',
+        target: 'Master 服务端',
+        status: 'FAILED',
+        message: '未检测到 Sing-box 探针内核，无法执行端到端代理拨测'
+      });
+    }
 
     // 阶段二：入口节点网络握手（TCP / UDP）
     const isUdpOnly = this.isUdpOnlyProtocol(line.protocolType);
@@ -169,7 +197,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
         name: '入口网络联通',
         target: `${serverHost}:${serverPort}`,
         status: 'SKIPPED',
-        message: `纯 UDP 协议（${line.protocolType}）不建立 TCP 握手`
+        message: `纯 UDP 协议（${line.protocolType}）跳过 TCP 握手，由端到端阶段直接验证 QUIC 连通性`
       });
     } else {
       try {
@@ -189,68 +217,128 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           name: '入口网络握手',
           target: `${serverHost}:${serverPort}`,
           status: 'FAILED',
-          message: err instanceof Error ? err.message : String(err)
+          message: `入口连接失败: ${err instanceof Error ? err.message : String(err)}`
         });
       }
     }
 
     // 阶段三：中继链路状态判定（若为中继线路）
+    let relayOk = true;
+    let relayErrMessage = '';
     if (isRelay) {
       if (line.relayMode === 'TARGET_LINE') {
-        if (line.targetLine) {
-          stages.push({
-            id: 'relay_transit',
-            name: '中继桥接目标',
-            target: `${line.targetLine.entryNode.name} (${line.targetLine.protocolType}:${line.targetLine.entryPort})`,
-            status: 'SUCCESS',
-            message: `桥接目标: [${line.targetLine.entryNode.name}] ${line.targetLine.name}`
-          });
-        } else {
+        if (!line.targetLine) {
+          relayOk = false;
+          relayErrMessage = '未配置或找不到目标桥接线路';
           stages.push({
             id: 'relay_transit',
             name: '中继桥接目标',
             target: '未绑定目标线路',
             status: 'FAILED',
-            message: '未配置或找不到目标桥接线路'
+            message: relayErrMessage
+          });
+        } else if (line.targetLine.status !== 'ACTIVE') {
+          relayOk = false;
+          relayErrMessage = `桥接目标线路 [${line.targetLine.name}] 未启用 (${line.targetLine.status})`;
+          stages.push({
+            id: 'relay_transit',
+            name: '中继桥接目标',
+            target: `${line.targetLine.entryNode.name} (${line.targetLine.protocolType}:${line.targetLine.entryPort})`,
+            status: 'FAILED',
+            message: relayErrMessage
+          });
+        } else if (line.targetLine.entryNode?.status && line.targetLine.entryNode.status !== 'ONLINE') {
+          relayOk = false;
+          relayErrMessage = `桥接目标入口节点 [${line.targetLine.entryNode.name}] 离线 (${line.targetLine.entryNode.status})`;
+          stages.push({
+            id: 'relay_transit',
+            name: '中继桥接目标',
+            target: `${line.targetLine.entryNode.name} (${line.targetLine.protocolType}:${line.targetLine.entryPort})`,
+            status: 'FAILED',
+            message: relayErrMessage
+          });
+        } else {
+          stages.push({
+            id: 'relay_transit',
+            name: '中继桥接目标',
+            target: `${line.targetLine.entryNode.name} (${line.targetLine.protocolType}:${line.targetLine.entryPort})`,
+            status: 'SUCCESS',
+            message: `桥接目标就绪: [${line.targetLine.entryNode.name}] ${line.targetLine.name}`
           });
         }
       } else if (line.landingNode) {
-        const isNat = (line.landingNode as { reachability?: string }).reachability === 'NAT';
-        stages.push({
-          id: 'relay_transit',
-          name: '中继落地转发',
-          target: `${line.landingNode.name} (${line.landingNode.serverHost}:${line.landingPort ?? '—'})`,
-          status: 'SUCCESS',
-          message: isNat
-            ? `反向隧道穿透落地（模式: ${line.relayMode === 'BLIND_FORWARD' ? '盲转发' : '协议代理'}）`
-            : `公网中继转发（模式: ${line.relayMode === 'BLIND_FORWARD' ? '盲转发' : '协议代理'}）`
-        });
+        if (line.landingNode.status && line.landingNode.status !== 'ONLINE') {
+          relayOk = false;
+          relayErrMessage = `落地节点 [${line.landingNode.name}] 离线 (${line.landingNode.status})`;
+          stages.push({
+            id: 'relay_transit',
+            name: '中继落地转发',
+            target: `${line.landingNode.name} (${line.landingNode.serverHost}:${line.landingPort ?? '—'})`,
+            status: 'FAILED',
+            message: relayErrMessage
+          });
+        } else {
+          const isNat = (line.landingNode as { reachability?: string }).reachability === 'NAT';
+          stages.push({
+            id: 'relay_transit',
+            name: '中继落地转发',
+            target: `${line.landingNode.name} (${line.landingNode.serverHost}:${line.landingPort ?? '—'})`,
+            status: 'SUCCESS',
+            message: isNat
+              ? `反向隧道穿透落地就绪（节点在线，模式: ${line.relayMode === 'BLIND_FORWARD' ? '盲转发' : '协议代理'}）`
+              : `公网中继转发就绪（节点在线，模式: ${line.relayMode === 'BLIND_FORWARD' ? '盲转发' : '协议代理'}）`
+          });
+        }
       } else {
+        relayOk = false;
+        relayErrMessage = '未配置或找不到落地节点';
         stages.push({
           id: 'relay_transit',
           name: '中继落地转发',
           target: '未绑定落地节点',
           status: 'FAILED',
-          message: '未配置或找不到落地节点'
+          message: relayErrMessage
         });
       }
     }
 
     // 阶段四：测试目标端到端请求
-    if (singboxBin) {
+    if (!singboxBin) {
+      stages.push({
+        id: 'target_http',
+        name: '端到端请求',
+        target: targetUrl,
+        status: 'FAILED',
+        message: '因主控缺少 Sing-box 探针内核，无法发起端到端代理请求'
+      });
+    } else if (tcpErr) {
+      stages.push({
+        id: 'target_http',
+        name: '端到端请求',
+        target: targetUrl,
+        status: 'FAILED',
+        message: `前置入口握手失败，终止端到端探测 (${tcpErr instanceof Error ? tcpErr.message : String(tcpErr)})`
+      });
+    } else if (isRelay && !relayOk) {
+      stages.push({
+        id: 'target_http',
+        name: '端到端请求',
+        target: targetUrl,
+        status: 'FAILED',
+        message: `前置中继链路异常，终止端到端探测 (${relayErrMessage})`
+      });
+    } else {
       try {
-        const e2eResult = await this.runSingboxProbe(singboxBin, line, targetUrl, timeoutMs);
-        latencyMs = e2eResult;
-        status = 'SUCCESS';
-        message = `204 OK (端到端 ${latencyMs}ms)`;
-        mode = 'END_TO_END';
+        const rawE2e = await this.runSingboxProbe(singboxBin, line, targetUrl, timeoutMs);
+        const e2eLatency = typeof rawE2e === 'number' ? rawE2e : rawE2e.latencyMs;
+        const e2eStatusCode = typeof rawE2e === 'object' && rawE2e && 'statusCode' in rawE2e ? rawE2e.statusCode : 204;
         stages.push({
           id: 'target_http',
           name: '端到端请求',
           target: targetUrl,
           status: 'SUCCESS',
-          latencyMs: e2eResult,
-          message: `HTTP 204 No Content (往返 ${e2eResult}ms)`
+          latencyMs: e2eLatency,
+          message: `HTTP ${e2eStatusCode} OK (往返 ${e2eLatency}ms)`
         });
       } catch (e2eErr) {
         stages.push({
@@ -260,56 +348,22 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           status: 'FAILED',
           message: `代理请求失败: ${e2eErr instanceof Error ? e2eErr.message : String(e2eErr)}`
         });
+      }
+    }
 
-        if (isUdpOnly) {
-          // 纯 UDP 协议无法通过 TCP 握手探测，直接如实反映端到端探测失败诊断，避免误报 ECONNREFUSED
-          status = this.isTimeoutError(e2eErr) ? 'TIMEOUT' : 'ERROR';
-          message = e2eErr instanceof Error ? e2eErr.message : String(e2eErr);
-          mode = 'END_TO_END';
-        } else {
-          // 端到端失败后，TCP 协议尝试 TCP 握手降级测试以区分为完全失联还是仅端到端异常
-          if (tcpLatency !== null) {
-            latencyMs = tcpLatency;
-            status = 'SUCCESS';
-            message = `TCP 握手 (${tcpLatency}ms, 端到端未就绪: ${e2eErr instanceof Error ? e2eErr.message : String(e2eErr)})`;
-            mode = 'TCP_HANDSHAKE';
-          } else {
-            status = this.isTimeoutError(tcpErr || e2eErr) ? 'TIMEOUT' : 'ERROR';
-            const finalErr = tcpErr || e2eErr;
-            message = finalErr instanceof Error ? finalErr.message : String(finalErr);
-          }
-        }
-      }
+    // 综合判定：全链路所有必要阶段 100% 跑通才算 SUCCESS；任一阶段失败则综合延迟置空为 null
+    const failedStage = stages.find((s) => s.status === 'FAILED');
+    const targetStage = stages.find((s) => s.id === 'target_http');
+
+    if (!failedStage && targetStage?.status === 'SUCCESS' && targetStage.latencyMs != null) {
+      status = 'SUCCESS';
+      latencyMs = targetStage.latencyMs;
+      message = `204 OK (端到端 ${latencyMs}ms)`;
     } else {
-      if (isUdpOnly) {
-        status = 'ERROR';
-        message = '未检测到 sing-box 内核，且协议为纯 UDP（Hysteria 2/TUIC），不支持 TCP 握手降级探测';
-        mode = 'END_TO_END';
-        stages.push({
-          id: 'target_http',
-          name: '端到端请求',
-          target: targetUrl,
-          status: 'SKIPPED',
-          message: '未配置 Sing-box 内核，纯 UDP 协议跳过端到端探测'
-        });
-      } else {
-        if (tcpLatency !== null) {
-          latencyMs = tcpLatency;
-          status = 'SUCCESS';
-          message = `TCP 握手 (${tcpLatency}ms)`;
-          mode = 'TCP_HANDSHAKE';
-        } else {
-          status = this.isTimeoutError(tcpErr) ? 'TIMEOUT' : 'ERROR';
-          message = tcpErr instanceof Error ? tcpErr.message : String(tcpErr);
-        }
-        stages.push({
-          id: 'target_http',
-          name: '端到端请求',
-          target: targetUrl,
-          status: 'SKIPPED',
-          message: '未检测到 Sing-box 内核，跳过端到端探测（采用入口 TCP 握手延时）'
-        });
-      }
+      latencyMs = null;
+      const firstFailure = failedStage?.message || '链路测速未全量跑通';
+      status = this.isTimeoutError(firstFailure) ? 'TIMEOUT' : 'ERROR';
+      message = firstFailure;
     }
 
     if (status !== 'SUCCESS' && line.entryNode?.isLocal) {
@@ -392,7 +446,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
       const socket = net.createConnection({ host, port, timeout: timeoutMs });
 
       socket.once('connect', () => {
-        const latency = Date.now() - started;
+        const latency = Math.max(1, Date.now() - started);
         socket.destroy();
         resolve(latency);
       });
@@ -405,6 +459,25 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
       socket.once('error', (err) => {
         socket.destroy();
         reject(err);
+      });
+    });
+  }
+
+  /**
+   * 获取本地随机可用端口
+   */
+  private getAvailableLocalPort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer();
+      server.unref();
+      server.on('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        const port = typeof addr === 'object' && addr ? addr.port : 0;
+        server.close(() => {
+          if (port > 0) resolve(port);
+          else reject(new Error('无法分配本地临时探测端口'));
+        });
       });
     });
   }
@@ -431,7 +504,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     },
     targetUrl: string,
     timeoutMs: number
-  ): Promise<number> {
+  ): Promise<{ latencyMs: number; statusCode: number }> {
     const subLine: SubLine = {
       id: line.id,
       name: line.name,
@@ -445,7 +518,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     };
 
     const subEntry: SubEntry = {
-      label: line.name,
+      label: 'probe-out',
       node: {
         name: line.landingNode?.name ?? line.entryNode.name,
         serverHost: line.landingNode?.serverHost ?? line.entryNode.serverHost,
@@ -453,7 +526,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
       },
       inbound: {
         type: line.protocolType as ProtocolType,
-        tag: `probe-${line.id}`,
+        tag: 'probe-out',
         port: subLine.serverPort,
         params: subLine.params ?? {}
       },
@@ -462,16 +535,24 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
 
     const probeUser: SubUser = {
       uuid: INTERNAL_SPEEDTEST_UUID,
+      email: INTERNAL_SPEEDTEST_EMAIL,
       credential: INTERNAL_SPEEDTEST_SECRET
     };
 
     const outboundConfig = buildSingboxOutbound(probeUser, subEntry);
+    if (!outboundConfig || Object.keys(outboundConfig).length === 0) {
+      throw new Error(`暂不支持对协议 ${line.protocolType} 执行端到端代理拨测`);
+    }
     outboundConfig.tag = 'probe-out';
 
-    // 随机分配一个本地测试端口（20000 - 60000）
-    const localPort = 30000 + Math.floor(Math.random() * 20000);
+    const extraOutbounds: Record<string, unknown>[] = [];
+    if (line.protocolType === 'SHADOWTLS') {
+      extraOutbounds.push(buildShadowtlsTransportOutbound(subEntry, probeUser));
+    }
+
+    const localPort = await this.getAvailableLocalPort();
     const configObj = {
-      log: { level: 'panic' },
+      log: { level: 'warn', disabled: false },
       inbounds: [
         {
           type: 'mixed',
@@ -479,110 +560,246 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           listen_port: localPort
         }
       ],
-      outbounds: [outboundConfig, { type: 'direct', tag: 'direct' }],
+      outbounds: [outboundConfig, ...extraOutbounds, { type: 'direct', tag: 'direct' }],
       route: {
         rules: [{ outbound: 'probe-out' }]
       }
     };
 
-    const tmpConfigFile = `${process.env.TEMP || '/tmp'}/riri-probe-${line.id}-${Date.now()}.json`;
+    const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir();
+    const tmpConfigFile = path.join(tmpDir, `riri-probe-${line.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
     await fs.writeFile(tmpConfigFile, JSON.stringify(configObj), 'utf8');
 
     let childProc: ReturnType<typeof spawn> | null = null;
+    let stderrOutput = '';
     try {
       childProc = spawn(singboxBin, ['run', '-c', tmpConfigFile], {
         stdio: ['ignore', 'ignore', 'pipe']
       });
 
-      // 等待 sing-box 启动并监听本地端口（最多等待 1500ms）
-      await this.waitForPortReady('127.0.0.1', localPort, 1500);
+      childProc.stderr?.on('data', (chunk: Buffer) => {
+        if (stderrOutput.length < 4096) {
+          stderrOutput += chunk.toString('utf8');
+        }
+      });
 
-      // 发起 HTTP 204 请求测速
-      const latency = await this.httpGetViaHttpProxy('127.0.0.1', localPort, targetUrl, timeoutMs);
-      return latency;
+      // 等待 sing-box 启动并监听本地端口（最多等待 2000ms）
+      await this.waitForPortReady('127.0.0.1', localPort, 2000, childProc, () => stderrOutput);
+
+      // 发起 HTTP 204/200 请求测速
+      const result = await this.httpGetViaHttpProxy('127.0.0.1', localPort, targetUrl, timeoutMs, () => stderrOutput);
+      return result;
     } finally {
       if (childProc) {
-        childProc.kill('SIGTERM');
+        try {
+          childProc.kill('SIGTERM');
+        } catch {
+          // ignore
+        }
       }
       await fs.unlink(tmpConfigFile).catch(() => undefined);
     }
   }
 
-  private waitForPortReady(host: string, port: number, timeoutMs: number): Promise<void> {
+  private waitForPortReady(
+    host: string,
+    port: number,
+    timeoutMs: number,
+    childProc: ReturnType<typeof spawn>,
+    getStderr: () => string
+  ): Promise<void> {
     const started = Date.now();
     return new Promise((resolve, reject) => {
+      let isDone = false;
+
+      const finish = (err?: Error) => {
+        if (isDone) return;
+        isDone = true;
+        if (err) reject(err);
+        else resolve();
+      };
+
+      const checkExit = () => {
+        if (childProc.exitCode !== null) {
+          const stderr = getStderr().trim();
+          finish(new Error(`Sing-box 探针进程提前退出 (code ${childProc.exitCode})${stderr ? `: ${stderr}` : ''}`));
+          return true;
+        }
+        return false;
+      };
+
       const attempt = () => {
+        if (isDone) return;
+        if (checkExit()) return;
         if (Date.now() - started > timeoutMs) {
-          return reject(new Error('等待 sing-box 启动超时'));
+          const stderr = getStderr().trim();
+          return finish(new Error(`等待 Sing-box 探针就绪超时 (${timeoutMs}ms)${stderr ? `: ${stderr}` : ''}`));
         }
         const socket = net.createConnection({ host, port });
         socket.once('connect', () => {
           socket.destroy();
-          resolve();
+          finish();
         });
         socket.once('error', () => {
           socket.destroy();
-          setTimeout(attempt, 50);
+          if (!isDone) setTimeout(attempt, 50);
         });
       };
+
       attempt();
     });
   }
 
   /**
-   * 通过 HTTP/Mixed Proxy 代理请求测试目标并测量往返延迟
+   * 通过 HTTP/Mixed Proxy 代理请求测试目标并测量往返延迟（严格校验 HTTP 204 或 200）
    */
-  private httpGetViaHttpProxy(proxyHost: string, proxyPort: number, targetUrl: string, timeoutMs: number): Promise<number> {
+  private httpGetViaHttpProxy(
+    proxyHost: string,
+    proxyPort: number,
+    targetUrl: string,
+    timeoutMs: number,
+    getStderr: () => string
+  ): Promise<{ latencyMs: number; statusCode: number }> {
     return new Promise((resolve, reject) => {
-      const url = new URL(targetUrl);
-      const isHttps = url.protocol === 'https:';
-      const started = Date.now();
+      let url: URL;
+      try {
+        url = new URL(targetUrl);
+      } catch {
+        return reject(new Error(`无效的测速目标 URL: ${targetUrl}`));
+      }
 
-      const socket = net.createConnection({ host: proxyHost, port: proxyPort, timeout: timeoutMs });
+      const isHttps = url.protocol === 'https:';
+      const targetPort = Number(url.port) || (isHttps ? 443 : 80);
+      const targetPath = (url.pathname || '/') + (url.search || '');
+
+      let isFinished = false;
+      const cleanupAndReject = (err: Error) => {
+        if (isFinished) return;
+        isFinished = true;
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+        const extraErr = getStderr().trim();
+        const fullMsg = extraErr ? `${err.message} (${extraErr})` : err.message;
+        reject(new Error(fullMsg));
+      };
+
+      const cleanupAndResolve = (result: { latencyMs: number; statusCode: number }) => {
+        if (isFinished) return;
+        isFinished = true;
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+        resolve(result);
+      };
+
+      const socket = net.createConnection({ host: proxyHost, port: proxyPort });
+      socket.setTimeout(timeoutMs);
 
       socket.once('timeout', () => {
-        socket.destroy();
-        reject(new Error(`代理探测超时（${timeoutMs}ms）`));
+        cleanupAndReject(new Error(`代理探测超时（${timeoutMs}ms）`));
       });
 
       socket.once('error', (err) => {
-        socket.destroy();
-        reject(err);
+        cleanupAndReject(new Error(`代理连接失败: ${err.message}`));
       });
 
       socket.once('connect', () => {
+        const started = Date.now();
+
         if (isHttps) {
-          // HTTPS: HTTP CONNECT tunnel
-          const connectPayload = `CONNECT ${url.hostname}:${url.port || 443} HTTP/1.1\r\nHost: ${url.hostname}:${url.port || 443}\r\nProxy-Connection: keep-alive\r\n\r\n`;
+          // HTTPS: 1. 发送 HTTP CONNECT 隧道请求
+          const connectPayload = `CONNECT ${url.hostname}:${targetPort} HTTP/1.1\r\nHost: ${url.hostname}:${targetPort}\r\nUser-Agent: RiriCloud-Speedtest/1.0\r\nProxy-Connection: keep-alive\r\n\r\n`;
           socket.write(connectPayload);
 
           let connectBuffer = '';
           const onConnectData = (chunk: Buffer) => {
-            connectBuffer += chunk.toString();
+            connectBuffer += chunk.toString('utf8');
             if (connectBuffer.includes('\r\n\r\n')) {
               socket.removeListener('data', onConnectData);
-              if (!connectBuffer.startsWith('HTTP/1.1 200') && !connectBuffer.startsWith('HTTP/1.0 200')) {
-                socket.destroy();
-                return reject(new Error(`CONNECT 握手失败: ${connectBuffer.slice(0, 50)}`));
+              const firstLine = connectBuffer.split('\r\n')[0] || '';
+              const match = /^HTTP\/1\.[01]\s+(\d{3})(?:\s+(.*))?$/i.exec(firstLine.trim());
+              const connectStatus = match ? Number(match[1]) : 0;
+              if (connectStatus !== 200) {
+                return cleanupAndReject(new Error(`代理 CONNECT 隧道失败: ${firstLine || '无响应'}`));
               }
-              // Tunnel established, record time or send probe
-              resolve(Date.now() - started);
-              socket.destroy();
+
+              // 2. 升级为 TLS 连接并在隧道内发送真正目标 HTTP 请求
+              const tlsSocket = tls.connect({
+                socket,
+                servername: url.hostname,
+                rejectUnauthorized: false
+              });
+
+              tlsSocket.setTimeout(Math.max(1000, timeoutMs - (Date.now() - started)));
+              tlsSocket.once('timeout', () => {
+                tlsSocket.destroy();
+                cleanupAndReject(new Error(`目标 TLS/HTTP 请求超时`));
+              });
+              tlsSocket.once('error', (tlsErr) => {
+                tlsSocket.destroy();
+                cleanupAndReject(new Error(`目标 TLS 握手异常: ${tlsErr.message}`));
+              });
+
+              tlsSocket.once('secureConnect', () => {
+                const getRequest = `GET ${targetPath} HTTP/1.1\r\nHost: ${url.hostname}\r\nUser-Agent: RiriCloud-Speedtest/1.0\r\nConnection: close\r\nAccept: */*\r\n\r\n`;
+                tlsSocket.write(getRequest);
+
+                let httpResponseBuffer = '';
+                tlsSocket.on('data', (dataChunk: Buffer) => {
+                  httpResponseBuffer += dataChunk.toString('utf8');
+                  if (httpResponseBuffer.includes('\r\n\r\n')) {
+                    tlsSocket.destroy();
+                    const statusLine = httpResponseBuffer.split('\r\n')[0] || '';
+                    const statusMatch = /^HTTP\/1\.[01]\s+(\d{3})(?:\s+(.*))?$/i.exec(statusLine.trim());
+                    if (!statusMatch) {
+                      return cleanupAndReject(new Error(`目标返回无效响应: ${statusLine.slice(0, 80)}`));
+                    }
+                    const statusCode = Number(statusMatch[1]);
+                    if (statusCode !== 204 && statusCode !== 200) {
+                      return cleanupAndReject(new Error(`目标响应非预期状态码 HTTP ${statusCode} ${statusMatch[2] || ''}`.trim()));
+                    }
+                    const latencyMs = Math.max(1, Date.now() - started);
+                    cleanupAndResolve({ latencyMs, statusCode });
+                  }
+                });
+              });
             }
           };
+
           socket.on('data', onConnectData);
         } else {
           // HTTP: 直接通过代理请求 GET
-          const request = `GET ${targetUrl} HTTP/1.1\r\nHost: ${url.hostname}\r\nConnection: close\r\nUser-Agent: RiriCloud-Speedtest\r\n\r\n`;
+          const request = `GET ${targetUrl} HTTP/1.1\r\nHost: ${url.host}\r\nUser-Agent: RiriCloud-Speedtest/1.0\r\nConnection: close\r\nAccept: */*\r\n\r\n`;
           socket.write(request);
 
           let responseBuffer = '';
-          socket.on('data', (chunk) => {
-            responseBuffer += chunk.toString();
+          const onData = (chunk: Buffer) => {
+            responseBuffer += chunk.toString('utf8');
             if (responseBuffer.includes('\r\n\r\n')) {
-              const latency = Date.now() - started;
-              socket.destroy();
-              resolve(latency);
+              socket.removeListener('data', onData);
+              const statusLine = responseBuffer.split('\r\n')[0] || '';
+              const match = /^HTTP\/1\.[01]\s+(\d{3})(?:\s+(.*))?$/i.exec(statusLine.trim());
+              if (!match) {
+                return cleanupAndReject(new Error(`代理返回无效响应: ${statusLine.slice(0, 80)}`));
+              }
+              const statusCode = Number(match[1]);
+              if (statusCode !== 204 && statusCode !== 200) {
+                return cleanupAndReject(new Error(`代理或目标返回非预期状态码 HTTP ${statusCode} ${match[2] || ''}`.trim()));
+              }
+              const latencyMs = Math.max(1, Date.now() - started);
+              cleanupAndResolve({ latencyMs, statusCode });
+            }
+          };
+
+          socket.on('data', onData);
+          socket.once('end', () => {
+            if (!isFinished) {
+              cleanupAndReject(new Error('代理连接过早中断，未收到完整响应'));
             }
           });
         }
@@ -594,18 +811,42 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     if (this.singboxBinaryChecked) return this.cachedSingboxPath;
     this.singboxBinaryChecked = true;
 
+    const isWindows = process.platform === 'win32';
+    const binaryName = isWindows ? 'sing-box.exe' : 'sing-box';
     const arch = process.arch === 'x64' ? 'amd64' : process.arch;
+
     const candidates = [
       process.env.SINGBOX_BINARY_PATH,
       '/usr/local/bin/sing-box',
+      '/usr/bin/sing-box',
       `/app/binaries/singbox-linux-${arch}`,
       path.resolve(process.cwd(), 'binaries', `singbox-linux-${arch}`),
-      path.resolve(process.cwd(), '../../.tools/sing-box/sing-box'),
-      path.resolve(process.cwd(), '../../.tools/sing-box/sing-box.exe')
+      path.resolve(process.cwd(), '.tools/sing-box', binaryName),
+      path.resolve(process.cwd(), '../../.tools/sing-box', binaryName),
+      path.resolve(process.cwd(), '..', '..', '.tools', 'sing-box', binaryName),
+      path.resolve(process.cwd(), '.cache/sing-box-v2ray-api', binaryName),
+      path.resolve(process.cwd(), '../../.cache/sing-box-v2ray-api', binaryName)
     ].filter((p): p is string => Boolean(p));
 
+    // 1. 检查候选文件路径
     for (const candidate of candidates) {
       try {
+        const stat = await fs.stat(candidate);
+        if (stat.isFile()) {
+          this.cachedSingboxPath = candidate;
+          return candidate;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // 2. 检查系统 PATH
+    const pathEnv = process.env.PATH || '';
+    const pathDirs = pathEnv.split(path.delimiter).map((p) => p.trim()).filter(Boolean);
+    for (const dir of pathDirs) {
+      try {
+        const candidate = path.join(dir, binaryName);
         const stat = await fs.stat(candidate);
         if (stat.isFile()) {
           this.cachedSingboxPath = candidate;

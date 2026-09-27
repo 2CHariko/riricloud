@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -663,5 +664,58 @@ func TestSupportsClashAPIRefreshesWhenBinaryAppears(t *testing.T) {
 	}
 	if got := m.Status().Version; got != "1.14.0" {
 		t.Fatalf("expected version 1.14.0 after binary appears on disk, got %q", got)
+	}
+}
+
+func TestSanitizeLoopbackListenersRemapsUnavailablePorts(t *testing.T) {
+	// Occupy a local port intentionally
+	occupiedLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupiedLn.Close()
+	occupiedPort := occupiedLn.Addr().(*net.TCPAddr).Port
+
+	m := &Manager{log: silentLog()}
+
+	inputConfig := map[string]any{
+		"experimental": map[string]any{
+			"v2ray_api": map[string]any{
+				"listen": fmt.Sprintf("127.0.0.1:%d", occupiedPort),
+			},
+			"clash_api": map[string]any{
+				"external_controller": fmt.Sprintf("127.0.0.1:%d", occupiedPort),
+			},
+		},
+	}
+	raw, err := json.Marshal(inputConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sanitized := m.sanitizeLoopbackListeners(raw)
+
+	var output struct {
+		Experimental struct {
+			V2RayAPI struct {
+				Listen string `json:"listen"`
+			} `json:"v2ray_api"`
+			ClashAPI struct {
+				ExternalController string `json:"external_controller"`
+			} `json:"clash_api"`
+		} `json:"experimental"`
+	}
+	if err := json.Unmarshal(sanitized, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	if output.Experimental.V2RayAPI.Listen == fmt.Sprintf("127.0.0.1:%d", occupiedPort) {
+		t.Fatalf("expected v2ray_api.listen to be remapped away from occupied port %d, got %s", occupiedPort, output.Experimental.V2RayAPI.Listen)
+	}
+	if output.Experimental.ClashAPI.ExternalController == fmt.Sprintf("127.0.0.1:%d", occupiedPort) {
+		t.Fatalf("expected clash_api.external_controller to be remapped away from occupied port %d, got %s", occupiedPort, output.Experimental.ClashAPI.ExternalController)
+	}
+	if output.Experimental.V2RayAPI.Listen == output.Experimental.ClashAPI.ExternalController {
+		t.Fatalf("expected v2ray_api and clash_api to be mapped to different ports, both got %s", output.Experimental.V2RayAPI.Listen)
 	}
 }

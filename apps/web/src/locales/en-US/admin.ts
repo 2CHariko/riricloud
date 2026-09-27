@@ -2162,6 +2162,7 @@ const admin = {
     troubleshooting2: 'For relay lines, check entry and landing node connectivity (for NAT landing, verify reverse tunnel service is online).',
     troubleshooting3: 'For UDP-based protocols (Hysteria 2 / TUIC), check that cloud security groups do not block UDP or rate-limit ports.',
     troubleshooting4: 'If entry is Master localhost, check host NAT loopback and local routing policies.',
+    strictFailureNotice: 'Note: Full-link speedtest requires 100% of stages to pass; any failure marks the line unavailable.',
     tcpHandshakeNotice: 'Note: Current result is entry TCP roundtrip latency, not end-to-end proxy latency.',
     retest: 'Retest'
   },

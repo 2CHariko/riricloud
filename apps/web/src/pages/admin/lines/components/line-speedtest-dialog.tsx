@@ -319,7 +319,11 @@ export function LineSpeedtestDialog({ open, onOpenChange, line }: LineSpeedtestD
 
         <DialogFooter className="flex items-center justify-between sm:justify-between w-full">
           <div className="text-[11px] text-muted-foreground">
-            {result?.mode === 'TCP_HANDSHAKE' && t('admin:lineSpeedtest.tcpHandshakeNotice')}
+            {result?.status && result.status !== 'SUCCESS' ? (
+              <span className="text-rose-600 dark:text-rose-400 font-medium">{t('admin:lineSpeedtest.strictFailureNotice')}</span>
+            ) : result?.mode === 'TCP_HANDSHAKE' ? (
+              t('admin:lineSpeedtest.tcpHandshakeNotice')
+            ) : null}
           </div>
           <div className="flex gap-2">
             <Button

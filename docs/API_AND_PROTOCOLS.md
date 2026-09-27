@@ -127,7 +127,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
 - `POST /admin/lines/:id/test`：解析并返回最终对外端点、入口/落地节点与端口，不建立真实连接。⭐
-- `POST /admin/lines/:id/speedtest`：对单条线路执行即时测速（优先端到端 204 探测，不可用时针对 TCP 类协议降级为入口 TCP 握手，纯 UDP 类协议直接透传真实代理探测诊断，避免误报拒连；使用内部专用探针凭据且不计入账单），响应 `{ lineId, lineName, latencyMs, status, message, testedAt, mode, topology, stages }`，并持久化到 Line 最新快照；其中 `stages` 包含多阶段耗时与状态（`PREPARE` 主控探针准备、`ENTRY_HANDSHAKE` 入口 TCP 握手、`RELAY_FORWARD` 中继转发准备、`PROXY_TARGET` 目标端到端 HTTP 204 探测），支持在管理前端以弹窗展示完整的链路测试流程与异常诊断。⭐
+- `POST /admin/lines/:id/speedtest`：对单条线路执行即时端到端测速（要求全链路 100% 跑通并经 Sing-box 代理收到目标 HTTP 204/200 响应才判定为测速成功；若任一阶段失败或超时，整体状态记为 `ERROR` 或 `TIMEOUT` 且延迟置为 `null`，不进行 TCP 握手降级误报；使用内部专用探针凭据且不计入账单），响应 `{ lineId, lineName, latencyMs, status, message, testedAt, mode, topology, stages }`，并持久化到 Line 最新快照；其中 `stages` 包含多阶段耗时与状态（`master_ready` 主控探针准备、`entry_handshake` 入口网络握手、`relay_transit` 中继转发准备、`target_http` 目标端到端 HTTP 204/200 探测），支持在管理前端以弹窗展示完整的链路测试流程与异常诊断。⭐
 - `POST /admin/lines/speedtest-all`：受控并发（限制并发度 4）批量测试所有已启用的线路，响应 `{ total, success, failed }`。⭐
 - `POST /admin/lines/batch-status`：批量启用/禁用线路。⭐ 请求 `{ ids: UUID[], status: "ACTIVE"|"DISABLED" }`。
 - `PATCH /admin/lines/reorder`：批量调整排序。⭐ 请求 `{ items: [{ id, sortOrder }] }`。

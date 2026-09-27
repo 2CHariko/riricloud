@@ -112,6 +112,7 @@ func (m *Manager) ApplyConfig(raw json.RawMessage, version int64) error {
 	if len(raw) == 0 {
 		return fmt.Errorf("empty singbox config")
 	}
+	raw = m.sanitizeLoopbackListeners(raw)
 	if err := m.WriteConfig(raw); err != nil {
 		return err
 	}
@@ -276,6 +277,205 @@ func (m *Manager) StatsAddress() string {
 		return stats.DefaultAddress
 	}
 	return root.Experimental.V2RayAPI.Listen
+}
+
+func isLoopbackHost(host string) bool {
+	clean := strings.Trim(host, "[]")
+	ip := net.ParseIP(clean)
+	if ip != nil && ip.IsLoopback() {
+		return true
+	}
+	return strings.EqualFold(clean, "localhost")
+}
+
+func canListenTCP(addr string) bool {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+func containsPort(ports []int, p int) bool {
+	for _, item := range ports {
+		if item == p {
+			return true
+		}
+	}
+	return false
+}
+
+func findAvailableLoopback(host string, preferredPort int, avoidPorts ...int) (string, error) {
+	cleanHost := strings.Trim(host, "[]")
+	isAvoided := func(p int) bool {
+		for _, ap := range avoidPorts {
+			if ap == p {
+				return true
+			}
+		}
+		return false
+	}
+
+	target := func(p int) string {
+		if strings.Contains(cleanHost, ":") {
+			return fmt.Sprintf("[%s]:%d", cleanHost, p)
+		}
+		return fmt.Sprintf("%s:%d", cleanHost, p)
+	}
+
+	if !isAvoided(preferredPort) && canListenTCP(target(preferredPort)) {
+		return target(preferredPort), nil
+	}
+
+	for p := preferredPort + 1; p <= 65535 && p < preferredPort+300; p++ {
+		if isAvoided(p) {
+			continue
+		}
+		candidate := target(p)
+		if canListenTCP(candidate) {
+			return candidate, nil
+		}
+	}
+
+	ln, err := net.Listen("tcp", target(0))
+	if err != nil {
+		return "", err
+	}
+	defer ln.Close()
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		return ln.Addr().String(), nil
+	}
+	return target(tcpAddr.Port), nil
+}
+
+func parseLoopbackListen(conf []byte) (v2rayListen string, clashController string) {
+	if len(conf) == 0 {
+		return "", ""
+	}
+	var root struct {
+		Experimental struct {
+			V2RayAPI *struct {
+				Listen string `json:"listen"`
+			} `json:"v2ray_api"`
+			ClashAPI *struct {
+				ExternalController string `json:"external_controller"`
+			} `json:"clash_api"`
+		} `json:"experimental"`
+	}
+	if err := json.Unmarshal(conf, &root); err != nil {
+		return "", ""
+	}
+	if root.Experimental.V2RayAPI != nil {
+		v2rayListen = strings.TrimSpace(root.Experimental.V2RayAPI.Listen)
+	}
+	if root.Experimental.ClashAPI != nil {
+		clashController = strings.TrimSpace(root.Experimental.ClashAPI.ExternalController)
+	}
+	return v2rayListen, clashController
+}
+
+func (m *Manager) sanitizeLoopbackListeners(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return raw
+	}
+	exp, ok := root["experimental"].(map[string]any)
+	if !ok || exp == nil {
+		return raw
+	}
+
+	m.mu.Lock()
+	running := m.child != nil
+	appliedConf := append([]byte(nil), m.appliedConf...)
+	m.mu.Unlock()
+
+	activeV2Ray, activeClash := parseLoopbackListen(appliedConf)
+
+	modified := false
+	allocatedPorts := make([]int, 0, 2)
+
+	// 1. v2ray_api.listen
+	if v2ray, ok := exp["v2ray_api"].(map[string]any); ok && v2ray != nil {
+		if listenStr, ok := v2ray["listen"].(string); ok && strings.TrimSpace(listenStr) != "" {
+			listenStr = strings.TrimSpace(listenStr)
+			host, portText, err := net.SplitHostPort(listenStr)
+			if err == nil && isLoopbackHost(host) {
+				port, pErr := strconv.Atoi(portText)
+				if pErr == nil && port > 0 {
+					if running && activeV2Ray != "" && listenStr == activeV2Ray {
+						allocatedPorts = append(allocatedPorts, port)
+					} else if running && activeV2Ray != "" && !canListenTCP(listenStr) {
+						v2ray["listen"] = activeV2Ray
+						if _, aPortText, aErr := net.SplitHostPort(activeV2Ray); aErr == nil {
+							if ap, err := strconv.Atoi(aPortText); err == nil {
+								allocatedPorts = append(allocatedPorts, ap)
+							}
+						}
+						modified = true
+					} else if !canListenTCP(listenStr) {
+						if next, err := findAvailableLoopback(host, port); err == nil {
+							m.log.WithFields(logrus.Fields{
+								"original": listenStr,
+								"remapped": next,
+							}).Warn("sing-box v2ray_api listen address is unavailable on this host, auto-remapped")
+							v2ray["listen"] = next
+							if _, npText, err := net.SplitHostPort(next); err == nil {
+								if np, err := strconv.Atoi(npText); err == nil {
+									allocatedPorts = append(allocatedPorts, np)
+								}
+							}
+							modified = true
+						}
+					} else {
+						allocatedPorts = append(allocatedPorts, port)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. clash_api.external_controller
+	if clash, ok := exp["clash_api"].(map[string]any); ok && clash != nil {
+		if ctrlStr, ok := clash["external_controller"].(string); ok && strings.TrimSpace(ctrlStr) != "" {
+			ctrlStr = strings.TrimSpace(ctrlStr)
+			host, portText, err := net.SplitHostPort(ctrlStr)
+			if err == nil && isLoopbackHost(host) {
+				port, pErr := strconv.Atoi(portText)
+				if pErr == nil && port > 0 {
+					if running && activeClash != "" && ctrlStr == activeClash {
+						allocatedPorts = append(allocatedPorts, port)
+					} else if running && activeClash != "" && !canListenTCP(ctrlStr) {
+						clash["external_controller"] = activeClash
+						modified = true
+					} else if !canListenTCP(ctrlStr) || containsPort(allocatedPorts, port) {
+						if next, err := findAvailableLoopback(host, port, allocatedPorts...); err == nil {
+							m.log.WithFields(logrus.Fields{
+								"original": ctrlStr,
+								"remapped": next,
+							}).Warn("sing-box clash_api external_controller address is unavailable on this host, auto-remapped")
+							clash["external_controller"] = next
+							modified = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if !modified {
+		return raw
+	}
+
+	marshaled, err := json.Marshal(root)
+	if err != nil {
+		return raw
+	}
+	return marshaled
 }
 
 var binaryVersionPattern = regexp.MustCompile(`\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b`)
