@@ -1,11 +1,14 @@
 import { parseDocument, stringify } from 'yaml';
 import type {
+  HttpParams,
   Hysteria2Params,
   InboundMultiplexConfig,
   InboundTransport,
+  MixedParams,
   NaiveParams,
   ShadowtlsParams,
   ShadowsocksParams,
+  SocksParams,
   TrojanParams,
   TuicParams,
   VlessParams,
@@ -1403,12 +1406,48 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
       return outbound;
     }
 
+    case 'MIXED':
+    case 'SOCKS': {
+      const p = entry.inbound.params as unknown as (SocksParams | MixedParams | undefined);
+      const outbound: Record<string, unknown> = {
+        type: 'socks',
+        tag: entry.label,
+        server: serverHost,
+        server_port: port,
+        version: '5'
+      };
+      if (user.credential || user.uuid) {
+        outbound.username = user.email || user.uuid;
+        outbound.password = user.credential;
+      }
+      const clientTls = buildClientTls(p?.tls, effectiveServerName(entry));
+      if (clientTls) outbound.tls = clientTls;
+      return outbound;
+    }
+
+    case 'HTTP': {
+      const p = entry.inbound.params as unknown as (HttpParams | undefined);
+      const outbound: Record<string, unknown> = {
+        type: 'http',
+        tag: entry.label,
+        server: serverHost,
+        server_port: port
+      };
+      if (user.credential || user.uuid) {
+        outbound.username = user.email || user.uuid;
+        outbound.password = user.credential;
+      }
+      const clientTls = buildClientTls(p?.tls, effectiveServerName(entry));
+      if (clientTls) outbound.tls = clientTls;
+      return outbound;
+    }
+
     default:
       return {};
   }
 }
 
-function buildShadowtlsTransportOutbound(entry: SubEntry, user: SubUser): Record<string, unknown> {
+export function buildShadowtlsTransportOutbound(entry: SubEntry, user: SubUser): Record<string, unknown> {
   const p = entry.inbound.params as unknown as ShadowtlsParams;
   return {
     type: 'shadowtls',

@@ -2205,6 +2205,7 @@ const admin = {
     troubleshooting2: '中继线路请检查入口与落地节点的联通状态（若为 NAT 落地，请确认反向隧道服务是否在线）。',
     troubleshooting3: '若为纯 UDP 协议（Hysteria 2 / TUIC），请确认云厂商安全组未屏蔽 UDP 流量或遭遇端口限速。',
     troubleshooting4: '若入口为 Master 本机节点，请检查宿主机 NAT 回环及本地回环策略。',
+    strictFailureNotice: '提示：严格全链路测速要求所有阶段 100% 跑通，任意阶段失败均判定为不可用。',
     tcpHandshakeNotice: '提示：当前测得为入口 TCP 往返延时，非端到端代理延时。',
     retest: '重新测速'
   },

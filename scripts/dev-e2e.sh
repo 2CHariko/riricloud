@@ -8,7 +8,7 @@
 #   NODE_PORT=9443 USE_MASTER_LOCAL=0 bash scripts/dev-e2e.sh # 自定义独立节点端口
 #   AGENT_TOKEN=xxx bash scripts/dev-e2e.sh  # 复用既有节点 Token（跳过自动建节点）
 #
-# 环境变量：SERVER_URL / SERVER_PORT / STATS_API_LISTEN / WEB_URL / ADMIN_EMAIL / ADMIN_PASSWORD / SERVER_ENV_FILE / E2E_DATABASE_URL / NODE_NAME / NODE_HOST / NODE_PORT / USE_MASTER_LOCAL / E2E_SYNC_RESOURCES
+# 环境变量：SERVER_URL / SERVER_PORT / STATS_API_LISTEN / CLASH_API_LISTEN / WEB_URL / ADMIN_EMAIL / ADMIN_PASSWORD / SERVER_ENV_FILE / E2E_DATABASE_URL / NODE_NAME / NODE_HOST / NODE_PORT / USE_MASTER_LOCAL / E2E_SYNC_RESOURCES
 # 联调端口：主控端默认 30800（避开 Windows 保留/动态端口区间），实际使用端口写入 .cache/dev-e2e-server-port 供后续运行复用
 # 联调数据库：默认使用 apps/server/prisma/dev-e2e.db，避免与手动启动的 3000 端口主控共享 SQLite 写锁；可通过 E2E_DATABASE_URL 显式改回其他 SQLite URL
 # 资源同步覆盖：E2E_RESOURCE_VERSION / E2E_AGENT_RESOURCE_FILE / E2E_AGENT_RESOURCE_TARGET / E2E_SINGBOX_RESOURCE_FILE / E2E_SINGBOX_RESOURCE_TARGET / E2E_SINGBOX_RESOURCE_VERSION
@@ -66,6 +66,7 @@ E2E_SYNC_RESOURCES="${E2E_SYNC_RESOURCES:-1}"
 SERVER_PORT_SCAN_LIMIT="${SERVER_PORT_SCAN_LIMIT:-1000}"
 SERVER_PORT_OVERRIDE="${SERVER_PORT:-${PORT:-}}"
 STATS_API_LISTEN_OVERRIDE="${STATS_API_LISTEN:-}"
+CLASH_API_LISTEN_OVERRIDE="${CLASH_API_LISTEN:-}"
 if [ -z "$SERVER_PORT_OVERRIDE" ] && [ -n "$SERVER_URL_OVERRIDE" ]; then
   SERVER_PORT_OVERRIDE="$(node -e 'try { const url = new URL(process.argv[1]); console.log(url.port || "30800") } catch { console.log("30800") }' "$SERVER_URL")"
 fi
@@ -457,13 +458,25 @@ else
       say "StatsService 默认端口 $STATS_API_PORT_START 不可用，改用 $STATS_API_LISTEN"
     fi
   fi
+  if [ -z "$CLASH_API_LISTEN_OVERRIDE" ]; then
+    CLASH_API_PORT_START="${CLASH_API_PORT_START:-10086}"
+    if [ -n "${STATS_API_PORT:-}" ] && [ "$CLASH_API_PORT_START" -eq "$STATS_API_PORT" ]; then
+      CLASH_API_PORT_START="$((STATS_API_PORT + 1))"
+    fi
+    CLASH_API_PORT="$(pick_server_port "$CLASH_API_PORT_START")" \
+      || die "未找到可用的 Clash API 端口（已从 $CLASH_API_PORT_START 开始探测 $SERVER_PORT_SCAN_LIMIT 个端口）；可通过 CLASH_API_LISTEN=127.0.0.1:xxxx 指定"
+    CLASH_API_LISTEN="127.0.0.1:$CLASH_API_PORT"
+    if [ "$CLASH_API_PORT" != "10086" ]; then
+      say "Clash API 默认端口 10086 不可用，改用 $CLASH_API_LISTEN"
+    fi
+  fi
 
   SERVER_ATTEMPTS="${SERVER_START_ATTEMPTS:-5}"
   SERVER_READY=0
   for attempt in $(seq 1 "$SERVER_ATTEMPTS"); do
     rm -f apps/server/*.tsbuildinfo
     say "启动主控端（端口 $SERVER_PORT，日志：$LOG_DIR/server.log）…"
-    PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" pnpm dev:server >"$LOG_DIR/server.log" 2>&1 &
+    PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" CLASH_API_LISTEN="${CLASH_API_LISTEN:-}" pnpm dev:server >"$LOG_DIR/server.log" 2>&1 &
     SERVER_PID=$!
     SERVER_EADDRINUSE=0
     for _ in $(seq 1 60); do

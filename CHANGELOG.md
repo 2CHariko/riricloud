@@ -15,8 +15,20 @@
 ### Added
 
 ### Changed
+- **线路管理严格全链路端到端测速与阶段健康校验**：
+  - 彻底废弃测速阶段失败或未配置探针内核时降级为入口 TCP 握手并标记 `SUCCESS` 返回延迟的假阳性逻辑；测速成功的唯一定义是全链路四阶段（主控探针引擎就绪、入口网络联通、中继转发链路健康度、端到端目标请求）100% 跑通并收到目标 `204` 或 `200` 响应；
+  - 任一必要阶段失败或超时均将整体测速状态判定为 `ERROR` 或 `TIMEOUT`，并将线路综合延迟 `latencyMs` 置为 `null`（不污染数据库快照与前端延迟 Chip 徽标），同时在测速流程弹窗中如实保留已通过的前置阶段耗时与失败阶段的详细诊断信息；
+  - 增强中继转发阶段（`relay_transit`）真实状态校验：在发起端到端探测前校验落地节点是否处于 `ONLINE`、桥接目标线路是否处于 `ACTIVE` 且目标入口节点在线，当落地节点离线或目标线路停用时直接在第三阶段拦截报错。
 
 ### Fixed
+- **修复 Sing-box 本地回环管理端口（V2Ray API / Clash API）被占用或落入 Windows WinNAT 动态排除端口区间导致内核启动 Fatal 崩溃重启循环**：
+  - 在 `apps/agent/internal/singbox/manager.go` 中新增 `sanitizeLoopbackListeners`：在原子落盘与拉起内核前，自动检测 `experimental.v2ray_api.listen` 与 `experimental.clash_api.external_controller` 本机回环监听端口可用性；
+  - 当端口被其他进程占用或遭遇 Windows Socket 权限拒绝（`WSAEACCES` / `bind: An attempt was made to access a socket in a way forbidden by its access permissions.`）时，自动顺延重映射到本机空闲 loopback 端口，彻底根除因 Windows Hyper-V/WSL2 动态保留端口范围命中 10085/10086 引发的死循环崩溃；
+  - `StatsAddress()` 与 `ClashAPIAddress()` 同步读取实际生效的回环端口，流量采集与多设备连接追踪无缝连通；
+  - 在 `scripts/dev-e2e.sh` 中新增 `CLASH_API_LISTEN` 端口可用性探测与主控启动参数注入，保证本地联调时 Master 与 Agent 两端协同自愈。
+- **修复端到端代理测速未校验 HTTP 响应状态码及部分协议出站缺失的问题**：
+  - 重构 `LineSpeedtestService.httpGetViaHttpProxy`，对 HTTP 与 HTTPS（经 `CONNECT` 隧道完成 TLS 握手后发起 GET）严格解析响应状态行，仅当状态码为 `204` 或 `200` 时判定成功，彻底根治因本地代理返回 `502 Bad Gateway` 等错误报文仍因包含 `\r\n\r\n` 被误判为几毫秒测速成功的漏洞；
+  - 补齐 `SHADOWTLS` 内层 Shadowsocks detour 传输层出站以及 `MIXED` / `SOCKS` / `HTTP` 直连代理出站构造，补齐探针凭据 `email: INTERNAL_SPEEDTEST_EMAIL` 以匹配入站鉴权用户名，并采用内核动态分配本地空闲端口与子进程 `stderr` 错误捕获透传。
 
 
 ## [0.9.4] - 2026-09-27
