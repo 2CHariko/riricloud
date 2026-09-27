@@ -15,6 +15,7 @@
 ### Added
 
 ### Changed
+- **GHCR Docker 镜像构建生命周期收敛为仅在发布 Release 时构建**：调整 `.github/workflows/docker-publish.yml` 触发条件为 `release: types: [published]`（保留 `workflow_dispatch` 手动按需触发），移除每次 `main` 分支推送时自动构建并推送 `edge` 快照镜像的逻辑，确保仅在发布 `vX.Y.Z`（Master）或 `agent-vA.B.C`（Agent）Release 时构建对应版本镜像。
 - **线路管理严格全链路端到端测速与阶段健康校验**：
   - 彻底废弃测速阶段失败或未配置探针内核时降级为入口 TCP 握手并标记 `SUCCESS` 返回延迟的假阳性逻辑；测速成功的唯一定义是全链路四阶段（主控探针引擎就绪、入口网络联通、中继转发链路健康度、端到端目标请求）100% 跑通并收到目标 `204` 或 `200` 响应；
   - 任一必要阶段失败或超时均将整体测速状态判定为 `ERROR` 或 `TIMEOUT`，并将线路综合延迟 `latencyMs` 置为 `null`（不污染数据库快照与前端延迟 Chip 徽标），同时在测速流程弹窗中如实保留已通过的前置阶段耗时与失败阶段的详细诊断信息；
