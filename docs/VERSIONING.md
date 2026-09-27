@@ -171,4 +171,4 @@ RiriCloud 使用两种互不替代的版本生命周期：
 | Agent 程序版本 | `apps/agent/VERSION` | 边缘守护程序与 TUI 控制台版本 | 通过 `pnpm bump:agent` 独立变更 |
 | 二进制资源版本 | `BinaryRelease.upstreamVersion + revision` | Sing-box/Agent 可分发文件的逻辑资源版本 | 真实二进制、构建标签或兼容约束变化时创建新资源 |
 
-构建脚本与 GHCR 镜像约定：`--version` 用于指定构建版本；推送 `vX.Y.Z` Tag 时 GHCR 仅构建发布 `riricloud-master`（打标 `vX.Y.Z`、`X.Y.Z`、`latest`），推送 `agent-vA.B.C` Tag 时 GHCR 仅构建发布 `riricloud-agent`（打标 `agent-vA.B.C`、`vA.B.C`、`A.B.C`、`latest`），资源 manifest 明确记录各自独立的版本信息。
+构建脚本与 GHCR 镜像约定：`--version` 用于指定构建版本；GHCR 镜像仅在发布 GitHub Release（或手动触发 `workflow_dispatch`）时构建对应版本（日常提交合并至 `main` 分支不自动构建 `edge` 快照镜像）——发布 `vX.Y.Z` Release 时仅构建发布 `riricloud-master`（打标 `vX.Y.Z`、`X.Y.Z`、`latest`），发布 `agent-vA.B.C` Release 时仅构建发布 `riricloud-agent`（打标 `agent-vA.B.C`、`vA.B.C`、`A.B.C`、`latest`），资源 manifest 明确记录各自独立的版本信息。

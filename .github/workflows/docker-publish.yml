@@ -1,12 +1,8 @@
 name: Docker Publish (GHCR)
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-      - 'agent-v*'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       target:
@@ -14,12 +10,12 @@ on:
         required: false
         default: 'all'
       tag:
-        description: '自定义镜像标签 (留空则按真实版本自动推导，例如 edge)'
+        description: '自定义镜像标签 (留空则按真实版本自动推导，例如 v0.9.4)'
         required: false
         default: ''
 
 concurrency:
-  group: docker-publish-${{ github.ref }}
+  group: docker-publish-${{ github.event.release.tag_name || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -34,6 +30,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
           fetch-depth: 0
 
       - name: 设置 Node.js 环境 (提取版本号)
@@ -48,39 +45,44 @@ jobs:
           echo "owner_lc=${OWNER_LC}" >> "$GITHUB_OUTPUT"
 
           VERSION="$(node -p "require('./package.json').version")"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
           if [ -f "apps/agent/VERSION" ]; then
             AGENT_VERSION="$(tr -d '[:space:]' < apps/agent/VERSION)"
           else
             AGENT_VERSION="$VERSION"
           fi
-          echo "agent_version=${AGENT_VERSION}" >> "$GITHUB_OUTPUT"
 
           echo "vcs_ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
           echo "build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
           REF="${{ github.ref }}"
           EVENT_NAME="${{ github.event_name }}"
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
           CUSTOM_TAG="${{ inputs.tag }}"
           TARGET_INPUT="${{ inputs.target }}"
           [ -n "$TARGET_INPUT" ] || TARGET_INPUT="all"
+
+          TAG_NAME=""
+          if [ -n "$RELEASE_TAG" ]; then
+            TAG_NAME="$RELEASE_TAG"
+          elif [[ "$REF" =~ ^refs/tags/ ]]; then
+            TAG_NAME="${REF#refs/tags/}"
+          fi
 
           BUILD_MASTER="false"
           BUILD_AGENT="false"
           MASTER_TAGS=""
           AGENT_TAGS=""
 
-          if [[ "$REF" =~ ^refs/tags/v[0-9] ]]; then
-            # 正式发布 Master (如 v0.9.0)：严格双轨解耦，仅构建 Master 镜像
-            TAG_NAME="${REF#refs/tags/}"
+          if [[ "$TAG_NAME" =~ ^v[0-9] ]]; then
+            # 正式发布 Master Release (如 v0.9.4)：严格双轨解耦，仅构建 Master 镜像
             RAW_VER="${TAG_NAME#v}"
+            VERSION="$RAW_VER"
             BUILD_MASTER="true"
             MASTER_TAGS="ghcr.io/${OWNER_LC}/riricloud-master:${TAG_NAME},ghcr.io/${OWNER_LC}/riricloud-master:${RAW_VER},ghcr.io/${OWNER_LC}/riricloud-master:latest"
-          elif [[ "$REF" =~ ^refs/tags/agent-v[0-9] ]]; then
-            # 独立发布 Agent (如 agent-v0.8.0)：严格双轨解耦，仅构建 Agent 镜像
-            TAG_NAME="${REF#refs/tags/}"
+          elif [[ "$TAG_NAME" =~ ^agent-v[0-9] ]]; then
+            # 独立发布 Agent Release (如 agent-v0.8.4)：严格双轨解耦，仅构建 Agent 镜像
             RAW_VER="${TAG_NAME#agent-v}"
+            AGENT_VERSION="$RAW_VER"
             BUILD_AGENT="true"
             AGENT_TAGS="ghcr.io/${OWNER_LC}/riricloud-agent:${TAG_NAME},ghcr.io/${OWNER_LC}/riricloud-agent:v${RAW_VER},ghcr.io/${OWNER_LC}/riricloud-agent:${RAW_VER},ghcr.io/${OWNER_LC}/riricloud-agent:latest"
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -101,22 +103,22 @@ jobs:
               fi
             fi
           else
-            # main 分支推送构建 edge 快照
-            BUILD_MASTER="true"
-            BUILD_AGENT="true"
-            MASTER_TAGS="ghcr.io/${OWNER_LC}/riricloud-master:edge"
-            AGENT_TAGS="ghcr.io/${OWNER_LC}/riricloud-agent:edge"
+            echo "::warning::未匹配到有效的发布版本 Tag (${TAG_NAME:-$REF})，跳过镜像构建"
           fi
 
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "agent_version=${AGENT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "master_tags=${MASTER_TAGS}" >> "$GITHUB_OUTPUT"
           echo "agent_tags=${AGENT_TAGS}" >> "$GITHUB_OUTPUT"
           echo "build_master=${BUILD_MASTER}" >> "$GITHUB_OUTPUT"
           echo "build_agent=${BUILD_AGENT}" >> "$GITHUB_OUTPUT"
 
       - name: 设置 Docker Buildx
+        if: steps.meta.outputs.build_master == 'true' || steps.meta.outputs.build_agent == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: 登录 GitHub Container Registry
+        if: steps.meta.outputs.build_master == 'true' || steps.meta.outputs.build_agent == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
