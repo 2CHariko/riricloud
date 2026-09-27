@@ -105,6 +105,12 @@ export class UpdateSettingsDto {
   @IsOptional()
   siteAnnouncement?: string;
 
+  @ApiPropertyOptional({ example: '[]', description: '结构化公告列表配置（JSON 字符串）' })
+  @IsString()
+  @MaxLength(50000)
+  @IsOptional()
+  siteAnnouncementsJson?: string;
+
   @ApiPropertyOptional({ example: '© 2026 RiriCloud', nullable: true })
   @IsString()
   @MaxLength(200)

@@ -1,6 +1,6 @@
 import { Link, NavLink } from 'react-router-dom';
 import { useCurrentUser } from '@/lib/current-user';
-import { Activity, BookOpen, Cloud, FileText, GitBranch, Headphones, KeyRound, LayoutTemplate, Network, Package, Server, Settings, ShoppingBag, Users, WalletCards, Wallet, Ticket, Binary, ScrollText, Waypoints } from 'lucide-react';
+import { Activity, BookOpen, Cloud, FileText, GitBranch, Headphones, KeyRound, LayoutTemplate, Megaphone, Network, Package, Server, Settings, ShoppingBag, Users, WalletCards, Wallet, Ticket, Binary, ScrollText, Waypoints } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth';
 import { usePublicSettings } from '@/lib/public-settings';
 import { SupportDialog } from '@/components/shared/support-dialog';
@@ -51,6 +51,7 @@ export function AppSidebar() {
               { to: '/admin/users', label: t('nav.users'), icon: Users, end: false },
               { to: '/admin/plans', label: t('nav.plans'), icon: Package, end: false },
               { to: '/admin/redeem-codes', label: t('nav.redeemCodes'), icon: Ticket, end: false },
+              { to: '/admin/announcements', label: t('nav.announcements'), icon: Megaphone, end: false },
               { to: '/admin/docs', label: t('nav.docs', { defaultValue: '文档管理' }), icon: FileText, end: false }
             ]
           },

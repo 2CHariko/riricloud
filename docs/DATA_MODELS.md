@@ -697,7 +697,8 @@ model HelpArticle {
 | `siteDescription` | 纯文本（≤120 字符） | `""` | 登录页和品牌区域副标题；留空时不展示 |
 | `publicBaseUrl` | HTTP/HTTPS URL 或空字符串 | `""` | 全站对外访问基准主入口；作为订阅与二进制下载基准的默认回退源，并用于 Agent 节点安装与升级命令行生成 |
 | `logoUrl` / `faviconUrl` | URL 或空字符串 | `""` | Logo 与 Favicon 地址 |
-| `siteAnnouncement` | Markdown 文本（≤10000 字符） | `""` | 用户订阅控制台公告横幅 |
+| `siteAnnouncement` | Markdown 文本（≤10000 字符） | `""` | 用户订阅控制台公告横幅（向下兼容首条启用横幅公告） |
+| `siteAnnouncementsJson` | JSON 数组字符串（≤50000 字符） | `"[]"` | 结构化多条公告列表配置（含 ID、标题、Markdown 正文、分类 `NOTICE`/`MAINTENANCE`/`EVENT`/`URGENT`、置顶、横幅开关、登录未读弹窗强提醒开关、启用状态与创建/更新时间） |
 | `footerCopyright` | 纯文本 | `""` | 页脚版权文案，展示于登录/注册页、个人中心及侧边栏底栏 |
 | `supportTelegramUrl` / `supportDiscordUrl` / `supportCustomUrl` | URL 或空字符串 | `""` | 客服、群组与自定义支持入口，在侧边栏底栏、个人中心及登录注册页快捷触发弹窗 |
 | `supportEmail` | 邮箱或空字符串 | `""` | 客服邮箱入口 |

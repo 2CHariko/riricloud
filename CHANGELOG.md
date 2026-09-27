@@ -13,6 +13,11 @@
 ## [Unreleased]
 
 ### Added
+- **全局公告中心、未读强提醒与后台「公告管理」系统**：
+  - **顶栏消息/公告中心（`AnnouncementCenter`）**：在顶部操作栏 `AppHeader` 新增消息铃铛图标，基于本地已读状态实时展示未读脉冲红点角标；点击展开内联下拉列表，支持分类彩色标签（通知 / 维护 / 活动 / 紧急）、置顶标识、2 行摘要预览与「全部已读」快捷操作；
+  - **居中详情阅读与未读自动强提醒（`AnnouncementDetailDialog`）**：点击列表项或订阅页横幅「查看详情」即唤起居中弹窗，通过 `MarkdownRenderer` 完整渲染 GFM Markdown（代码块复制、高亮告警框、外链等）；开启「重要公告未读自动弹窗」的公告在用户进入系统且未读时自动居中弹出提醒；
+  - **订阅页顶部横幅联动（`AnnouncementCard`）**：升级「我的订阅」顶部公告横幅，自动消费置顶/横幅公告并按分类语义着色，平滑向下兼容旧版 `siteAnnouncement`；
+  - **业务运营独立「公告管理」页面（`/admin/announcements`）**：在侧边栏「业务运营」分组下新增独立「公告管理」页，复用文档管理高质感表格与全屏分屏编辑器设计（集成分类/状态/关键词筛选、行内启停 Switch、4 维展示策略开关、快捷语法插入工具条、CodeMirror 源码高亮与 `MarkdownRenderer` 实时对照预览）。
 
 ### Changed
 - **GHCR Docker 镜像构建生命周期收敛为仅在发布 Release 时构建**：调整 `.github/workflows/docker-publish.yml` 触发条件为 `release: types: [published]`（保留 `workflow_dispatch` 手动按需触发），移除每次 `main` 分支推送时自动构建并推送 `edge` 快照镜像的逻辑，确保仅在发布 `vX.Y.Z`（Master）或 `agent-vA.B.C`（Agent）Release 时构建对应版本镜像。

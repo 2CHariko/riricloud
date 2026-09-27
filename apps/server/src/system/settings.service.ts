@@ -62,6 +62,7 @@ export const SETTING_KEYS = {
   LOGO_URL: 'logoUrl',
   FAVICON_URL: 'faviconUrl',
   SITE_ANNOUNCEMENT: 'siteAnnouncement',
+  SITE_ANNOUNCEMENTS_JSON: 'siteAnnouncementsJson',
   FOOTER_COPYRIGHT: 'footerCopyright',
   SUPPORT_TELEGRAM_URL: 'supportTelegramUrl',
   SUPPORT_DISCORD_URL: 'supportDiscordUrl',
@@ -141,6 +142,7 @@ export interface SystemSettings {
   logoUrl: string;
   faviconUrl: string;
   siteAnnouncement: string;
+  siteAnnouncementsJson: string;
   footerCopyright: string;
   supportTelegramUrl: string;
   supportDiscordUrl: string;
@@ -226,6 +228,7 @@ export type PublicSystemSettings = Pick<
   | 'logoUrl'
   | 'faviconUrl'
   | 'siteAnnouncement'
+  | 'siteAnnouncementsJson'
   | 'footerCopyright'
   | 'supportTelegramUrl'
   | 'supportDiscordUrl'
@@ -268,6 +271,7 @@ export const DEFAULTS: SystemSettings = {
   logoUrl: '',
   faviconUrl: '',
   siteAnnouncement: '',
+  siteAnnouncementsJson: '[]',
   footerCopyright: '',
   supportTelegramUrl: '',
   supportDiscordUrl: '',
@@ -350,6 +354,7 @@ const DESCRIPTIONS: Record<keyof SystemSettings, string> = {
   logoUrl: '系统 Logo 地址',
   faviconUrl: '站点 Favicon 地址',
   siteAnnouncement: '用户面板公告横幅（支持 Markdown）',
+  siteAnnouncementsJson: '结构化公告列表配置（JSON 格式）',
   footerCopyright: '页脚版权文案',
   supportTelegramUrl: 'Telegram 客服或群组地址',
   supportDiscordUrl: 'Discord 服务器邀请地址',
@@ -528,6 +533,7 @@ export class SettingsService implements OnModuleInit {
       logoUrl: this.readString(map, 'logoUrl'),
       faviconUrl: this.readString(map, 'faviconUrl'),
       siteAnnouncement: this.readString(map, 'siteAnnouncement'),
+      siteAnnouncementsJson: this.readString(map, 'siteAnnouncementsJson'),
       footerCopyright: this.readString(map, 'footerCopyright'),
       supportTelegramUrl: this.readString(map, 'supportTelegramUrl'),
       supportDiscordUrl: this.readString(map, 'supportDiscordUrl'),
@@ -620,6 +626,7 @@ export class SettingsService implements OnModuleInit {
       logoUrl: settings.logoUrl,
       faviconUrl: settings.faviconUrl,
       siteAnnouncement: settings.siteAnnouncement,
+      siteAnnouncementsJson: settings.siteAnnouncementsJson,
       footerCopyright: settings.footerCopyright,
       supportTelegramUrl: settings.supportTelegramUrl,
       supportDiscordUrl: settings.supportDiscordUrl,
@@ -726,7 +733,7 @@ export class SettingsService implements OnModuleInit {
     if (typeof value === 'string') {
       const trimmed = value.trim();
       if (trimmed === 'undefined') return '';
-      return key === 'customCss' || key === 'customHeadHtml' || key === 'landingCustomFeaturesJson' || key === 'landingCustomFaqJson' ? value : trimmed;
+      return key === 'customCss' || key === 'customHeadHtml' || key === 'landingCustomFeaturesJson' || key === 'landingCustomFaqJson' || key === 'siteAnnouncementsJson' ? value : trimmed;
     }
     return String(value);
   }

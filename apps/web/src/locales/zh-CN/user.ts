@@ -431,7 +431,30 @@ const user = {
   },
   announcement: {
     title: '系统公告',
-    dismiss: '我知道了'
+    dismiss: '我知道了',
+    centerTitle: '公告中心',
+    centerAriaLabel: '查看系统公告',
+    markAllRead: '全部已读',
+    allReadSuccess: '已将全部公告标记为已读',
+    emptyTitle: '暂无系统公告',
+    emptyDesc: '站长发布新的维护、更新或活动公告时会在此显示。',
+    unreadCount: '{{count}} 条未读',
+    unreadBadge: '未读',
+    pinnedBadge: '置顶',
+    viewDetails: '查看详情',
+    publishedAt: '发布于 {{time}}',
+    updatedAt: '更新于 {{time}}',
+    modalTitle: '公告详情',
+    modalAriaClose: '关闭公告详情',
+    bannerBadge: '重要公告',
+    popupBadge: '强提醒',
+    markedReadHint: '已自动标记为已读',
+    types: {
+      NOTICE: '通知',
+      MAINTENANCE: '维护',
+      EVENT: '活动',
+      URGENT: '紧急'
+    }
   },
   quickRedeem: {
     title: '卡密充值',

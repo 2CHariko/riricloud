@@ -12,6 +12,7 @@ const common = {
     users: 'Users',
     plans: 'Plans',
     redeemCodes: 'Redeem Codes',
+    announcements: 'Announcements',
     docs: 'Documentation',
     network: 'Network & Nodes',
     nodes: 'Nodes',

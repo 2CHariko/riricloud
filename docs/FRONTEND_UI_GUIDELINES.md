@@ -84,12 +84,14 @@ apps/web/src/
 │   │   ├── copy-button.tsx      # 订阅链接一键复制按钮
 │   │   ├── line-card.tsx        # 统一线路展示卡片（compact/full 双变体）
 │   │   ├── announcement-card.tsx # 用户订阅页系统公告卡片
+│   │   ├── announcement-detail-dialog.tsx # 系统公告居中详情阅读弹窗
 │   │   ├── client-guide-card.tsx # 客户端三步使用指引
 │   │   └── traffic-badge.tsx    # 流量单位格式化与状态胶囊
 │   └── layout/             # 【全局框架布局】
 │       ├── app-layout.tsx       # 主控端侧边栏 + 主内容区 Inset 总布局
 │       ├── app-sidebar.tsx      # 左侧菜单导航与品牌头部 (h-14)
 │       ├── app-header.tsx       # 顶部全局微操作栏 (h-14，位于主大卡片上方)
+│       ├── announcement-center.tsx # 顶栏消息/公告中心（未读角标、内联下拉列表、强提醒弹窗）
 │       ├── user-menu.tsx        # 顶栏独立小巧用户头像与退出菜单
 │       └── theme-toggle.tsx     # 顶栏小巧明暗主题三态切换（浅色/深色/跟随系统）
 ├── pages/                  # 【页面级视图组件】仅负责数据获取、状态编排与子组件组装
@@ -475,11 +477,13 @@ v0.4.0 新增页面均位于已认证的 `AppLayout` 内，继续复用 `PageCon
 
 ### 12.3 系统设置与全局品牌
 
-- 系统设置页固定使用「基础与品牌 / 注册与用户 / 订阅与分发 / Agent 运维 / 存储与日志 / 安全与高级」六个 `Tabs`，Tab 图标统一固定为 `16px`，所有字段由 React Hook Form + Zod 管理，保存和重置操作使用 Sonner 提示结果。存储与日志页签集中维护小时流量保留天数、节点速率保留天数、系统日志保留天数/最大记录数/最低采集级别，以及 Agent 本地日志单文件大小/文件总数；保存只更新策略，不立即删除。
+- 系统设置页使用「基础与品牌 / 首页设置 / 注册与用户 / 订阅与分发 / Agent 运维 / 存储与日志 / 安全与高级」七个 `Tabs`，Tab 图标统一固定为 `16px`，所有字段由 React Hook Form + Zod 管理，保存和重置操作使用 Sonner 提示结果。存储与日志页签集中维护小时流量保留天数、节点速率保留天数、系统日志保留天数/最大记录数/最低采集级别，以及 Agent 本地日志单文件大小/文件总数；保存只更新策略，不立即删除。
+- 业务运营分组下的独立「公告管理」页（`/admin/announcements`）复用文档管理设计范式：提供按分类（通知 / 维护 / 活动 / 紧急）、状态与关键词组合过滤的数据表格（展示标题、正文摘要、分类徽章、置顶/横幅/弹窗策略标签、行内交互式 `Switch` 启停与删除二次确认），点击新建/编辑唤起全屏 `AnnouncementEditorDialog`（集成三态分屏/纯编辑/纯预览模式切换、4 维展示策略开关、快捷语法插入工具条、CodeMirror 源码高亮与 `MarkdownRenderer` 实时渲染预览）。
+- 顶部操作栏 `AppHeader` 集成 `AnnouncementCenter` 消息图标：存在未读公告时展示脉冲红点角标，点击展开右上角内联下拉列表（含分类彩色 Badge、置顶图标、未读标识、摘要预览与「全部已读」快捷按钮）；点击任意条目标记已读并唤起居中 `AnnouncementDetailDialog` 渲染完整 GFM Markdown；存在开启了 `popupOnLogin` 的未读公告时，用户进入控制台自动居中弹窗强提醒。
 - 流量统计页和系统日志页均提供进入统一「历史观测数据清理」弹窗的快捷入口。弹窗先选择目标与模式，再加载预览明细；执行前必须完成二次确认并输入 `CLEAR_HISTORY`，结果按数据类型展示成功、失败、匹配数、删除数与耗时。系统日志原有清理入口复用该组件，`all` 是显式清空模式，不以 `0` 伪装保留天数。
 - 节点列表/详情展示 `agent_log_rotation` 能力状态；旧 Agent 显示“需要升级”提示，但不得阻断节点业务操作。
 - Logo、Favicon、站点名、公告、页脚和客服入口通过公开站点信息动态感知；登录页、已认证外壳和我的订阅页面共享同一 Query 缓存，不在页面内硬编码品牌文案。
-- 公告横幅使用安全的 Markdown 子集渲染，支持本地收起记忆；订阅链接统一通过 `apps/web/src/lib/subscription-url.ts` 构造，优先使用配置的 `subscriptionBaseUrl`，没有有效订阅时必须引导进入套餐市场。
+- 公告横幅（`AnnouncementCard`）消费公告列表中启用且开启横幅展示的条目（向下兼容旧版 `siteAnnouncement`），支持按分类着色、安全的 Markdown 子集渲染、点击唤起完整详情弹窗及本地收起记忆；订阅链接统一通过 `apps/web/src/lib/subscription-url.ts` 构造，优先使用配置的 `subscriptionBaseUrl`，没有有效订阅时必须引导进入套餐市场。
 - 系统设置的“基础与品牌”页签提供 `publicBaseUrl` 全站访问 URL，用于主控生成 Agent 安装、升级和二进制下载地址；URL 字段旁提供“使用当前面板地址”快捷填充，并明确说明留空时服务端会按当前反向代理域名自动匹配。
 - `subscriptionShortLinksEnabled=false` 时展示标准 `.../api/v1/sub/<UUID>`；开启时展示由 Nginx rewrite 提供的 `.../<UUID>`，`subscriptionBaseUrl` 中的 pathname 必须原样保留并与部署配置一致。系统设置开关旁必须明确提示“先配置 Nginx”，但不在前端检测代理状态。
 - CSS、YAML 与 HTML/JS 代码编辑器使用 CodeMirror，代码区域保持等宽字体、明确的内部滚动边界，并在复杂弹窗/抽屉中填充剩余高度；编辑器主题必须跟随 `next-themes` 的 `resolvedTheme`；头部注入仅接受管理员配置，文案需提示只粘贴可信代码。
