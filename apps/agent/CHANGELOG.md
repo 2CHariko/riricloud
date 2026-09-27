@@ -17,10 +17,16 @@
 ### Changed
 
 ### Fixed
+
+
+## [0.8.5] - 2026-09-28
+
+### Fixed
 - **修复 Sing-box 本地回环管理端口（V2Ray API / Clash API）被占用或落入 Windows WinNAT 动态排除端口区间导致内核启动 Fatal 崩溃重启循环**：
   - 在 `apps/agent/internal/singbox/manager.go` 中新增 `sanitizeLoopbackListeners`：在原子落盘与拉起内核前，自动检测 `experimental.v2ray_api.listen` 与 `experimental.clash_api.external_controller` 本机回环监听端口可用性；
   - 当端口被其他进程占用或遭遇 Windows Socket 权限拒绝（`WSAEACCES` / `bind: An attempt was made to access a socket in a way forbidden by its access permissions.`）时，自动顺延重映射到本机空闲 loopback 端口，彻底根除因 Windows Hyper-V/WSL2 动态保留端口范围命中 10085/10086 引发的死循环崩溃；
   - `StatsAddress()` 与 `ClashAPIAddress()` 同步读取实际生效的回环端口，流量采集与多设备连接追踪无缝连通。
+
 
 
 ## [0.8.4] - 2026-09-27
