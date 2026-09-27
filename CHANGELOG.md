@@ -13,6 +13,15 @@
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+
+## [0.9.5] - 2026-09-28
+
+### Added
 - **全局公告中心、未读强提醒与后台「公告管理」系统**：
   - **顶栏消息/公告中心（`AnnouncementCenter`）**：在顶部操作栏 `AppHeader` 新增消息铃铛图标，基于本地已读状态实时展示未读脉冲红点角标；点击展开内联下拉列表，支持分类彩色标签（通知 / 维护 / 活动 / 紧急）、置顶标识、2 行摘要预览与「全部已读」快捷操作；
   - **居中详情阅读与未读自动强提醒（`AnnouncementDetailDialog`）**：点击列表项或订阅页横幅「查看详情」即唤起居中弹窗，通过 `MarkdownRenderer` 完整渲染 GFM Markdown（代码块复制、高亮告警框、外链等）；开启「重要公告未读自动弹窗」的公告在用户进入系统且未读时自动居中弹出提醒；
@@ -35,6 +44,7 @@
 - **修复端到端代理测速未校验 HTTP 响应状态码及部分协议出站缺失的问题**：
   - 重构 `LineSpeedtestService.httpGetViaHttpProxy`，对 HTTP 与 HTTPS（经 `CONNECT` 隧道完成 TLS 握手后发起 GET）严格解析响应状态行，仅当状态码为 `204` 或 `200` 时判定成功，彻底根治因本地代理返回 `502 Bad Gateway` 等错误报文仍因包含 `\r\n\r\n` 被误判为几毫秒测速成功的漏洞；
   - 补齐 `SHADOWTLS` 内层 Shadowsocks detour 传输层出站以及 `MIXED` / `SOCKS` / `HTTP` 直连代理出站构造，补齐探针凭据 `email: INTERNAL_SPEEDTEST_EMAIL` 以匹配入站鉴权用户名，并采用内核动态分配本地空闲端口与子进程 `stderr` 错误捕获透传。
+
 
 
 ## [0.9.4] - 2026-09-27
