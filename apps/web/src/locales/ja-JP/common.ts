@@ -12,6 +12,7 @@ const common = {
     users: 'ユーザー管理',
     plans: 'プラン管理',
     redeemCodes: 'ギフトコード管理',
+    announcements: 'お知らせ管理',
     docs: 'ドキュメント管理',
     network: 'ネットワーク・ノード',
     nodes: 'ノード管理',

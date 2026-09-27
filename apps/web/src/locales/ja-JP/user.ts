@@ -427,7 +427,30 @@ const user = {
   },
   announcement: {
     title: 'システムのお知らせ',
-    dismiss: '閉じる'
+    dismiss: '閉じる',
+    centerTitle: 'お知らせセンター',
+    centerAriaLabel: 'システムのお知らせを表示',
+    markAllRead: 'すべて既読にする',
+    allReadSuccess: 'すべてのお知らせを既読にしました',
+    emptyTitle: 'お知らせはありません',
+    emptyDesc: 'メンテナンスやアップデート、キャンペーンのお知らせがここに表示されます。',
+    unreadCount: '未読 {{count}} 件',
+    unreadBadge: '未読',
+    pinnedBadge: '固定',
+    viewDetails: '詳細を見る',
+    publishedAt: '{{time}} 公開',
+    updatedAt: '{{time}} 更新',
+    modalTitle: 'お知らせ詳細',
+    modalAriaClose: 'お知らせ詳細を閉じる',
+    bannerBadge: '重要なお知らせ',
+    popupBadge: '重要通知',
+    markedReadHint: '既読として記録されました',
+    types: {
+      NOTICE: 'お知らせ',
+      MAINTENANCE: 'メンテナンス',
+      EVENT: 'イベント',
+      URGENT: '緊急'
+    }
   },
   quickRedeem: {
     title: 'ギフトコード引き換え',

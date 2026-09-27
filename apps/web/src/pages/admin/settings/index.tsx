@@ -23,6 +23,7 @@ import { ProbePresetEditor } from './components/probe-preset-editor';
 import { probePresetTargetsSchema, toProbePresetFormValue, toProbePresetTarget, type ProbePresetTarget } from './components/probe-preset-schema';
 import { SpeedTierEditor } from './components/speed-tier-editor';
 import { LandingSettingsTab } from './components/landing-settings-tab';
+import { derivePrimaryBannerText, parseAnnouncements } from '@/lib/announcements';
 import { DEFAULT_SPEED_TIERS, type SpeedTier } from '@/lib/speed-tier';
 import { DatabaseStatsResponse, TelemetryCleanupDialog, VacuumResponse } from '@/components/shared/telemetry-cleanup-dialog';
 import { PageContainer, PageHeader } from '@/components/shared/page-container';
@@ -79,6 +80,7 @@ interface SystemSettings {
   logoUrl: string;
   faviconUrl: string;
   siteAnnouncement: string;
+  siteAnnouncementsJson: string;
   footerCopyright: string;
   supportTelegramUrl: string;
   supportDiscordUrl: string;
@@ -160,6 +162,7 @@ function createSettingsSchema() {
     logoUrl: z.string().refine(isBlankOrUrl, i18n.t('admin:settings.valLogoUrl')),
     faviconUrl: z.string().refine(isBlankOrUrl, i18n.t('admin:settings.valFaviconUrl')),
     siteAnnouncement: z.string().max(10000),
+    siteAnnouncementsJson: z.string().max(50000),
     footerCopyright: z.string().max(200),
     supportTelegramUrl: z.string().refine(isBlankOrUrl, i18n.t('admin:settings.valTgUrl')),
     supportDiscordUrl: z.string().refine(isBlankOrUrl, i18n.t('admin:settings.valDiscordUrl')),
@@ -259,6 +262,7 @@ const FIELD_TAB_MAP: Record<keyof SettingsForm, SettingsTabKey> = {
   logoUrl: 'branding',
   faviconUrl: 'branding',
   siteAnnouncement: 'branding',
+  siteAnnouncementsJson: 'branding',
   footerCopyright: 'branding',
   supportEmail: 'branding',
   supportTelegramUrl: 'branding',
@@ -401,7 +405,7 @@ export default function AdminSettingsPage() {
   const form = useForm<SettingsForm>({
     resolver: zodResolver(dynamicSettingsSchema),
     defaultValues: toForm({
-      siteName: '', siteDescription: '', publicBaseUrl: '', logoUrl: '', faviconUrl: '', siteAnnouncement: '', footerCopyright: '',
+      siteName: '', siteDescription: '', publicBaseUrl: '', logoUrl: '', faviconUrl: '', siteAnnouncement: '', siteAnnouncementsJson: '[]', footerCopyright: '',
       supportTelegramUrl: '', supportDiscordUrl: '', supportEmail: '', supportCustomUrl: '', registrationEnabled: false,
       systemTimezone: 'Asia/Shanghai',
       defaultPlanId: null, defaultBalance: 0, emailDomainMode: 'none',
@@ -506,7 +510,7 @@ export default function AdminSettingsPage() {
           <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as SettingsTabKey)} className="min-w-0 max-w-full w-full space-y-4">
             <TabsList className="h-auto w-full max-w-full justify-start gap-1 overflow-x-auto p-1">
               <TabsTrigger className="shrink-0" value="branding"><Palette className="h-4 w-4 shrink-0" />{t('admin:settings.generalTab')}</TabsTrigger>
-              <TabsTrigger className="shrink-0" value="landing"><Layout className="h-4 w-4 shrink-0" />{t('admin:settings.landingTab', { defaultValue: '首页设置' })}</TabsTrigger>
+              <TabsTrigger className="shrink-0" value="landing"><Layout className="h-4 w-4 shrink-0" />{t('admin:settings.landingTab')}</TabsTrigger>
               <TabsTrigger className="shrink-0" value="users"><UsersRound className="h-4 w-4 shrink-0" />{t('admin:settings.authTab')}</TabsTrigger>
                <TabsTrigger className="shrink-0" value="subscription"><Globe2 className="h-4 w-4 shrink-0" />{t('admin:settings.subscriptionTab')}</TabsTrigger>
                <TabsTrigger className="shrink-0" value="agent"><Gauge className="h-4 w-4 shrink-0" />{t('admin:settings.agentTab')}</TabsTrigger>
@@ -521,7 +525,6 @@ export default function AdminSettingsPage() {
               <TimezoneSettingField />
               <SettingsInput name="logoUrl" label={t('admin:settings.fieldLogoUrl')} placeholder="https://cdn.example.com/logo.svg" description={t('admin:settings.descLogoUrl')} />
               <SettingsInput name="faviconUrl" label={t('admin:settings.fieldFaviconUrl')} placeholder="https://cdn.example.com/favicon.ico" />
-              <SettingsTextarea name="siteAnnouncement" label={t('admin:settings.fieldSiteAnnouncement')} className="md:col-span-2" rows={5} description={t('admin:settings.descSiteAnnouncement')} />
               <SettingsInput name="footerCopyright" label={t('admin:settings.fieldFooterCopyright')} placeholder={t('admin:settings.placeholderFooterCopyright')} description={t('admin:settings.descFooterCopyright')} />
               <SettingsInput name="supportEmail" label={t('admin:settings.fieldSupportEmail')} placeholder="support@example.com" />
               <SettingsInput name="supportTelegramUrl" label={t('admin:settings.fieldSupportTg')} placeholder="https://t.me/riricloud" />
@@ -1126,6 +1129,7 @@ function toForm(settings: SystemSettings, availablePublicPlanIds?: Set<string>):
     logoUrl: cleanStr(settings.logoUrl),
     faviconUrl: cleanStr(settings.faviconUrl),
     siteAnnouncement: cleanStr(settings.siteAnnouncement),
+    siteAnnouncementsJson: cleanStr(settings.siteAnnouncementsJson, '[]') || '[]',
     footerCopyright: cleanStr(settings.footerCopyright),
     supportTelegramUrl: cleanStr(settings.supportTelegramUrl),
     supportDiscordUrl: cleanStr(settings.supportDiscordUrl),
@@ -1200,13 +1204,17 @@ function toForm(settings: SystemSettings, availablePublicPlanIds?: Set<string>):
 }
 
 function toPayload(values: SettingsForm) {
+  const parsedAnnouncements = parseAnnouncements(values.siteAnnouncementsJson, values.siteAnnouncement);
+  const derivedBanner = derivePrimaryBannerText(parsedAnnouncements);
+
   return {
     siteName: values.siteName,
     siteDescription: values.siteDescription,
     publicBaseUrl: values.publicBaseUrl.trim(),
     logoUrl: values.logoUrl.trim(),
     faviconUrl: values.faviconUrl.trim(),
-    siteAnnouncement: values.siteAnnouncement,
+    siteAnnouncement: derivedBanner,
+    siteAnnouncementsJson: values.siteAnnouncementsJson,
     footerCopyright: values.footerCopyright,
     supportTelegramUrl: values.supportTelegramUrl.trim(),
     supportDiscordUrl: values.supportDiscordUrl.trim(),

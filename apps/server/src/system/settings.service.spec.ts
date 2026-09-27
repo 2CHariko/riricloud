@@ -317,6 +317,42 @@ describe('SettingsService', () => {
       update: { value: JSON.stringify([{ id: 'f2', title: '新特性' }]) }
     }));
   });
+
+  it('正确读取与更新结构化公告列表字段', async () => {
+    const sampleAnnouncements = [
+      {
+        id: 'ann-1',
+        title: '系统升级维护通知',
+        content: '今晚 **23:00** 进行主干节点扩容升级。',
+        type: 'MAINTENANCE',
+        isPinned: true,
+        showBanner: true,
+        popupOnLogin: true,
+        enabled: true,
+        createdAt: '2026-09-28T00:00:00.000Z',
+        updatedAt: '2026-09-28T00:00:00.000Z'
+      }
+    ];
+    prisma.systemSetting.findMany.mockResolvedValue([
+      { key: SETTING_KEYS.SITE_ANNOUNCEMENTS_JSON, value: JSON.stringify(sampleAnnouncements) }
+    ]);
+
+    const settings = await service.getSettings();
+    expect(settings.siteAnnouncementsJson).toBe(JSON.stringify(sampleAnnouncements));
+
+    const publicSettings = await service.getPublicSettings();
+    expect(publicSettings.siteAnnouncementsJson).toBe(JSON.stringify(sampleAnnouncements));
+
+    prisma.systemSetting.upsert.mockResolvedValue({});
+    prisma.systemSetting.findMany.mockResolvedValue([]);
+    await service.updateSettings({
+      siteAnnouncementsJson: JSON.stringify(sampleAnnouncements)
+    });
+    expect(prisma.systemSetting.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { key: SETTING_KEYS.SITE_ANNOUNCEMENTS_JSON },
+      update: { value: JSON.stringify(sampleAnnouncements) }
+    }));
+  });
 });
 
 

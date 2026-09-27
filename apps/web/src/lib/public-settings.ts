@@ -10,6 +10,7 @@ export interface PublicSystemSettings {
   faviconUrl: string;
   publicBaseUrl: string;
   siteAnnouncement: string;
+  siteAnnouncementsJson?: string;
   footerCopyright: string;
   supportTelegramUrl: string;
   supportDiscordUrl: string;

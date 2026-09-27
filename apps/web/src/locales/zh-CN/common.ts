@@ -12,6 +12,7 @@ const common = {
     users: '用户管理',
     plans: '套餐管理',
     redeemCodes: '卡密管理',
+    announcements: '公告管理',
     docs: '文档管理',
     network: '网络与节点',
     nodes: '节点管理',

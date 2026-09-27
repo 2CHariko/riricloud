@@ -427,7 +427,30 @@ const user = {
   },
   announcement: {
     title: 'System Announcement',
-    dismiss: 'Got it'
+    dismiss: 'Got it',
+    centerTitle: 'Announcements',
+    centerAriaLabel: 'View system announcements',
+    markAllRead: 'Mark all read',
+    allReadSuccess: 'All announcements marked as read',
+    emptyTitle: 'No announcements',
+    emptyDesc: 'New maintenance alerts, updates, or events will appear here.',
+    unreadCount: '{{count}} unread',
+    unreadBadge: 'Unread',
+    pinnedBadge: 'Pinned',
+    viewDetails: 'View Details',
+    publishedAt: 'Published {{time}}',
+    updatedAt: 'Updated {{time}}',
+    modalTitle: 'Announcement Details',
+    modalAriaClose: 'Close announcement details',
+    bannerBadge: 'Featured',
+    popupBadge: 'Important',
+    markedReadHint: 'Marked as read',
+    types: {
+      NOTICE: 'Notice',
+      MAINTENANCE: 'Maintenance',
+      EVENT: 'Event',
+      URGENT: 'Urgent'
+    }
   },
   quickRedeem: {
     title: 'Redeem Code',
