@@ -30,6 +30,7 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
+| [docker-dockerhub-publish](./archive/2026-09-28-docker-dockerhub-publish.md) | `v0.9.5` | 2026-09-28 | — |
 | [release-and-ghcr-governance](./archive/2026-09-26-release-and-ghcr-governance.md) | `v0.9.0` | 2026-09-26 | — |
 | [多设备同时在线限制与实时设备管理全链路实现](./archive/2026-09-25-multi-device-limit-and-management.md) | `v0.9.0` | 2026-09-25 | — |
 | [完善卡密：分类、奖励类型、兑换限额与软删除](./archive/2026-09-23-redeem-code-enhancement.md) | `v0.9.0` | 2026-09-23 | — |

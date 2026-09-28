@@ -13,6 +13,11 @@
 ## [Unreleased]
 
 ### Added
+- **Docker 官方镜像仓库（Docker Hub）双发布支持与自动化流水线扩展**：
+  - 在 `.github/workflows/docker-publish.yml` 中引入 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` 凭证检测，使用 `docker/login-action@v3` 增加 Docker Hub 登录；
+  - 扩展镜像元数据解析逻辑，自动规整 Docker Hub 命名空间（全小写转换），并同时生成 GHCR (`ghcr.io`) 与 Docker Hub 标签列表，通过 Buildx 单次多目标构建直接实现无缝双推送；
+  - 提供环境凭据自适应与优雅降级机制（未配置 Docker Hub Secret 时自动回退至仅推 GHCR，不阻塞构建流程）；
+  - 更新 `docker-compose.image.yml`、`.env.image.example` 与 `docs/DEPLOYMENT_GUIDE.md`，提供从 Docker Hub 在线拉取与部署说明。
 
 ### Changed
 

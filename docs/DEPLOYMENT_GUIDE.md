@@ -144,14 +144,20 @@ docker compose --env-file .env.image -f docker-compose.image.yml up -d --no-buil
 docker compose --env-file .env.image -f docker-compose.image.yml ps
 ```
 
-**方式 B：从 GitHub Packages (GHCR) 在线拉取运行（`linux/amd64`）**
+**方式 B：从 Docker Hub / GitHub Packages (GHCR) 在线拉取运行（`linux/amd64`）**
 
-项目已配置 GitHub Actions 自动发布 Docker 镜像至 GitHub Container Registry (`ghcr.io`)。可在 `.env.image` 中指定在线镜像与拉取策略：
+项目已配置 GitHub Actions 自动将构建好的 Docker 镜像推送到 **Docker Hub** 与 **GitHub Container Registry (`ghcr.io`)**。可在 `.env.image` 中指定在线镜像与拉取策略：
 
 ```env
-MASTER_IMAGE=ghcr.io/<owner>/riricloud-master:latest
-AGENT_IMAGE=ghcr.io/<owner>/riricloud-agent:latest
+# 选项 1：从 Docker Hub 拉取（默认推荐，无需前缀或指定命名空间）
+MASTER_IMAGE=<dockerhub_user>/riricloud-master:latest
+AGENT_IMAGE=<dockerhub_user>/riricloud-agent:latest
 IMAGE_PULL_POLICY=if_not_present
+
+# 选项 2：从 GitHub Container Registry (GHCR) 拉取
+# MASTER_IMAGE=ghcr.io/<owner>/riricloud-master:latest
+# AGENT_IMAGE=ghcr.io/<owner>/riricloud-agent:latest
+# IMAGE_PULL_POLICY=if_not_present
 ```
 
 随后一键启动并拉取最新镜像：
@@ -161,7 +167,8 @@ docker compose --env-file .env.image -f docker-compose.image.yml pull
 docker compose --env-file .env.image -f docker-compose.image.yml up -d
 ```
 
-> 注：`<owner>` 替换为 GitHub 仓库所属用户或组织名（全小写）。GHCR 镜像采用严格双轨按 Release 独立发布（日常提交合并至 `main` 分支不会自动构建 `edge` 快照镜像）：发布 `vX.Y.Z` Release 时主控镜像（`riricloud-master`）自动打上 `vX.Y.Z`、`X.Y.Z` 与 `latest` 标签；发布 `agent-vA.B.C` Release 时边缘节点镜像（`riricloud-agent`）自动打上 `agent-vA.B.C`、`vA.B.C`、`A.B.C` 与 `latest` 标签（亦支持通过 `workflow_dispatch` 手动按需触发构建）。
+> 注：`<dockerhub_user>` / `<owner>` 替换为 Docker Hub 用户名或 GitHub 仓库所属用户/组织名（全小写）。
+> 官方镜像流水线采用双 Registry 并行分发与严格双轨解耦：发布 `vX.Y.Z` Release 时主控镜像（`riricloud-master`）自动打上 `vX.Y.Z`、`X.Y.Z` 与 `latest` 标签；发布 `agent-vA.B.C` Release 时边缘节点镜像（`riricloud-agent`）自动打上 `agent-vA.B.C`、`vA.B.C`、`A.B.C` 与 `latest` 标签（同时支持通过 GitHub Actions `workflow_dispatch` 手动按需触发构建）。构建过程自动同步推送至 Docker Hub 与 GHCR。
 
 停止并清理容器：
 
