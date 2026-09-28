@@ -131,6 +131,8 @@ apps/web/src/
 | **B6** | 表单通过裸 `useState` 分散管理字段与手动判断报错 | 必须使用 `react-hook-form` + `zod` + shadcn `<Form>` | ❌ 立即打回 |
 | **B7** | 内部页面跳转手写原生 HTML `<a>` 标签 | 站内导航必须使用 `react-router-dom` 的 `<Link>` 或 `<NavLink>`，严禁原生 `<a>` 引发整页刷新与白屏闪烁 | ❌ 立即打回 |
 | **B8** | 在 `useEffect` 内直接初始化/重置表单草稿，或让初始化 effect 依赖 query 的 `.data` 对象、`useMemo` 派生数组等易变引用 | 必须使用 `useFormResetOnKey`（`apps/web/src/hooks/use-form-reset.ts`），依赖只允许 `open`、实体 id、`dataUpdatedAt` 等原始值（详见 §5.1） | ❌ 立即打回 |
+| **B9** | 业务代码中手写原生 HTML `<table>`、`<thead>`、`<tbody>`、`<tr>`、`<th>`、`<td>` 标签 | 必须统一使用 `@/components/ui/table` 导出的原子组件 | ❌ 立即打回 |
+| **B10** | 后台管理列表工具栏套用独立 Card 边框容器、将搜索框置于右侧，或将工具栏塞入表格 `CardContent` 内部导致表格内缩 | 工具栏平铺在 `Card` 外部且搜索框居左；表格独占 `<Card><CardContent className="min-w-0 p-0"><Table>` 贴边容器（详见 §8.1.1） | ❌ 立即打回 |
 
 ---
 
@@ -340,6 +342,18 @@ export function PageContainer({ title, description, actions, children }: PageCon
 - 空数据展示：使用 `@/components/shared/empty-state.tsx` 统一插画与引导按钮。
 - 移动端保留完整字段与表格语义，表格外层使用 `overflow-x-auto`，横向滚动只允许发生在表格容器内，不得造成页面主体横向溢出；筛选工具栏在 `sm` 断点前必须允许换行。
 - 表格及标签区域使用的 `Badge` 必须保持单行（`whitespace-nowrap`），多个 Badge 可作为完整单元在父级容器中换行，禁止将 chip 文本压缩成逐字竖排。
+
+#### 8.1.1 后台管理列表页布局标准范式 (Admin Table Layout Standard)
+全站后台管理列表页面（如套餐管理、节点管理、线路管理、卡密管理、公告管理、文档管理等）必须严格统一为以下结构范式，严禁各自为政：
+1. **搜索与筛选工具栏（Toolbar）**：
+   - **平铺无外框**：工具栏直接作为 Flex 行置于 `PageContainer` 中，禁止在工具栏外层额外包裹 `Card` 或带边框背景容器（如 `rounded-xl border bg-card`）。
+   - **固定左右顺序**：**搜索输入框固定置于最左侧**（`relative w-full min-w-0 flex-1 sm:min-w-52 sm:max-w-xs` + `pl-9`），右侧紧跟业务筛选 `Select` 下拉框；主操作按钮（如新建、导出、清理等）统一置于工具栏右侧。
+   - **标准控件高度**：输入框、下拉框与按钮统一使用 New York 默认标准高度（`h-9 text-sm`），禁止私自硬编码压低为 `h-8 text-xs`。
+2. **表格卡片容器（Table Card Container）**：
+   - **零内边距贴边模式**：表格必须独占 `<Card><CardContent className="min-w-0 p-0"><Table className="min-w-[...]">`，禁止将搜索工具栏、提示横幅塞入同一个 `CardContent` 造成表格四周出现 `p-6` 内缩白边。
+   - **表头与行规范**：统一使用 `@/components/ui/table` 标准样式，严禁私自为 `<TableHeader>` 添加灰色底色（如 `bg-muted/40`）或手写原生 HTML `<table>`。空状态统一置于 `CardContent` 内并添加 `className="border-0"`。
+3. **分页与辅助信息行**：
+   - 列表底部的总记录数统计、分页器（`Pagination`）以及辅助说明横幅统一平铺在 `<Card>` 容器外部，保持表格卡片边界纯粹干净。
 
 ### 8.2 数据图表 (Data Charts)
 - 底层技术：采用 shadcn/ui 官方 `Chart`（封装自 `Recharts`）。

@@ -12,20 +12,25 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { RotateCcw } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface ResetDefaultsDialogProps {
   onConfirm: () => void;
   isPending: boolean;
+  className?: string;
 }
 
-export function ResetDefaultsDialog({ onConfirm, isPending }: ResetDefaultsDialogProps) {
+export function ResetDefaultsDialog({ onConfirm, isPending, className }: ResetDefaultsDialogProps) {
   const { t } = useTranslation(['admin', 'common']);
 
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-1.5 text-xs text-amber-600 hover:text-amber-700 border-amber-500/30">
-          <RotateCcw className="size-3.5" />
+        <Button
+          variant="outline"
+          className={cn("w-full sm:w-auto gap-1.5 text-amber-600 hover:text-amber-700 border-amber-500/30", className)}
+        >
+          <RotateCcw className="size-4" />
           <span>{t('admin:docs.resetDefaults')}</span>
         </Button>
       </AlertDialogTrigger>

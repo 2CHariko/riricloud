@@ -13,7 +13,9 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import {
   Select,
@@ -22,6 +24,14 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -107,28 +117,27 @@ export default function AdminDocsPage() {
 
   return (
     <PageContainer>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <PageHeader
-          title={t('admin:docs.title')}
-          description={t('admin:docs.subtitle')}
-        />
-        <div className="flex items-center gap-2 shrink-0">
-          <ResetDefaultsDialog
-            onConfirm={() => resetDefaultsMutation.mutate()}
-            isPending={resetDefaultsMutation.isPending}
-          />
-          <Button size="sm" className="gap-1.5 shadow-xs" onClick={handleOpenCreate}>
-            <Plus className="size-4" />
-            <span>{t('admin:docs.newDoc')}</span>
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={t('admin:docs.title')}
+        description={t('admin:docs.subtitle')}
+      />
 
       {/* 顶部工具栏过滤 */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-xl border border-border bg-card shadow-2xs">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative w-full min-w-0 flex-1 sm:min-w-52 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+            <Input
+              type="search"
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              placeholder={t('admin:docs.searchPlaceholder')}
+              className="pl-9"
+            />
+          </div>
+
           <Select value={platformFilter} onValueChange={setPlatformFilter}>
-            <SelectTrigger className="w-[140px] h-8 text-xs">
+            <SelectTrigger className="w-full sm:w-36">
               <SelectValue placeholder={t('admin:docs.platform')} />
             </SelectTrigger>
             <SelectContent>
@@ -144,7 +153,7 @@ export default function AdminDocsPage() {
           </Select>
 
           <Select value={localeFilter} onValueChange={setLocaleFilter}>
-            <SelectTrigger className="w-[120px] h-8 text-xs">
+            <SelectTrigger className="w-full sm:w-32">
               <SelectValue placeholder={t('admin:docs.allLocales')} />
             </SelectTrigger>
             <SelectContent>
@@ -156,87 +165,93 @@ export default function AdminDocsPage() {
           </Select>
         </div>
 
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-          <Input
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            placeholder={t('admin:docs.searchPlaceholder')}
-            className="pl-8 h-8 text-xs"
+        <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+          <ResetDefaultsDialog
+            onConfirm={() => resetDefaultsMutation.mutate()}
+            isPending={resetDefaultsMutation.isPending}
           />
+          <Button className="w-full sm:w-auto" onClick={handleOpenCreate}>
+            <Plus className="size-4" />
+            <span>{t('admin:docs.newDoc')}</span>
+          </Button>
         </div>
       </div>
 
       {/* 文档列表表格 */}
-      <div className="rounded-xl border border-border bg-card shadow-2xs overflow-hidden">
-        {isLoading ? (
-          <div className="py-20 text-center text-xs text-muted-foreground">{t('admin:docs.loading')}</div>
-        ) : articles.length === 0 ? (
-          <EmptyState
-            title={t('admin:docs.emptyTitle')}
-            description={t('admin:docs.emptyDesc')}
-            action={
-              <Button size="sm" variant="outline" onClick={handleOpenCreate} className="gap-1.5 text-xs">
-                <Plus className="size-3.5" />
-                <span>{t('admin:docs.createNow')}</span>
-              </Button>
-            }
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-border bg-muted/40 font-semibold text-muted-foreground">
-                  <th className="py-3 px-4">{t('admin:docs.table.title')}</th>
-                  <th className="py-3 px-4">{t('admin:docs.table.platformClient')}</th>
-                  <th className="py-3 px-4">{t('admin:docs.table.slug')}</th>
-                  <th className="py-3 px-4">{t('admin:docs.table.sort')}</th>
-                  <th className="py-3 px-4">{t('admin:docs.table.locale')}</th>
-                  <th className="py-3 px-4">{t('admin:docs.table.status')}</th>
-                  <th className="py-3 px-4">{t('admin:docs.table.updatedAt')}</th>
-                  <th className="py-3 px-4 text-right">{t('admin:docs.table.actions')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
+      <Card>
+        <CardContent className="min-w-0 p-0">
+          {isLoading ? (
+            <div className="space-y-3 p-4">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : articles.length === 0 ? (
+            <EmptyState
+              title={t('admin:docs.emptyTitle')}
+              description={t('admin:docs.emptyDesc')}
+              className="border-0"
+              action={
+                <Button size="sm" variant="outline" onClick={handleOpenCreate} className="gap-1.5">
+                  <Plus className="size-4" />
+                  <span>{t('admin:docs.createNow')}</span>
+                </Button>
+              }
+            />
+          ) : (
+            <Table className="min-w-[900px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[30%]">{t('admin:docs.table.title')}</TableHead>
+                  <TableHead>{t('admin:docs.table.platformClient')}</TableHead>
+                  <TableHead>{t('admin:docs.table.slug')}</TableHead>
+                  <TableHead>{t('admin:docs.table.sort')}</TableHead>
+                  <TableHead>{t('admin:docs.table.locale')}</TableHead>
+                  <TableHead>{t('admin:docs.table.status')}</TableHead>
+                  <TableHead>{t('admin:docs.table.updatedAt')}</TableHead>
+                  <TableHead className="text-right">{t('admin:docs.table.actions')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {articles.map((article) => {
                   const IconComp = getPlatformIcon(article.platform, article.icon);
 
                   return (
-                    <tr key={article.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="py-3 px-4 max-w-[280px]">
+                    <TableRow key={article.id}>
+                      <TableCell className="max-w-[280px]">
                         <div className="flex items-start gap-2.5">
                           <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-foreground/80">
                             <IconComp className="size-3.5" />
                           </span>
-                          <div className="min-w-0">
-                            <div className="font-semibold text-foreground truncate" title={article.title}>
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="font-medium text-foreground truncate" title={article.title}>
                               {article.title}
                             </div>
                             {article.summary && (
-                              <div className="text-[11px] text-muted-foreground truncate mt-0.5" title={article.summary}>
+                              <div className="text-xs text-muted-foreground truncate" title={article.summary}>
                                 {article.summary}
                               </div>
                             )}
                           </div>
                         </div>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
-                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal">
+                          <Badge variant="secondary">
                             {article.platform}
                           </Badge>
                           {article.clientName && (
-                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal border-primary/30 text-primary">
+                            <Badge variant="outline" className="border-primary/30 text-primary">
                               {article.clientName}
                             </Badge>
                           )}
                         </div>
-                      </td>
+                      </TableCell>
 
                       {/* Slug 标识列：优化等宽样式与纯图标独立复制按钮，杜绝文字遮挡与换行 */}
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5 font-mono text-[11px] bg-muted/40 border border-border/70 px-2 py-0.5 rounded-md text-foreground/90">
+                      <TableCell className="whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5 font-mono text-xs bg-muted/40 border border-border/70 px-2 py-0.5 rounded-md text-foreground/90">
                           <span className="select-all">{article.slug}</span>
                           <IconButton
                             type="button"
@@ -247,48 +262,49 @@ export default function AdminDocsPage() {
                             onClick={(e) => {
                               e.stopPropagation();
                               handleCopySlug(article.slug);
-                            }} aria-label={t('admin:docs.copySlug')}
+                            }}
+                            aria-label={t('admin:docs.copySlug')}
                           >
-                            <Copy className="size-4" />
+                            <Copy className="size-3.5" />
                           </IconButton>
                         </div>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 font-mono text-muted-foreground">
+                      <TableCell className="font-mono text-xs text-muted-foreground tabular-nums">
                         {article.sortOrder}
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4">
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-mono font-normal">
+                      <TableCell>
+                        <Badge variant="outline" className="font-mono">
                           {article.locale}
                         </Badge>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={article.isPublished}
                             onCheckedChange={(checked) => handleTogglePublish(article, checked)}
                             aria-label={t('admin:docs.table.status')}
                           />
-                          <span className={`text-[11px] ${article.isPublished ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted-foreground'}`}>
+                          <span className={article.isPublished ? 'text-xs text-emerald-600 dark:text-emerald-400 font-medium' : 'text-xs text-muted-foreground'}>
                             {article.isPublished ? t('admin:docs.table.published') : t('admin:docs.table.draft')}
                           </span>
                         </div>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-[11px]">
+                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs tabular-nums">
                         {formatDateTime(article.updatedAt)}
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <TableCell className="text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
                           <IconButton
                             variant="ghost"
                             size="icon-sm"
-                            className="text-muted-foreground hover:text-foreground"
                             onClick={() => handleOpenEdit(article)}
-                            title={t('admin:docs.edit')} aria-label={t('admin:docs.edit')}
+                            title={t('admin:docs.edit')}
+                            aria-label={t('admin:docs.edit')}
                           >
                             <Edit className="size-4" />
                           </IconButton>
@@ -298,10 +314,10 @@ export default function AdminDocsPage() {
                               <IconButton
                                 variant="ghost"
                                 size="icon-sm"
-                                className="text-muted-foreground hover:text-destructive"
-                                title={t('admin:docs.delete')} aria-label={t('admin:docs.delete')}
+                                title={t('admin:docs.delete')}
+                                aria-label={t('admin:docs.delete')}
                               >
-                                <Trash2 className="size-4" />
+                                <Trash2 className="size-4 text-destructive" />
                               </IconButton>
                             </AlertDialogTrigger>
                             <AlertDialogContent>
@@ -323,15 +339,15 @@ export default function AdminDocsPage() {
                             </AlertDialogContent>
                           </AlertDialog>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* 新建/编辑文档分屏弹窗 */}
       <DocEditorDialog
