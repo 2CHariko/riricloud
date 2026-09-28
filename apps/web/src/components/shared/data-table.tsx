@@ -13,6 +13,7 @@ import {
 import { ArrowDown, ArrowUp, ArrowUpDown, Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
@@ -47,9 +48,13 @@ interface DataTableProps<TData, TValue> {
   initialPageSize?: number;
   /** 行选择变化回调 */
   onSelectionChange?: (rows: TData[]) => void;
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: React.Dispatch<React.SetStateAction<RowSelectionState>>;
   emptyTitle?: string;
   emptyDescription?: string;
   toolbar?: React.ReactNode;
+  banner?: React.ReactNode;
+  actions?: React.ReactNode;
   tableClassName?: string;
 }
 
@@ -59,19 +64,24 @@ export function DataTable<TData extends { id: string }, TValue>({
   total,
   initialPageSize = 20,
   onSelectionChange,
+  rowSelection: propsRowSelection,
+  onRowSelectionChange,
   emptyTitle,
   emptyDescription,
   toolbar,
+  banner,
+  actions,
   tableClassName
 }: DataTableProps<TData, TValue>) {
   const { t } = useTranslation('common');
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
-  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
-
-  const selectable = columns.some((c) => c.id === 'select');
+  const [internalRowSelection, setInternalRowSelection] = React.useState<RowSelectionState>({});
+  const rowSelection = propsRowSelection ?? internalRowSelection;
+  const setRowSelection = onRowSelectionChange ?? setInternalRowSelection;
+  const selectable = Boolean(onSelectionChange || onRowSelectionChange);
   const tableColumns = React.useMemo<ColumnDef<TData, TValue>[]>(() => {
-    if (!selectable) return columns;
+    if (!selectable || columns.some((c) => c.id === 'select')) return columns;
     const selectColumn: ColumnDef<TData, TValue> = {
       id: 'select',
       header: ({ table }) => (
@@ -117,13 +127,15 @@ export function DataTable<TData extends { id: string }, TValue>({
   const totalPages = Math.max(1, Math.ceil(data.length / table.getState().pagination.pageSize));
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-4 md:gap-6">
       <div className="flex flex-col items-stretch justify-between gap-2 sm:flex-row sm:items-center">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{toolbar}</div>
-        <DropdownMenu>
+        <div className="flex items-center gap-2 shrink-0">
+          {actions}
+          <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="ml-auto gap-1.5">
-                <Settings2 className="h-4 w-4" />
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <Settings2 className="size-4" />
                 {t('table.columns')}
               </Button>
             </DropdownMenuTrigger>
@@ -142,13 +154,17 @@ export function DataTable<TData extends { id: string }, TValue>({
                 ))}
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
       </div>
 
-      <div className="min-w-0 rounded-xl border">
-        <Table className={tableClassName}>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
+      {banner}
+
+      <Card className="min-w-0">
+        <CardContent className="min-w-0 p-0">
+          <Table className={tableClassName}>
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
                   <TableHead key={header.id}>
                     {header.isPlaceholder ? null : (
@@ -186,10 +202,11 @@ export function DataTable<TData extends { id: string }, TValue>({
             )}
           </TableBody>
         </Table>
-      </div>
+        </CardContent>
+      </Card>
 
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <p>
           {total !== undefined && total > data.length
             ? t('table.totalItemsLimited', { total, loaded: data.length })
             : t('table.totalItems', { total: total ?? data.length })}

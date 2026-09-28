@@ -15,6 +15,10 @@
 ### Added
 
 ### Changed
+- **重构「用户管理」与通用复合组件 `DataTable` 的样式与交互对齐**：
+  - 将 `DataTable` 内部容器从裸 `<div className="min-w-0 rounded-xl border">` 升级为标准 `<Card className="min-w-0"><CardContent className="min-w-0 p-0"><Table>` 贴边容器，恢复 `bg-card` 浮雕景深与卡片阴影；
+  - 增加 `actions` 右侧操作插槽与 `banner` 独立横幅插槽；修复 `DataTable` 行多选列自动注入判定缺陷，完善受控 `rowSelection` 与批量操作后自动清空勾选状态；
+  - 用户管理页面：重构搜索筛选栏，将「添加用户」主按钮移入右侧 `actions` 插槽，将批量操作栏（批量封禁/激活/删除）从工具栏剥离至独立的 `banner` 横幅，优化骨架屏为多行表格卡片模拟结构。
 
 ### Fixed
 
