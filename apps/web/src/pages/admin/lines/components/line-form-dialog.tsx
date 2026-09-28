@@ -40,7 +40,11 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
   useFormResetOnKey({
     open,
     resetKey: line?.id ?? 'create',
-    reset: () => { setTab('inbound'); form.reset(line ? lineToFormValues(line) : newLineFormValues()); }
+    reset: () => {
+      setTab('inbound');
+      const maxSort = lines.length ? Math.max(...lines.map((item) => item.sortOrder ?? 0)) : 0;
+      form.reset(line ? lineToFormValues(line) : newLineFormValues('VLESS', maxSort + 10));
+    }
   });
 
   const changeProtocol = (protocolType: ProtocolType) => {

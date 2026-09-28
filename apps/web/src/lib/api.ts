@@ -102,11 +102,16 @@ export interface ApiLine {
   serverPort: number;
   serverName: string | null;
   host: string | null;
+  landingEndpointOverrideEnabled?: boolean;
+  landingServerHost?: string | null;
+  landingServerPort?: number | null;
   endpointOverrides: {
     serverHost: string | null;
     serverPort: number | null;
     serverName: string | null;
     host: string | null;
+    landingServerHost?: string | null;
+    landingServerPort?: number | null;
   };
   trafficRate: number;
   tags: string[];
@@ -130,6 +135,11 @@ export interface ApiLine {
     entryPort: number;
     landingNodeId?: string | null;
     landingPort?: number | null;
+    endpointOverrideEnabled?: boolean;
+    serverHost?: string | null;
+    serverPort?: number | null;
+    serverName?: string | null;
+    host?: string | null;
     entryNode: { id: string; name: string; serverHost: string; status: string; isLocal: boolean };
   } | null;
   certificate: {
@@ -143,7 +153,7 @@ export interface ApiLine {
   } | null;
   topology: {
     entry: { node: { id: string; name: string; serverHost: string; status: string; isLocal: boolean }; port: number };
-    landing?: { node: { id: string; name: string; serverHost: string; status: string; isLocal: boolean }; port: number } | null;
+    landing?: { node: { id: string; name: string; serverHost: string; status: string; isLocal: boolean }; port: number; host?: string } | null;
   };
 }
 

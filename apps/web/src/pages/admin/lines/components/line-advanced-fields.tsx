@@ -22,6 +22,7 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
   const landingNodeId = form.watch('landingNodeId');
   const targetLineId = form.watch('targetLineId');
   const endpointOverrideEnabled = form.watch('endpointOverrideEnabled');
+  const landingEndpointOverrideEnabled = form.watch('landingEndpointOverrideEnabled');
   const selectedLandingNode = nodes.find((node) => node.id === landingNodeId);
   const isNatLanding = selectedLandingNode?.reachability === 'NAT';
   const nodeOptions = nodes
@@ -134,7 +135,10 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
           />
           {targetLine && <div className="rounded-md border bg-muted/30 p-3 text-sm">
             <p className="font-medium">{t('admin:lineForm.boundLandingTitle')}</p>
-            <p className="mt-1 text-muted-foreground">{targetLine.entryNode.name} · {targetLine.entryNode.serverHost}:{targetLine.entryPort}</p>
+            <p className="mt-1 text-muted-foreground">
+              {targetLine.entryNode.name} · {targetLine.endpointOverrideEnabled && targetLine.serverHost ? targetLine.serverHost : targetLine.entryNode.serverHost}:{targetLine.endpointOverrideEnabled && targetLine.serverPort ? targetLine.serverPort : targetLine.entryPort}
+              {targetLine.endpointOverrideEnabled && Boolean(targetLine.serverHost || targetLine.serverPort) ? t('admin:lineForm.targetLineEndpointInherited') : ''}
+            </p>
             <p className="text-muted-foreground">{t('admin:lineForm.targetProtocol')}{targetLine.protocolType} · {targetLine.status === 'ACTIVE' ? t('admin:lineForm.lineActive') : t('admin:lineForm.lineDisabled')}</p>
           </div>}
         </div>}
@@ -153,6 +157,42 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
         </FieldGrid>}
       </section>
 
+      {type === 'RELAY' && <>
+        <Separator />
+        <section className="space-y-3">
+          <h3 className="text-sm font-medium">{t('admin:lineForm.sectionLandingEndpointOverride')}</h3>
+          <Separator />
+          {isNatLanding ? (
+            <p className="text-xs text-muted-foreground">{t('admin:lineForm.landingEndpointOverrideNatNotice')}</p>
+          ) : (
+            <>
+              <SwitchField
+                form={form}
+                name="landingEndpointOverrideEnabled"
+                label={t('admin:lineForm.landingEndpointOverrideEnabled')}
+                description={t('admin:lineForm.landingEndpointOverrideDesc')}
+              />
+              {landingEndpointOverrideEnabled && (
+                <FieldGrid>
+                  <TextField
+                    form={form}
+                    name="landingServerHost"
+                    label={t('admin:lineForm.landingServerHostOverride')}
+                    placeholder={t('admin:lineForm.landingServerHostPlaceholder')}
+                  />
+                  <TextField
+                    form={form}
+                    name="landingServerPort"
+                    label={t('admin:lineForm.landingServerPortOverride')}
+                    type="number"
+                    placeholder={t('admin:lineForm.landingServerPortPlaceholder')}
+                  />
+                </FieldGrid>
+              )}
+            </>
+          )}
+        </section>
+      </>}
       <Separator />
       <section className="space-y-3">
         <h3 className="text-sm font-medium">{t('admin:lineForm.sectionAttributes')}</h3>

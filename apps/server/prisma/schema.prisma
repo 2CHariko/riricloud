@@ -286,6 +286,9 @@ model Line {
   serverPort              Int?
   serverName              String?
   host                    String?
+  landingEndpointOverrideEnabled Boolean   @default(false)
+  landingServerHost       String?
+  landingServerPort       Int?
   trafficRate             Float     @default(1)
   allowLanAccess          Boolean   @default(false) // 落地端是否允许访问局域网私网 IP (默认 false 拦截)
   tunnelType              String? // TCP_MUX | WIREGUARD (反向穿透隧道类型，NAT 落地中继时生效)

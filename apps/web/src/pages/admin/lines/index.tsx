@@ -48,7 +48,8 @@ export default function AdminLinesPage() {
 
   function relayDescription(line: AdminLine) {
     if (line.relayMode === 'TARGET_LINE' && line.targetLine) {
-      return `${t('admin:lines.relayTargetBridge')} ➔ [${line.targetLine.entryNode.name}] ${line.targetLine.protocolType}:${line.targetLine.entryPort}`;
+      const targetPort = line.topology.landing?.port ?? line.targetLine.entryPort;
+      return `${t('admin:lines.relayTargetBridge')} ➔ [${line.targetLine.entryNode.name}] ${line.targetLine.protocolType}:${targetPort}`;
     }
     return line.relayMode ? relayLabels[line.relayMode] : '';
   }
@@ -83,12 +84,18 @@ export default function AdminLinesPage() {
 
   const move = (line: AdminLine, direction: -1 | 1) => {
     const index = lines.findIndex((item) => item.id === line.id);
-    const neighbor = lines[index + direction];
-    if (!neighbor) return;
-    reorder.mutate([
-      { id: line.id, sortOrder: neighbor.sortOrder },
-      { id: neighbor.id, sortOrder: line.sortOrder }
-    ]);
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= lines.length) return;
+
+    const reordered = [...lines];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
+
+    const payload = reordered
+      .map((item, idx) => ({ id: item.id, sortOrder: (idx + 1) * 10 }))
+      .filter((item, idx) => lines[idx]?.id !== item.id || lines[idx]?.sortOrder !== item.sortOrder);
+
+    reorder.mutate(payload);
   };
 
   const openCreate = () => { setEditing(null); setFormOpen(true); };
@@ -155,6 +162,7 @@ export default function AdminLinesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10"><Checkbox checked={allSelected} onCheckedChange={(checked) => toggleAll(checked === true)} aria-label={t('common:table.selectAll')} /></TableHead>
+                  <TableHead className="w-16">{t('admin:lines.colOrder')}</TableHead>
                   <TableHead>{t('admin:lines.colLine')}</TableHead>
                   <TableHead>{t('admin:lines.colType')}</TableHead>
                   <TableHead>{t('admin:lines.colEndpoint')}</TableHead>
@@ -183,6 +191,7 @@ export default function AdminLinesPage() {
                 {lines.map((line, index) => (
                   <TableRow key={line.id}>
                     <TableCell><Checkbox checked={selected.has(line.id)} onCheckedChange={(checked) => toggleSelected(line.id, checked === true)} aria-label={`${t('common:actions.select')} ${line.name}`} /></TableCell>
+                    <TableCell className="w-16"><span className="font-mono text-xs text-muted-foreground tabular-nums font-medium">#{line.sortOrder}</span></TableCell>
                     <TableCell><div className="font-medium">{line.name}</div><div className="text-xs text-muted-foreground">Lv.{line.level}</div></TableCell>
                     <TableCell><Badge variant="outline" title={line.relayMode === 'TARGET_LINE' ? relayDescription(line) : undefined}>{typeLabels[line.type]}{line.relayMode ? ` · ${relayDescription(line)}` : ''}</Badge></TableCell>
                     <TableCell className="min-w-36"><div className="font-mono text-xs">{line.serverHost}:{line.serverPort}</div><div className="text-xs text-muted-foreground">{line.endpointOverrideEnabled ? t('admin:lines.overrideEnabled') : t('admin:lines.reuseUnderlying')}</div>{line.serverName && <div className="text-xs text-muted-foreground">SNI {line.serverName}</div>}{line.host && <div className="text-xs text-muted-foreground">Host {line.host}</div>}</TableCell>
@@ -200,7 +209,7 @@ export default function AdminLinesPage() {
                             <span>{line.targetLine?.entryNode.name ?? t('admin:lines.unbound')}</span>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {line.protocolType} ➔ {line.targetLine?.protocolType ?? t('common:status.unknown')} · {t('admin:lines.portLanding', { port: line.targetLine?.entryPort ?? '—' })}
+                            {line.protocolType} ➔ {line.targetLine?.protocolType ?? t('common:status.unknown')} · {t('admin:lines.portLanding', { port: line.topology.landing?.port ?? line.targetLine?.entryPort ?? '—' })}
                           </div>
                         </>
                       ) : (
@@ -211,7 +220,7 @@ export default function AdminLinesPage() {
                             <span>{line.landingNode?.name ?? t('admin:lines.unbound')}</span>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {line.protocolType} · {t('admin:lines.portLanding', { port: line.landingPort ?? '—' })}
+                            {line.protocolType} · {t('admin:lines.portLanding', { port: line.topology.landing?.port ?? line.landingPort ?? '—' })}
                           </div>
                         </>
                       )}

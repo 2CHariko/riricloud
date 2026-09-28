@@ -317,6 +317,9 @@ model Line {
   serverPort      Int?
   serverName      String?
   host            String?
+  landingEndpointOverrideEnabled Boolean @default(false) // 是否启用中继落地端点覆盖；关闭时复用落地节点或目标线路默认设置
+  landingServerHost String?   // 中继落地连接地址/域名覆盖 (仅 RELAY 生效)
+  landingServerPort Int?      // 中继落地连接端口覆盖 (仅 RELAY 生效)
   trafficRate     Float    @default(1)
   allowLanAccess  Boolean  @default(false) // 落地端是否允许访问局域网私网 IP (默认 false 拦截私网目标保护家庭内网安全)
   tunnelType      String?  // 反向穿透隧道类型：TCP_MUX (Yamux 多路复用) | WIREGUARD (NAT 落地中继时生效)
@@ -841,6 +844,8 @@ model HelpArticle {
 | `endpointOverrideEnabled=true` | 启用 `serverHost/serverPort/serverName/host` 覆盖；覆盖值单独保留，关闭开关不会清空 |
 | `serverHost/serverPort` | 用户端实际连接地址/端口覆盖；线路 API 顶层字段返回最终生效值，`endpointOverrides` 返回原始值 |
 | `serverName/host` | 订阅编译与协议代理中继分别覆盖 SNI 与传输层 Host；开关关闭时回退到 `Line.paramsJson` |
+| `landingEndpointOverrideEnabled` | 中继线路专属落地端点覆盖开关；开启时允许显式为入口出站指定内网专线 IP / 回源域名与端口 |
+| `landingServerHost/landingServerPort` | 中继向落地节点发起连接时使用的拨号目标覆盖值；`TARGET_LINE` 模式未开启落地覆盖时自动继承目标直连线路生效的对外端点（`serverHost:serverPort`）与 SNI；NAT 落地时锁定走 127.0.0.1 反向隧道 |
 | `protocolType/paramsJson` | Line 自己拥有协议和协议参数；响应字段为 `protocolType` + 脱敏后的 `params`，管理端通过可视化分组表单编辑 |
 | `trafficRate` | 线路流量倍率；`TrafficLog.upload/download` 记录物理原始字节，Agent 心跳入账时以该倍率折算 `billedBytes` 扣减 `Subscription.trafficUsedBytes` 与兼容的 `User.trafficUsedBytes`，大盘同时展示物理值与折算值；订阅展示倍率非 1 时线路名称追加 `[Nx]` |
 | `tagsJson/level/sortOrder/isPublic/status` | 线路标签、等级、排序、公开性与启停状态；只在线且公开的启用线路可进入套餐匹配，额外授权线路可绕过公开性与套餐规则但仍须启用且入口/出口在线 |

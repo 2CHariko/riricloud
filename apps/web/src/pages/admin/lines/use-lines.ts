@@ -24,6 +24,9 @@ export interface LinePayload {
   serverPort?: number | null;
   serverName?: string | null;
   host?: string | null;
+  landingEndpointOverrideEnabled?: boolean;
+  landingServerHost?: string | null;
+  landingServerPort?: number | null;
   trafficRate?: number;
   tags?: string[];
   level?: number;
