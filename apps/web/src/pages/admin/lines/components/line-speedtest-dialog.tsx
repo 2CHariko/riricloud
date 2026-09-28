@@ -69,14 +69,14 @@ export function LineSpeedtestDialog({ open, onOpenChange, line }: LineSpeedtestD
   const entryPort = line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort;
 
   const landingHost = isRelay
-    ? line.relayMode === 'TARGET_LINE' && line.targetLine
-      ? line.targetLine.entryNode.serverHost
-      : line.landingNode?.serverHost ?? '—'
+    ? line.topology.landing?.host ?? (line.relayMode === 'TARGET_LINE' && line.targetLine
+        ? (line.targetLine.endpointOverrideEnabled && line.targetLine.serverHost ? line.targetLine.serverHost : line.targetLine.entryNode.serverHost)
+        : line.landingNode?.serverHost ?? '—')
     : null;
   const landingPort = isRelay
-    ? line.relayMode === 'TARGET_LINE' && line.targetLine
-      ? line.targetLine.entryPort
-      : line.landingPort ?? '—'
+    ? line.topology.landing?.port ?? (line.relayMode === 'TARGET_LINE' && line.targetLine
+        ? (line.targetLine.endpointOverrideEnabled && line.targetLine.serverPort ? line.targetLine.serverPort : line.targetLine.entryPort)
+        : line.landingPort ?? '—')
     : null;
   const landingName = isRelay
     ? line.relayMode === 'TARGET_LINE' && line.targetLine

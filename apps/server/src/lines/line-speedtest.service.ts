@@ -131,6 +131,32 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     const serverPort = line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort;
 
     const isRelay = line.type === 'RELAY';
+    const isNatLanding = line.landingNode?.reachability === 'NAT';
+    const hasLandingOverride = isRelay && !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
+
+    let landingHost: string | null = null;
+    let landingPort: number | null = null;
+
+    if (isRelay) {
+      if (isNatLanding) {
+        landingHost = '127.0.0.1';
+        landingPort = line.landingPort ?? null;
+      } else if (hasLandingOverride) {
+        landingHost = line.landingServerHost!.trim();
+        landingPort = line.landingServerPort ?? (line.relayMode === 'TARGET_LINE' ? (line.targetLine?.entryPort ?? null) : (line.landingPort ?? null));
+      } else if (line.relayMode === 'TARGET_LINE' && line.targetLine) {
+        landingHost = (line.targetLine.endpointOverrideEnabled && line.targetLine.serverHost)
+          ? line.targetLine.serverHost.trim()
+          : line.targetLine.entryNode.serverHost;
+        landingPort = (line.targetLine.endpointOverrideEnabled && line.targetLine.serverPort)
+          ? line.targetLine.serverPort
+          : line.targetLine.entryPort;
+      } else if (line.landingNode) {
+        landingHost = line.landingNode.serverHost;
+        landingPort = line.landingPort ?? null;
+      }
+    }
+
     const topology = {
       isRelay,
       relayMode: line.relayMode,
@@ -146,15 +172,15 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
             ? {
                 id: line.targetLine.entryNode.id,
                 name: line.targetLine.entryNode.name,
-                host: line.targetLine.serverHost || line.targetLine.entryNode.serverHost,
-                port: line.targetLine.entryPort
+                host: landingHost ?? line.targetLine.entryNode.serverHost,
+                port: landingPort ?? line.targetLine.entryPort
               }
             : line.landingNode
               ? {
                   id: line.landingNode.id,
                   name: line.landingNode.name,
-                  host: line.landingNode.serverHost,
-                  port: line.landingPort
+                  host: landingHost ?? line.landingNode.serverHost,
+                  port: landingPort ?? line.landingPort
                 }
               : null)
         : null
@@ -243,7 +269,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           stages.push({
             id: 'relay_transit',
             name: '中继桥接目标',
-            target: `${line.targetLine.entryNode.name} (${line.targetLine.protocolType}:${line.targetLine.entryPort})`,
+            target: `${line.targetLine.entryNode.name} (${landingHost}:${landingPort})`,
             status: 'FAILED',
             message: relayErrMessage
           });
@@ -253,7 +279,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           stages.push({
             id: 'relay_transit',
             name: '中继桥接目标',
-            target: `${line.targetLine.entryNode.name} (${line.targetLine.protocolType}:${line.targetLine.entryPort})`,
+            target: `${line.targetLine.entryNode.name} (${landingHost}:${landingPort})`,
             status: 'FAILED',
             message: relayErrMessage
           });
@@ -261,7 +287,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           stages.push({
             id: 'relay_transit',
             name: '中继桥接目标',
-            target: `${line.targetLine.entryNode.name} (${line.targetLine.protocolType}:${line.targetLine.entryPort})`,
+            target: `${line.targetLine.entryNode.name} (${landingHost}:${landingPort})`,
             status: 'SUCCESS',
             message: `桥接目标就绪: [${line.targetLine.entryNode.name}] ${line.targetLine.name}`
           });
@@ -273,7 +299,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           stages.push({
             id: 'relay_transit',
             name: '中继落地转发',
-            target: `${line.landingNode.name} (${line.landingNode.serverHost}:${line.landingPort ?? '—'})`,
+            target: `${line.landingNode.name} (${landingHost}:${landingPort ?? '—'})`,
             status: 'FAILED',
             message: relayErrMessage
           });
@@ -282,7 +308,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           stages.push({
             id: 'relay_transit',
             name: '中继落地转发',
-            target: `${line.landingNode.name} (${line.landingNode.serverHost}:${line.landingPort ?? '—'})`,
+            target: `${line.landingNode.name} (${landingHost}:${landingPort ?? '—'})`,
             status: 'SUCCESS',
             message: isNat
               ? `反向隧道穿透落地就绪（节点在线，模式: ${line.relayMode === 'BLIND_FORWARD' ? '盲转发' : '协议代理'}）`

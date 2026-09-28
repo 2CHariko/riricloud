@@ -24,7 +24,7 @@ import { UpdateLineDto } from './dto/update-line.dto';
 import { SettingsService } from '../system/settings.service';
 import { isLineAuthorized } from '../common/line-access';
 
-const nodeSummary = { select: { id: true, name: true, serverHost: true, status: true, isLocal: true } } as const;
+const nodeSummary = { select: { id: true, name: true, serverHost: true, status: true, isLocal: true, reachability: true } } as const;
 const certificateSummary = {
   select: { id: true, name: true, subject: true, issuer: true, sansJson: true, validFrom: true, validTo: true }
 } as const;
@@ -39,6 +39,11 @@ const targetLineSummary = {
     entryPort: true,
     landingNodeId: true,
     landingPort: true,
+    endpointOverrideEnabled: true,
+    serverHost: true,
+    serverPort: true,
+    serverName: true,
+    host: true,
     entryNode: nodeSummary
   }
 } as const;
@@ -64,6 +69,9 @@ type LineInput = {
   serverPort?: number | null;
   serverName?: string | null;
   host?: string | null;
+  landingEndpointOverrideEnabled?: boolean;
+  landingServerHost?: string | null;
+  landingServerPort?: number | null;
   trafficRate?: number;
   tags?: string[];
   level?: number;
@@ -154,6 +162,14 @@ export class LinesService {
       entryNodeId: current.entryNodeId,
       landingNodeId: current.landingNodeId,
       targetLineId: current.targetLineId,
+      endpointOverrideEnabled: current.endpointOverrideEnabled,
+      serverHost: current.serverHost,
+      serverPort: current.serverPort,
+      serverName: current.serverName,
+      host: current.host,
+      landingEndpointOverrideEnabled: current.landingEndpointOverrideEnabled,
+      landingServerHost: current.landingServerHost,
+      landingServerPort: current.landingServerPort,
       tags: this.parseTags(current.tagsJson),
       trafficRate: current.trafficRate,
       level: current.level,
@@ -188,7 +204,12 @@ export class LinesService {
       endpoint: { serverHost: view.serverHost, serverPort: view.serverPort, serverName: view.serverName, host: view.host },
       entry: { nodeId: line.entryNodeId, nodeName: line.entryNode.name, port: line.entryPort },
       landing: view.topology.landing
-        ? { nodeId: view.topology.landing.node.id, nodeName: view.topology.landing.node.name, port: view.topology.landing.port }
+        ? {
+            nodeId: view.topology.landing.node.id,
+            nodeName: view.topology.landing.node.name,
+            host: view.topology.landing.host,
+            port: view.topology.landing.port
+          }
         : null
     };
   }
@@ -404,6 +425,15 @@ export class LinesService {
       serverPort: input.serverPort !== undefined ? input.serverPort : current?.serverPort,
       serverName: optionalText(input.serverName, current?.serverName),
       host: optionalText(input.host, current?.host),
+      landingEndpointOverrideEnabled: type === 'RELAY'
+        ? Boolean(input.landingEndpointOverrideEnabled ?? current?.landingEndpointOverrideEnabled ?? false)
+        : false,
+      landingServerHost: type === 'RELAY'
+        ? optionalText(input.landingServerHost, current?.landingServerHost)
+        : null,
+      landingServerPort: type === 'RELAY'
+        ? (input.landingServerPort !== undefined ? input.landingServerPort : current?.landingServerPort ?? null)
+        : null,
       trafficRate: input.trafficRate ?? current?.trafficRate ?? 1,
       tagsJson: JSON.stringify(tags),
       speedLimitMbps: input.speedLimitMbps !== undefined ? input.speedLimitMbps : current?.speedLimitMbps ?? 0,
@@ -570,11 +600,29 @@ export class LinesService {
     const serverHost = line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode.serverHost;
     const serverPort = line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort;
     const params = sanitizeInboundParams(this.sanitizeCorruptParams(this.parseObject(line.paramsJson)));
+    const isNatLanding = line.landingNode?.reachability === 'NAT';
+    const hasLandingOverride = line.type === 'RELAY' && !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
     const landing = line.type === 'RELAY'
       ? (line.relayMode === 'TARGET_LINE' && line.targetLine
-          ? { node: line.targetLine.entryNode, port: line.targetLine.entryPort }
+          ? {
+              node: line.targetLine.entryNode,
+              host: hasLandingOverride
+                ? line.landingServerHost!
+                : (line.targetLine.endpointOverrideEnabled && line.targetLine.serverHost
+                    ? line.targetLine.serverHost
+                    : line.targetLine.entryNode.serverHost),
+              port: hasLandingOverride && line.landingServerPort
+                ? line.landingServerPort
+                : (line.targetLine.endpointOverrideEnabled && line.targetLine.serverPort
+                    ? line.targetLine.serverPort
+                    : line.targetLine.entryPort)
+            }
           : line.landingNode && line.landingPort
-            ? { node: line.landingNode, port: line.landingPort }
+            ? {
+                node: line.landingNode,
+                host: hasLandingOverride ? line.landingServerHost! : line.landingNode.serverHost,
+                port: hasLandingOverride && line.landingServerPort ? line.landingServerPort : line.landingPort
+              }
             : null)
       : null;
     return {
@@ -585,11 +633,16 @@ export class LinesService {
       serverPort,
       serverName: line.endpointOverrideEnabled ? line.serverName : null,
       host: line.endpointOverrideEnabled ? line.host : null,
+      landingEndpointOverrideEnabled: Boolean(line.landingEndpointOverrideEnabled),
+      landingServerHost: line.landingEndpointOverrideEnabled ? (line.landingServerHost ?? null) : null,
+      landingServerPort: line.landingEndpointOverrideEnabled ? (line.landingServerPort ?? null) : null,
       endpointOverrides: {
         serverHost: line.serverHost,
         serverPort: line.serverPort,
         serverName: line.serverName,
-        host: line.host
+        host: line.host,
+        landingServerHost: line.landingServerHost ?? null,
+        landingServerPort: line.landingServerPort ?? null
       },
       tags: this.parseTags(line.tagsJson),
       topology: {

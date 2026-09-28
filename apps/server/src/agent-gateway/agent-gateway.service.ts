@@ -1886,6 +1886,9 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       allowLanAccess?: boolean;
       endpointOverrideEnabled?: boolean;
       serverHost?: string | null;
+      landingEndpointOverrideEnabled?: boolean;
+      landingServerHost?: string | null;
+      landingServerPort?: number | null;
       tunnelType?: string | null;
       tunnelPort?: number | null;
       tunnelSecret?: string | null;
@@ -1909,6 +1912,11 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         paramsJson: string;
         entryPort: number;
         status: string;
+        endpointOverrideEnabled?: boolean;
+        serverHost?: string | null;
+        serverPort?: number | null;
+        serverName?: string | null;
+        host?: string | null;
         entryNode: { serverHost: string; status?: string };
       } | null;
       relaySources?: Array<{ id: string; tagsJson: string; isPublic: boolean; status: string }>;
@@ -2030,14 +2038,21 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       if (isEntry && line.relayMode === 'BLIND_FORWARD' && line.landingNode && line.landingPort) {
         const isNatLanding = line.landingNode.reachability === 'NAT';
         const blindListenFields = buildSharedListenFields(listenOptions);
+        const hasLandingOverride = !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
+        const overrideAddress = isNatLanding
+          ? '127.0.0.1'
+          : (hasLandingOverride ? line.landingServerHost!.trim() : line.landingNode.serverHost);
+        const overridePort = isNatLanding
+          ? line.landingPort
+          : (hasLandingOverride && line.landingServerPort ? line.landingServerPort : line.landingPort);
         inbounds.push({
           type: 'direct',
           tag: lineTags.entry ?? `relay-${line.id}-entry`,
           listen: line.listen || DEFAULT_INBOUND_LISTEN,
           listen_port: line.entryPort,
           ...blindListenFields,
-          override_address: isNatLanding ? '127.0.0.1' : line.landingNode.serverHost,
-          override_port: line.landingPort
+          override_address: overrideAddress,
+          override_port: overridePort
         });
       }
 
@@ -2080,12 +2095,19 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           listenOptions
         });
         inbounds.push(...relayInbounds);
+        const targetLineHasOverride = Boolean(targetLine.endpointOverrideEnabled && targetLine.serverHost);
+        const defaultHost = targetLineHasOverride ? targetLine.serverHost!.trim() : targetLine.entryNode.serverHost;
+        const defaultPort = (targetLine.endpointOverrideEnabled && targetLine.serverPort) ? targetLine.serverPort : targetLine.entryPort;
         const outbound = this.buildProtocolRelayOutbound({
           id: line.id,
           protocolType: targetLine.protocolType,
           paramsJson: targetLine.paramsJson,
-          landingPort: targetLine.entryPort,
-          landingNode: targetLine.entryNode
+          landingPort: defaultPort,
+          landingNode: { serverHost: defaultHost, reachability: 'PUBLIC' },
+          landingEndpointOverrideEnabled: line.landingEndpointOverrideEnabled,
+          landingServerHost: line.landingServerHost,
+          landingServerPort: line.landingServerPort,
+          serverNameOverride: (targetLine.endpointOverrideEnabled && targetLine.serverName) ? targetLine.serverName : undefined
         });
         if (!outbound) {
           inbounds.splice(-relayInbounds.length, relayInbounds.length);
@@ -2326,6 +2348,10 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       paramsJson: string;
       landingPort?: number | null;
       landingNode?: { serverHost: string; reachability?: string } | null;
+      landingEndpointOverrideEnabled?: boolean;
+      landingServerHost?: string | null;
+      landingServerPort?: number | null;
+      serverNameOverride?: string | null;
     }
   ): Record<string, unknown> | undefined {
     if (!line.landingNode || !line.landingPort) return undefined;
@@ -2338,15 +2364,21 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       : reality && Array.isArray(reality.serverNames) && typeof reality.serverNames[0] === 'string'
         ? reality.serverNames[0]
         : undefined;
-    const tlsServerName = fallbackServerName;
+    const tlsServerName = line.serverNameOverride || fallbackServerName;
     const isNatLanding = line.landingNode.reachability === 'NAT';
+    const hasLandingOverride = !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
+    const targetHost = isNatLanding
+      ? '127.0.0.1'
+      : (hasLandingOverride ? line.landingServerHost!.trim() : line.landingNode.serverHost);
+    const targetPort = isNatLanding
+      ? line.landingPort
+      : (hasLandingOverride && line.landingServerPort ? line.landingServerPort : line.landingPort);
     const outbound: Record<string, unknown> = {
       type: protocolType.toLowerCase(),
       tag: `relay-out-${line.id}`,
-      server: isNatLanding ? '127.0.0.1' : line.landingNode.serverHost,
-      server_port: line.landingPort
+      server: targetHost,
+      server_port: targetPort
     };
-
     switch (protocolType) {
       case 'VLESS':
         outbound.uuid = INTERNAL_RELAY_TRANSIT_UUID;

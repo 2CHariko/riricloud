@@ -108,6 +108,24 @@ export class UpdateLineDto {
   @IsOptional()
   host?: string | null;
 
+  @ApiPropertyOptional({ description: '是否启用中继落地端点覆盖（仅 RELAY 生效）' })
+  @IsBoolean()
+  @IsOptional()
+  landingEndpointOverrideEnabled?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, description: '中继落地连接地址/域名覆盖' })
+  @IsString()
+  @IsOptional()
+  landingServerHost?: string | null;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 65535, nullable: true, description: '中继落地连接端口覆盖' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  @IsOptional()
+  landingServerPort?: number | null;
+
   @ApiPropertyOptional({ minimum: 0.01 })
   @Type(() => Number)
   @IsNumber({ allowNaN: false, allowInfinity: false })

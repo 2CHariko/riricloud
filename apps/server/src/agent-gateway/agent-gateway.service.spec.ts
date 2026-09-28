@@ -431,6 +431,81 @@ describe('AgentGatewayService', () => {
     ]));
   });
 
+  it('盲转发和协议代理在开启 landingEndpointOverrideEnabled 时使用覆盖的落地地址与端口', async () => {
+    const relayWithOverride = line({
+      id: 'blind-override',
+      name: '盲转发专线覆盖',
+      type: 'RELAY',
+      relayMode: 'BLIND_FORWARD',
+      entryNodeId: 'node-1',
+      entryPort: 25001,
+      landingNodeId: 'node-2',
+      landingPort: 25002,
+      landingEndpointOverrideEnabled: true,
+      landingServerHost: '10.10.0.2',
+      landingServerPort: 35002,
+      landingNode: { serverHost: '198.51.100.20', status: 'ONLINE', reachability: 'PUBLIC' }
+    });
+
+    prisma.node.findUnique.mockResolvedValueOnce({
+      id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [relayWithOverride], landingLines: []
+    });
+    prisma.user.findMany.mockResolvedValue([user]);
+
+    const entryConfig = await service.buildConfigSync('node-1');
+    expect(entryConfig.singboxConfig.inbounds).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'direct',
+        listen_port: 25001,
+        override_address: '10.10.0.2',
+        override_port: 35002
+      })
+    ]));
+  });
+
+  it('目标线路桥接自动继承目标线路端点覆盖，且中继显式配置落地覆盖时优先使用中继自身覆盖', async () => {
+    const targetParams = { tls: { enabled: true, mode: 'tls', serverName: 'target.example.com' } };
+    const bridgeInherited = line({
+      id: 'bridge-inherited',
+      name: '继承目标端点',
+      tag: 'relay-bridge-inherited',
+      type: 'RELAY',
+      relayMode: 'TARGET_LINE',
+      protocolType: 'VLESS',
+      entryNodeId: 'node-1',
+      entryPort: 25001,
+      targetLineId: 'target-1',
+      targetLine: {
+        id: 'target-1',
+        type: 'DIRECT',
+        protocolType: 'TROJAN',
+        paramsJson: JSON.stringify(targetParams),
+        entryPort: 25002,
+        status: 'ACTIVE',
+        endpointOverrideEnabled: true,
+        serverHost: 'target-edge.example.com',
+        serverPort: 9443,
+        serverName: 'trojan-sni.example.com',
+        entryNode: { serverHost: '198.51.100.20', status: 'ONLINE' }
+      },
+      landingNode: null
+    });
+
+    prisma.node.findUnique.mockResolvedValueOnce({
+      id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [bridgeInherited], landingLines: []
+    });
+    prisma.user.findMany.mockResolvedValue([user]);
+
+    const entryConfig = await service.buildConfigSync('node-1');
+    expect(entryConfig.singboxConfig.outbounds).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'trojan',
+        server: 'target-edge.example.com',
+        server_port: 9443
+      })
+    ]));
+  });
+
   it('心跳遥测独立落库，流量账务在单独事务内完成', async () => {
     txUserFindMany.mockResolvedValue([{ id: 'user-1', uuid: user.uuid, email: user.email }]);
     prisma.line.findFirst.mockResolvedValue({ id: 'line-1' });

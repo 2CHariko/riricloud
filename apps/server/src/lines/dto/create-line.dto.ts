@@ -107,6 +107,24 @@ export class CreateLineDto {
   @IsOptional()
   host?: string;
 
+  @ApiPropertyOptional({ default: false, description: '是否启用中继落地端点覆盖（仅 RELAY 生效）' })
+  @IsBoolean()
+  @IsOptional()
+  landingEndpointOverrideEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: '10.0.0.2', nullable: true, description: '中继落地连接地址/域名覆盖' })
+  @IsString()
+  @IsOptional()
+  landingServerHost?: string;
+
+  @ApiPropertyOptional({ example: 24444, minimum: 1, maximum: 65535, nullable: true, description: '中继落地连接端口覆盖' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  @IsOptional()
+  landingServerPort?: number;
+
   @ApiPropertyOptional({ example: 1.5, default: 1, minimum: 0.01 })
   @Type(() => Number)
   @IsNumber({ allowNaN: false, allowInfinity: false })

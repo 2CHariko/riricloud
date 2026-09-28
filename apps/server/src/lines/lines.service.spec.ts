@@ -328,5 +328,83 @@ describe('LinesService', () => {
       };
       expect(parsedUpdatedParams.tls.reality.privateKey).toBeDefined();
     });
-  });
+    });
+
+    it('中继线路支持落地端点覆盖，并在 toView 与 topology.landing 中反映覆盖后的 host 与 port', async () => {
+      const relay = {
+        ...rawLine,
+        id: 'line-relay-override',
+        name: '专线中继',
+        type: 'RELAY',
+        relayMode: 'BLIND_FORWARD',
+        entryNodeId: entryNode.id,
+        entryPort: 25001,
+        landingNodeId: exitNode.id,
+        landingPort: 25002,
+        landingEndpointOverrideEnabled: true,
+        landingServerHost: '10.200.0.5',
+        landingServerPort: 35002,
+        entryNode,
+        landingNode: exitNode
+      };
+      prisma.line.create.mockResolvedValue(relay);
+      const result = await service.create({
+        name: relay.name,
+        type: 'RELAY',
+        relayMode: 'BLIND_FORWARD',
+        protocolType: 'VLESS',
+        entryNodeId: entryNode.id,
+        entryPort: 25001,
+        landingNodeId: exitNode.id,
+        landingPort: 25002,
+        landingEndpointOverrideEnabled: true,
+        landingServerHost: '10.200.0.5',
+        landingServerPort: 35002
+      });
+
+      expect(result.line.landingEndpointOverrideEnabled).toBe(true);
+      expect(result.line.landingServerHost).toBe('10.200.0.5');
+      expect(result.line.landingServerPort).toBe(35002);
+      expect(result.line.topology.landing?.host).toBe('10.200.0.5');
+      expect(result.line.topology.landing?.port).toBe(35002);
+    });
+
+    it('桥接线路自动继承目标直连线路自身的有效对外端点覆盖', async () => {
+      const targetLine = {
+        id: 'line-target-overridden',
+        type: 'DIRECT',
+        protocolType: 'VLESS',
+        entryNodeId: exitNode.id,
+        entryPort: 25002,
+        endpointOverrideEnabled: true,
+        serverHost: 'target-cdn.example.com',
+        serverPort: 8443,
+        entryNode: exitNode
+      };
+      prisma.line.findUnique.mockResolvedValue(targetLine);
+      const bridge = {
+        ...rawLine,
+        id: 'line-bridge-inherited',
+        type: 'RELAY',
+        relayMode: 'TARGET_LINE',
+        targetLineId: targetLine.id,
+        targetLine,
+        entryNode,
+        landingNode: null
+      };
+      prisma.line.create.mockResolvedValue(bridge);
+
+      const result = await service.create({
+        name: '自动继承桥接',
+        type: 'RELAY',
+        relayMode: 'TARGET_LINE',
+        protocolType: 'VLESS',
+        entryNodeId: entryNode.id,
+        entryPort: 25001,
+        targetLineId: targetLine.id
+      });
+
+      expect(result.line.topology.landing?.host).toBe('target-cdn.example.com');
+      expect(result.line.topology.landing?.port).toBe(8443);
+    });
 });
