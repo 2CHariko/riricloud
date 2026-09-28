@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ColumnDef } from '@tanstack/react-table';
+import type { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Activity, Pencil, Plus, RefreshCw, Search, ShieldOff, ShieldCheck, Smartphone, Trash2, WalletCards } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '@/lib/api';
@@ -9,6 +9,7 @@ import { PageContainer, PageHeader } from '@/components/shared/page-container';
 import { DataTable } from '@/components/shared/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -68,6 +69,7 @@ export default function AdminUsersPage() {
   const [resetting, setResetting] = React.useState<AdminUser | null>(null);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const [selected, setSelected] = React.useState<AdminUser[]>([]);
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [roleFilter, setRoleFilter] = React.useState<'ALL' | 'USER' | 'ADMIN'>('ALL');
   const [activeFilter, setActiveFilter] = React.useState<'ALL' | 'true' | 'false'>('ALL');
   const [emailVerifiedFilter, setEmailVerifiedFilter] = React.useState<'ALL' | 'true' | 'false'>('ALL');
@@ -295,13 +297,18 @@ export default function AdminUsersPage() {
     [bulkActive, resetSubscriptionToken, selfId, t]
   );
 
+  const clearSelection = () => {
+    setRowSelection({});
+    setSelected([]);
+  };
+
   const onBulkBan = async (isActive: boolean) => {
     const ids = selected.filter((u) => u.id !== selfId).map((u) => u.id);
     if (ids.length === 0) {
       toast.warning(t('admin:users.noOperableUsers'));
       return;
     }
-    bulkActive.mutate({ ids, isActive });
+    bulkActive.mutate({ ids, isActive }, { onSuccess: clearSelection });
   };
 
   const onConfirmDelete = () => {
@@ -317,15 +324,31 @@ export default function AdminUsersPage() {
       <PageHeader title={t('admin:users.title')} description={t('admin:users.subtitle')} />
 
       {isPending ? (
-        <div className="space-y-2">
-          <Skeleton className="h-9 w-64" />
-          <Skeleton className="h-64 w-full" />
+        <div className="flex flex-col gap-4 md:gap-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <Skeleton className="h-9 w-64" />
+            <Skeleton className="h-9 w-28" />
+            <Skeleton className="h-9 w-28" />
+            <Skeleton className="h-9 w-32" />
+          </div>
+          <Card>
+            <CardContent className="min-w-0 p-0">
+              <div className="space-y-3 p-4">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            </CardContent>
+          </Card>
         </div>
       ) : (
         <DataTable
           columns={columns}
           data={users}
           total={data?.total}
+          rowSelection={rowSelection}
+          onRowSelectionChange={setRowSelection}
           onSelectionChange={setSelected}
           tableClassName="min-w-[1160px]"
           emptyTitle={t('admin:users.emptyUsers')}
@@ -333,8 +356,14 @@ export default function AdminUsersPage() {
           toolbar={
             <>
               <div className="relative w-full sm:w-64">
-                <Search className="text-muted-foreground absolute top-2.5 left-2 h-4 w-4" />
-                <Input className="pl-8" placeholder={t('admin:users.searchPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
+                <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+                <Input
+                  type="search"
+                  className="pl-9"
+                  placeholder={t('admin:users.searchPlaceholder')}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
               </div>
               <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value as typeof roleFilter)}>
                 <SelectTrigger className="w-full sm:w-[120px]"><SelectValue placeholder={t('admin:users.filterRole')} /></SelectTrigger>
@@ -361,7 +390,7 @@ export default function AdminUsersPage() {
                 </SelectContent>
               </Select>
               <Select value={subscriptionFilter} onValueChange={(value) => setSubscriptionFilter(value as typeof subscriptionFilter)}>
-                <SelectTrigger className="w-full sm:w-[150px]"><SelectValue placeholder={t('admin:users.filterSubscription')} /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-[130px]"><SelectValue placeholder={t('admin:users.filterSubscription')} /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">{t('admin:users.allSubscriptions')}</SelectItem>
                   <SelectItem value="ACTIVE">{t('admin:users.statusActive')}</SelectItem>
@@ -372,34 +401,44 @@ export default function AdminUsersPage() {
                 </SelectContent>
               </Select>
               <Select value={planFilter} onValueChange={setPlanFilter}>
-                <SelectTrigger className="w-full sm:w-[150px]"><SelectValue placeholder={t('admin:users.filterPlan')} /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-[140px]"><SelectValue placeholder={t('admin:users.filterPlan')} /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">{t('admin:users.allPlans')}</SelectItem>
                   <SelectItem value="NONE">{t('admin:users.unbound')}</SelectItem>
                   {(plans ?? []).map((plan) => <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Button size="sm" className="w-full gap-1.5 sm:w-auto" onClick={() => { setEditing(null); setFormOpen(true); }}>
-                <Plus className="h-4 w-4" />
-                {t('admin:users.addUser')}
-              </Button>
-              {selected.length > 0 ? (
-                <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto">
+            </>
+          }
+          actions={
+            <Button size="sm" className="w-full gap-1.5 sm:w-auto" onClick={() => { setEditing(null); setFormOpen(true); }}>
+              <Plus className="size-4" />
+              {t('admin:users.addUser')}
+            </Button>
+          }
+          banner={
+            selected.length > 0 ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+                <span>{t('admin:users.selectedCount', { count: selected.length })}</span>
+                <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={bulkActive.isPending} onClick={() => void onBulkBan(false)}>
-                    <ShieldOff className="h-4 w-4" />
-                    {t('admin:users.batchBan')} ({selected.length})
+                    <ShieldOff className="size-4" />
+                    {t('admin:users.batchBan')}
                   </Button>
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={bulkActive.isPending} onClick={() => void onBulkBan(true)}>
-                    <ShieldCheck className="h-4 w-4" />
+                    <ShieldCheck className="size-4" />
                     {t('admin:users.batchActivate')}
                   </Button>
                   <Button size="sm" variant="destructive" className="gap-1.5" onClick={() => setBulkDeleting(true)}>
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="size-4" />
                     {t('admin:users.batchDelete')}
                   </Button>
+                  <Button size="sm" variant="ghost" onClick={clearSelection}>
+                    {t('common:actions.cancel')}
+                  </Button>
                 </div>
-              ) : null}
-            </>
+              </div>
+            ) : null
           }
         />
       )}
@@ -471,6 +510,7 @@ export default function AdminUsersPage() {
                 const failed = results.filter((r) => r.status === 'rejected').length;
                 if (failed === 0) toast.success(t('admin:users.deleteBatchSuccess', { count: ids.length }));
                 else toast.warning(t('admin:users.deleteBatchPartial', { success: ids.length - failed, failed }));
+                clearSelection();
                 setBulkDeleting(false);
               }}
             >
