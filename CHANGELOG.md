@@ -13,6 +13,15 @@
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+
+## [0.9.6] - 2026-09-28
+
+### Added
 - **Docker 官方镜像仓库（Docker Hub）双发布支持与自动化流水线扩展**：
   - 在 `.github/workflows/docker-publish.yml` 中引入 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` 凭证检测，使用 `docker/login-action@v3` 增加 Docker Hub 登录；
   - 扩展镜像元数据解析逻辑，自动规整 Docker Hub 命名空间（全小写转换），并同时生成 GHCR (`ghcr.io`) 与 Docker Hub 标签列表，通过 Buildx 单次多目标构建直接实现无缝双推送；
@@ -26,7 +35,6 @@
   - 消除原生 `<table>` 与卡片内边距留白：将公告与文档管理的手写原生表格统一替换为 `@/components/ui/table` 并包裹于 `<Card><CardContent className="min-w-0 p-0">`，移除违规的 `bg-muted/40` 表头灰底；将卡密管理的搜索工具栏、提示横幅与分页器从表格 `CardContent` 内部剥离至外部，消除表格四周内缩留白；
   - 更新 `docs/FRONTEND_UI_GUIDELINES.md`，新增禁止手写原生 `<table>`（B9）、禁止列表工具栏额外套框或塞入表格 `CardContent` 内部（B10）两条红线及「§8.1.1 后台管理列表页布局标准范式」。
 
-### Fixed
 
 
 ## [0.9.5] - 2026-09-28
