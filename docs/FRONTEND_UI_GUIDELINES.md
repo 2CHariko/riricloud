@@ -353,10 +353,12 @@ export function PageContainer({ title, description, actions, children }: PageCon
    - **零内边距贴边模式**：表格必须独占 `<Card><CardContent className="min-w-0 p-0"><Table className="min-w-[...]">`，禁止将搜索工具栏、提示横幅塞入同一个 `CardContent` 造成表格四周出现 `p-6` 内缩白边。
    - **表头与行规范**：统一使用 `@/components/ui/table` 标准样式，严禁私自为 `<TableHeader>` 添加灰色底色（如 `bg-muted/40`）或手写原生 HTML `<table>`。空状态统一置于 `CardContent` 内并添加 `className="border-0"`。
 3. **分页与辅助信息行**：
+
    - 列表底部的总记录数统计、分页器（`Pagination`）以及辅助说明横幅统一平铺在 `<Card>` 容器外部，保持表格卡片边界纯粹干净。
 4. **通用复合组件 `DataTable` 统一约束**：
    - 通用组件 `@/components/shared/data-table.tsx` 严格遵循上述卡片贴边范式（内嵌 `<Card className="min-w-0"><CardContent className="min-w-0 p-0"><Table>`）；
    - 提供 `actions` 插槽（承载工具栏右侧主操作按键）与 `banner` 插槽（承载工具栏下方、表格卡片上方的批量操作等独立横幅），确保全站无论是手写装配还是消费复合组件均保持 1:1 视觉一致性。
+节点管理列表的批量 Agent 升级沿用此列表范式：使用表格 Checkbox 实现行选择与当前筛选结果全选，批量操作栏独立置于表格 Card 外；选择上限须与服务端 100 节点契约一致，筛选全选只修改当前可见行，节点数据刷新后清除已删除节点的过期选择。升级确认及结果使用响应式 Dialog/Sheet，分别说明托管资源架构覆盖、离线/HTTP 排队语义并逐节点展示已下发、排队或失败原因；所有文案走 `zh-CN` i18n，禁用期间防止重复提交。
 
 ### 8.2 数据图表 (Data Charts)
 - 底层技术：采用 shadcn/ui 官方 `Chart`（封装自 `Recharts`）。

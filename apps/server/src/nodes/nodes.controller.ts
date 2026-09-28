@@ -8,6 +8,7 @@ import { QueryBinaryDeploymentDto } from '../binaries/dto/query-binary-resource.
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import { ProbeNodeDto } from './dto/probe-node.dto';
+import { BatchUpgradeNodeDto } from './dto/batch-upgrade-node.dto';
 import { UpgradeNodeDto } from './dto/upgrade-node.dto';
 import { LogDiagnosticsDto } from './dto/log-diagnostics.dto';
 import { NodesService } from './nodes.service';
@@ -107,6 +108,11 @@ export class NodesController {
   @Post(':id/upgrade')
   upgrade(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpgradeNodeDto, @CurrentUser() user: { id: string }, @Req() request: Request) {
     return this.nodesService.requestUpgrade(id, dto, getRequestBaseUrl(request), user.id);
+
+  }
+  @Post('batch-upgrade')
+  batchUpgrade(@Body() dto: BatchUpgradeNodeDto, @CurrentUser() user: { id: string }, @Req() request: Request) {
+    return this.nodesService.requestBatchUpgrade(dto, getRequestBaseUrl(request), user.id);
   }
 
   @Post(':id/probe')

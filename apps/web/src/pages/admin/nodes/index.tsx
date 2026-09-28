@@ -1,8 +1,11 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ChevronRight, Plus, RefreshCw, Search, Trash2, Wrench } from 'lucide-react';
+import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
+import { Checkbox } from '@/components/ui/checkbox';
 import { PageContainer, PageHeader } from '@/components/shared/page-container';
+import { BatchUpgradeNodesDialog } from './components/batch-upgrade-nodes-dialog';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,6 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatDateTime, formatRate } from '@/lib/utils';
 import { useAdminNodes, useNodeMutations, type AdminNode } from './use-nodes';
 import { NodeFormDialog } from './components/node-form-dialog';
+import { useAdminBinaryResources } from '../binaries/use-binaries';
 
 function NodeStatusBadge({ node }: { node: AdminNode }) {
   const { t } = useTranslation(['admin']);
@@ -45,8 +49,12 @@ export default function AdminNodesPage() {
   const [search, setSearch] = React.useState('');
   const [status, setStatus] = React.useState<'ALL' | 'ONLINE' | 'OFFLINE' | 'DISABLED'>('ALL');
   const [kernel, setKernel] = React.useState<'ALL' | 'RUNNING' | 'STOPPED'>('ALL');
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [batchUpgradeOpen, setBatchUpgradeOpen] = React.useState(false);
+  const [batchUpgradeResult, setBatchUpgradeResult] = React.useState<import('./use-nodes').BatchNodeUpgradeResult | null>(null);
   const { data: nodes } = useAdminNodes();
-  const { deleteNode, reloadNode } = useNodeMutations();
+  const { data: binaryResources } = useAdminBinaryResources({ status: 'ACTIVE', pageSize: 100 });
+  const { deleteNode, reloadNode, batchUpgradeNodes } = useNodeMutations();
 
   const filteredNodes = React.useMemo(() => {
     return (nodes ?? []).filter((node) => {
@@ -69,6 +77,50 @@ export default function AdminNodesPage() {
       return true;
     });
   }, [nodes, search, status, kernel]);
+  const nodeIdsKey = (nodes ?? []).map((node) => node.id).sort().join(',');
+  React.useEffect(() => {
+    const existingIds = new Set(nodeIdsKey ? nodeIdsKey.split(',') : []);
+    setSelectedIds((current) => new Set([...current].filter((id) => existingIds.has(id))));
+  }, [nodeIdsKey]);
+  const selectedNodes = React.useMemo(() => (nodes ?? []).filter((node) => selectedIds.has(node.id)), [nodes, selectedIds]);
+  const visibleSelectedCount = filteredNodes.filter((node) => selectedIds.has(node.id)).length;
+  const allVisibleSelected = filteredNodes.length > 0 && visibleSelectedCount === filteredNodes.length;
+  const toggleNode = (id: string, checked: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        if (next.size >= 100) {
+          toast.warning(t('admin:nodes.batchUpgradeMaxNodes'));
+          return current;
+        }
+        next.add(id);
+      } else next.delete(id);
+      return next;
+    });
+  };
+  const toggleVisible = (checked: boolean) => {
+    if (!checked) {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        filteredNodes.forEach((node) => next.delete(node.id));
+        return next;
+      });
+      return;
+    }
+    if (new Set([...selectedIds, ...filteredNodes.map((node) => node.id)]).size > 100) {
+      toast.warning(t('admin:nodes.batchUpgradeSelectLimit'));
+      return;
+    }
+    setSelectedIds((current) => new Set([...current, ...filteredNodes.map((node) => node.id)]));
+  };
+  const closeBatchUpgrade = (open: boolean) => {
+    setBatchUpgradeOpen(open);
+    if (!open && batchUpgradeResult) {
+      setBatchUpgradeResult(null);
+      setSelectedIds(new Set());
+    }
+  };
+
 
   return (
     <PageContainer>
@@ -115,12 +167,23 @@ export default function AdminNodesPage() {
         </div>
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm">
+          <span>{t('admin:nodes.selectedNodes', { count: selectedIds.size })}</span>
+          <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>{t('common:actions.clear')}</Button>
+          <Button size="sm" disabled={selectedNodes.length !== selectedIds.size} onClick={() => { setBatchUpgradeResult(null); setBatchUpgradeOpen(true); }}>
+            <Wrench className="size-4" />{t('admin:nodes.batchUpgradeAction')}
+          </Button>
+          {selectedNodes.length !== selectedIds.size && <span className="text-xs text-destructive">{t('admin:nodes.batchUpgradeStaleSelection')}</span>}
+        </div>
+      )}
       <Card>
         <CardContent className="min-w-0 p-0">
           {filteredNodes.length ? (
             <Table className="min-w-[980px]">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10"><Checkbox checked={allVisibleSelected} onCheckedChange={(checked) => toggleVisible(checked === true)} aria-label={t('common:table.selectAll')} /></TableHead>
                   <TableHead>{t('admin:nodes.colNode')}</TableHead>
                   <TableHead>{t('admin:nodes.colHost')}</TableHead>
                   <TableHead>{t('admin:nodes.colLines')}</TableHead>
@@ -135,7 +198,8 @@ export default function AdminNodesPage() {
               </TableHeader>
               <TableBody>
                 {filteredNodes.map((node) => (
-                  <TableRow key={node.id}>
+                  <TableRow key={node.id} data-state={selectedIds.has(node.id) ? 'selected' : undefined}>
+                    <TableCell><Checkbox checked={selectedIds.has(node.id)} onCheckedChange={(checked) => toggleNode(node.id, checked === true)} aria-label={`${t('common:actions.select')} ${node.name}`} /></TableCell>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-1.5">
                         <Link to={`/admin/nodes/${node.id}`} className="hover:underline">
@@ -272,6 +336,15 @@ export default function AdminNodesPage() {
       </Card>
 
       <NodeFormDialog open={formOpen} onOpenChange={setFormOpen} />
+      <BatchUpgradeNodesDialog
+        open={batchUpgradeOpen}
+        onOpenChange={closeBatchUpgrade}
+        pending={batchUpgradeNodes.isPending}
+        nodes={selectedNodes}
+        resources={binaryResources?.data}
+        result={batchUpgradeResult}
+        onSubmit={(values) => batchUpgradeNodes.mutate(values, { onSuccess: setBatchUpgradeResult })}
+      />
 
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>

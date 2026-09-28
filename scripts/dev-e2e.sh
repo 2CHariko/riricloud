@@ -11,7 +11,7 @@
 # 环境变量：SERVER_URL / SERVER_PORT / STATS_API_LISTEN / CLASH_API_LISTEN / WEB_URL / ADMIN_EMAIL / ADMIN_PASSWORD / SERVER_ENV_FILE / E2E_DATABASE_URL / NODE_NAME / NODE_HOST / NODE_PORT / USE_MASTER_LOCAL / E2E_SYNC_RESOURCES
 # 联调端口：主控端默认 30800（避开 Windows 保留/动态端口区间），实际使用端口写入 .cache/dev-e2e-server-port 供后续运行复用
 # 联调数据库：默认使用 apps/server/prisma/dev-e2e.db，避免与手动启动的 3000 端口主控共享 SQLite 写锁；可通过 E2E_DATABASE_URL 显式改回其他 SQLite URL
-# 资源同步覆盖：E2E_RESOURCE_VERSION / E2E_AGENT_RESOURCE_FILE / E2E_AGENT_RESOURCE_TARGET / E2E_SINGBOX_RESOURCE_FILE / E2E_SINGBOX_RESOURCE_TARGET / E2E_SINGBOX_RESOURCE_VERSION
+# Agent 版本默认取 apps/agent/VERSION；E2E_AGENT_VERSION 或 E2E_RESOURCE_VERSION 覆盖该版本，两者同时指定须相同
 # sing-box 二进制查找顺序：SINGBOX_BINARY_PATH > 当前平台缓存 > tools/ > PATH
 set -euo pipefail
 
@@ -100,6 +100,26 @@ LOGIN_RESPONSE_FILE=""
 
 say() { printf '\033[1;36m[dev-e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[dev-e2e]\033[0m %s\n' "$*" >&2; exit 1; }
+
+E2E_VERSION_RESOURCE_OVERRIDE=""
+if [ "$E2E_SYNC_RESOURCES" = "1" ]; then
+  E2E_VERSION_RESOURCE_OVERRIDE="${E2E_RESOURCE_VERSION:-}"
+fi
+if ! E2E_AGENT_VERSION="$(
+  E2E_AGENT_VERSION="${E2E_AGENT_VERSION:-}" \
+  E2E_RESOURCE_VERSION="$E2E_VERSION_RESOURCE_OVERRIDE" \
+  RIRICLOUD_VERSION="${RIRICLOUD_VERSION:-}" \
+  node scripts/dev-e2e-agent-version.mjs
+)"; then
+  die "Agent 版本解析失败；请检查 apps/agent/VERSION 和版本覆盖设置"
+fi
+if [ "$E2E_SYNC_RESOURCES" != "1" ]; then
+  E2E_RESOURCE_VERSION="$E2E_AGENT_VERSION"
+else
+  E2E_RESOURCE_VERSION="${E2E_RESOURCE_VERSION:-$E2E_AGENT_VERSION}"
+fi
+say "E2E Agent 版本：$E2E_AGENT_VERSION（同步资源版本：$E2E_RESOURCE_VERSION）"
+
 
 SERVER_PID=""
 WEB_PID=""
@@ -610,7 +630,6 @@ else
   fi
 fi
 
-# ---------- 5. 构建并启动 Agent ----------
 AGENT_GOOS="${GOOS:-$(go env GOOS)}"
 AGENT_GOARCH="${GOARCH:-$(go env GOARCH)}"
 if [ "$AGENT_GOOS" = "windows" ]; then
@@ -619,12 +638,11 @@ else
   AGENT_BIN_NAME="riri-agent"
 fi
 AGENT_BIN="${RIRICLOUD_AGENT_BINARY_PATH:-$ROOT/artifacts/dev/agent/${AGENT_GOOS}-${AGENT_GOARCH}/$AGENT_BIN_NAME}"
-say "构建 Agent…"
-RIRICLOUD_AGENT_BINARY_PATH="$AGENT_BIN" bash scripts/build-agent.sh || die "Agent 构建失败"
+say "构建 Agent v$E2E_AGENT_VERSION…"
+RIRICLOUD_VERSION="$E2E_AGENT_VERSION" RIRICLOUD_AGENT_BINARY_PATH="$AGENT_BIN" bash scripts/build-agent.sh || die "Agent 构建失败"
 
 if [ "$E2E_SYNC_RESOURCES" = "1" ]; then
   E2E_APP_VERSION="${E2E_APP_VERSION:-$(node -p "require('./package.json').version")}"
-  E2E_RESOURCE_VERSION="${E2E_RESOURCE_VERSION:-$E2E_APP_VERSION}"
   RESOURCE_OS="$AGENT_GOOS"
   [ "$RESOURCE_OS" = "darwin" ] && RESOURCE_OS="macos"
   AGENT_RESOURCE_TARGET="${E2E_AGENT_RESOURCE_TARGET:-agent-${RESOURCE_OS}-${AGENT_GOARCH}}"

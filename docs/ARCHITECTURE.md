@@ -81,6 +81,7 @@ graph TB
 - **业务 API 服务 (`apps/server`)**：基于 NestJS 框架开发，提供标准的 RESTful 接口与 JWT 鉴权；浏览器会话使用 HttpOnly/SameSite Cookie，服务端以 `sessionVersion` 递增实现注销、改密、重置和禁用后的旧会话失效。
 - **Agent 统一业务服务 (`apps/server/agent-gateway/agent.service.ts`)**：维护节点鉴权、遥测落库、配置快照、任务队列、探针快照与健康判定；同一节点的心跳串行处理，流量账务使用短事务；WS 网关和 HTTP 轮询控制器均为薄传输适配器。
 - **主控二进制分发中心 (`apps/server/src/binaries`)**：维护规范的双层存储架构：最高优先级的运行态持久仓 `data/binaries/`（支持多架构自定义导入、热更新与远程缓存）与静态内置仓 `binaries/`（发行包仅精准预置当前宿主架构的二进制）；开发环境下智能回退至 `artifacts/binaries`。升级任务按节点 `osArch` 选择主控内置或导入版本，下载端点使用 AgentToken 鉴权。
+- **批量 Agent 升级**：管理员节点列表批量入口由 `NodesService` 以最多 4 个并发逐节点复用单节点升级资源解析与持久化部署任务，按每个节点操作系统/架构选择并校验资产；结果逐节点区分 WS 已下发、HTTP/离线任务排队和失败。该能力不引入额外任务系统、数据库模型或 Agent/WS 协议变更。
 - **WebSocket 实时网关 (`apps/server/agent-gateway`)**：与分布在全球的各 Node Agent 保持双向全双工长连接，实现秒级状态同步与实时配置热推。
 - **HTTP 轮询适配器 (`POST /api/v1/agent/poll`)**：为无法完成 WS Upgrade 的网络提供 HTTPS 主动上报、配置差异拉取和异步任务回执。
 - **Master-Local 本机节点纳管 (`apps/agent` + `riri-agent`)**：Master 镜像与 Agent 镜像在进程及容器层面彻底解耦；Docker Compose 默认编排独立的 `master` 与 `agent` 容器，通过 `AGENT_IMAGE` 与 `MASTER_LOCAL_AGENT_TOKEN` 环境变量完成自动对接；Master 启动时 bootstrap 自动为 Master-Local 节点绑定该凭据，Agent 独立运行并作为宿主机网络上的节点纳管服务。远程 VPS 使用 Agent 原生 CLI 安装或 Docker 容器运行并接入，支持通过管理面板快捷复制多模式启动命令。

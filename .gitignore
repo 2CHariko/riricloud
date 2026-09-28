@@ -37,3 +37,6 @@ apps/agent/internal/embedded/assets/.placeholder.tar.gz
 
 # 本地二进制托管目录
 /binaries/
+
+# PI-Desktop 本地会话与计划工件
+.pi/

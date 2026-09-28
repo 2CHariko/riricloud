@@ -30,6 +30,7 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
+| [节点管理批量 Agent 升级](./archive/2026-09-29-agent-batch-upgrade.md) | `0.10.0` | 2026-09-29 | — |
 | [docker-dockerhub-publish](./archive/2026-09-28-docker-dockerhub-publish.md) | `v0.9.5` | 2026-09-28 | — |
 | [default-docker-hub-images](./archive/2026-09-28-default-docker-hub-images.md) | `v0.9.5` | 2026-09-28 | — |
 | [release-and-ghcr-governance](./archive/2026-09-26-release-and-ghcr-governance.md) | `v0.9.0` | 2026-09-26 | — |

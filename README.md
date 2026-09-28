@@ -5,7 +5,7 @@
 **多节点 VPN / 代理管理系统**  
 *Master-Agent 分布式架构 · SQLite WAL 本地存储 · WSS/HTTP 双模式通信 · 多协议内核托管 · 多格式订阅输出*
 
-[![Version](https://img.shields.io/badge/version-0.9.6-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.7-blue.svg)](./CHANGELOG.md)
 [![Node](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?logo=node.js)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-%3E%3D9.0.0-F69220.svg?logo=pnpm)](https://pnpm.io)
 [![Go](https://img.shields.io/badge/Go-%3E%3D1.26-00ADD8.svg?logo=go)](https://go.dev)
@@ -54,7 +54,7 @@
 ### 3. 节点纳管控制中心 (Admin Node Management)
 - **多节点集中管理**：统一纳管 Master 本机内置 Agent 与多台远程 VPS 节点（如香港、东京、洛杉矶等）。
 - **系统遥测与健康状态**：通过 WebSocket 长连接实时汇总节点 CPU、内存占用、瞬时网络速率与 Sing-box 内核运行状态。
-- **便捷运维操作**：支持一键接入节点、重启内核、网络探针诊断与在线版本升级。
+- **便捷运维操作**：支持一键接入节点、重启内核、网络探针、单节点在线升级，以及多选节点按平台架构批量升级 Agent（支持任务排队与逐节点结果）。
 
 [![管理员节点管理](docs/assets/screenshots/03-admin-nodes.png)](docs/assets/screenshots/03-admin-nodes.png)
 

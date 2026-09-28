@@ -175,6 +175,86 @@ describe('NodesService', () => {
     expect(gateway.disconnectNode).not.toHaveBeenCalled();
   });
 
+  it('批量升级按各节点架构创建任务，并区分下发与排队状态', async () => {
+    const nodes = [
+      { ...baseNode, id: 'linux-node', osArch: 'linux/amd64', status: 'ONLINE', communicationMode: 'WS' },
+      { ...baseNode, id: 'windows-node', osArch: 'windows/amd64', status: 'ONLINE', communicationMode: 'HTTP' },
+      { ...baseNode, id: 'offline-node', osArch: 'macos/arm64', status: 'OFFLINE', communicationMode: 'WS' }
+    ];
+    prisma.node.findUnique.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(nodes.find((node) => node.id === where.id) ?? null));
+    let taskNumber = 0;
+    gateway.requestUpgrade.mockImplementation(async () => ({ taskId: `task-${++taskNumber}`, requested: true }));
+    const resolveForNode = jest.fn(async (_kind: string, osArch: string) => ({
+      version: `agent-${osArch}`,
+      url: 'https://master.example.com/download',
+      sha256: 'a'.repeat(64),
+      resourceId: 'resource-1',
+      assetId: `asset-${osArch}`,
+      files: []
+    }));
+    (service as unknown as { resources?: { resolveForNode: typeof resolveForNode } }).resources = { resolveForNode };
+
+    const result = await service.requestBatchUpgrade({ ids: nodes.map((node) => node.id), resourceId: 'resource-1' });
+
+    expect(result).toMatchObject({ total: 3, succeeded: 3, failed: 0 });
+    expect(result.results.map(({ status }) => status)).toEqual(['DISPATCHED', 'QUEUED', 'QUEUED']);
+    expect(resolveForNode).toHaveBeenCalledWith('agent', 'linux/amd64', baseNode.agentToken, undefined, 'resource-1', expect.any(Object));
+    expect(resolveForNode).toHaveBeenCalledWith('agent', 'windows/amd64', baseNode.agentToken, undefined, 'resource-1', expect.any(Object));
+    expect(resolveForNode).toHaveBeenCalledWith('agent', 'macos/arm64', baseNode.agentToken, undefined, 'resource-1', expect.any(Object));
+    expect(gateway.requestUpgrade).toHaveBeenCalledTimes(3);
+    (service as unknown as { resources?: undefined }).resources = undefined;
+  });
+
+  it('批量升级逐项隔离成功、禁用节点、不存在节点与无匹配资源', async () => {
+    const nodes = [
+      { ...baseNode, id: 'good-node', osArch: 'linux/amd64', status: 'ONLINE', communicationMode: 'WS' },
+      { ...baseNode, id: 'unsupported-node', osArch: 'linux/arm64', status: 'ONLINE' },
+      { ...baseNode, id: 'disabled-node', status: 'DISABLED' }
+    ];
+    prisma.node.findUnique.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(nodes.find((node) => node.id === where.id) ?? null));
+    const resolveForNode = jest.fn(async (_kind: string, osArch: string) => {
+      if (osArch === 'linux/arm64') throw new Error('所选二进制资源不存在、未启用或不支持该节点架构');
+      return { version: '0.9.6', url: 'https://master.example.com/download', sha256: 'd'.repeat(64), files: [] };
+    });
+    (service as unknown as { resources?: { resolveForNode: typeof resolveForNode } }).resources = { resolveForNode };
+    gateway.requestUpgrade.mockResolvedValue({ taskId: 'task-good', requested: true });
+
+    const result = await service.requestBatchUpgrade({ ids: ['good-node', 'unsupported-node', 'disabled-node', 'missing-node'], resourceId: 'resource-1' });
+
+    expect(result).toMatchObject({ total: 4, succeeded: 1, failed: 3 });
+    expect(result.results.map(({ status }) => status)).toEqual(['DISPATCHED', 'FAILED', 'FAILED', 'FAILED']);
+    expect(result.results.map(({ message }) => message)).toEqual(expect.arrayContaining([
+      '节点已禁用，未下发升级任务',
+      '节点不存在',
+      '所选二进制资源不存在、未启用或不支持该节点架构'
+    ]));
+    expect(gateway.requestUpgrade).toHaveBeenCalledTimes(1);
+    (service as unknown as { resources?: undefined }).resources = undefined;
+  });
+
+  it('批量升级最多以四个并发解析节点资源', async () => {
+    const ids = Array.from({ length: 6 }, (_, index) => `batch-node-${index}`);
+    const nodes = ids.map((id) => ({ ...baseNode, id, osArch: 'linux/amd64', status: 'ONLINE' }));
+    prisma.node.findUnique.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(nodes.find((node) => node.id === where.id) ?? null));
+    let active = 0;
+    let peak = 0;
+    const resolveForNode = jest.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { version: '0.9.6', url: 'https://master.example.com/download', sha256: 'c'.repeat(64), files: [] };
+    });
+    (service as unknown as { resources?: { resolveForNode: typeof resolveForNode } }).resources = { resolveForNode };
+    gateway.requestUpgrade.mockImplementation(async (nodeId: string) => ({ taskId: `task-${nodeId}`, requested: true }));
+
+    const result = await service.requestBatchUpgrade({ ids });
+
+    expect(result).toMatchObject({ total: 6, succeeded: 6, failed: 0 });
+    expect(peak).toBe(4);
+    (service as unknown as { resources?: undefined }).resources = undefined;
+  });
+
   it('未提供自定义地址时使用主控内置二进制', async () => {
     prisma.node.findUnique.mockResolvedValue({ ...baseNode, osArch: 'linux/amd64' });
     binaries.resolveForNode.mockResolvedValue({ version: '0.3.0', url: 'http://master/api/v1/downloads/binaries/agent-linux-amd64', sha256: 'a'.repeat(64) });
