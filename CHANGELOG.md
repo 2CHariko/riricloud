@@ -21,6 +21,10 @@
 
 ### Changed
 - **Docker 部署模板与节点容器安装命令默认镜像源全面切换为 Docker Hub 官方源**：将 `docker-compose.image.yml`、`.env.image.example`、`.env.example` 以及服务端节点安装指令生成器（`NodesService`、`SystemService`）的默认镜像源统一对齐至 `2chariko/riricloud-master:latest` 与 `2chariko/riricloud-agent:latest`，并将 `docker-compose.image.yml` 默认拉取策略更新为 `if_not_present`，支持开箱即用在线拉取部署与本地离线包导入双兼容。
+- **统一后台「卡密管理」、「公告管理」、「文档管理」列表页搜索工具栏与表格样式**：
+  - 全面对齐「套餐管理 / 节点管理」标准布局范式：移除公告与文档管理搜索栏的独立边框容器及反转排版，将搜索输入框统一置于工具栏最左侧，紧随筛选下拉框，右侧放置主操作按钮，并恢复标准 `h-9 text-sm` 控件尺寸；
+  - 消除原生 `<table>` 与卡片内边距留白：将公告与文档管理的手写原生表格统一替换为 `@/components/ui/table` 并包裹于 `<Card><CardContent className="min-w-0 p-0">`，移除违规的 `bg-muted/40` 表头灰底；将卡密管理的搜索工具栏、提示横幅与分页器从表格 `CardContent` 内部剥离至外部，消除表格四周内缩留白；
+  - 更新 `docs/FRONTEND_UI_GUIDELINES.md`，新增禁止手写原生 `<table>`（B9）、禁止列表工具栏额外套框或塞入表格 `CardContent` 内部（B10）两条红线及「§8.1.1 后台管理列表页布局标准范式」。
 
 ### Fixed
 

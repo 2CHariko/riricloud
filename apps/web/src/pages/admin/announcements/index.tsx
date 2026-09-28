@@ -16,7 +16,9 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import {
   Select,
@@ -25,6 +27,14 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -118,24 +128,27 @@ export default function AdminAnnouncementsPage() {
 
   return (
     <PageContainer>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <PageHeader
-          title={t('admin:announcements.title')}
-          description={t('admin:announcements.subtitle')}
-        />
-        <div className="flex items-center gap-2 shrink-0">
-          <Button size="sm" className="gap-1.5 shadow-xs" onClick={handleOpenCreate}>
-            <Plus className="size-4" />
-            <span>{t('admin:announcements.newAnnouncement')}</span>
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={t('admin:announcements.title')}
+        description={t('admin:announcements.subtitle')}
+      />
 
       {/* 顶部工具栏过滤 */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-xl border border-border bg-card shadow-2xs">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative w-full min-w-0 flex-1 sm:min-w-52 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+            <Input
+              type="search"
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              placeholder={t('admin:announcements.searchPlaceholder')}
+              className="pl-9"
+            />
+          </div>
+
           <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="w-[140px] h-8 text-xs">
+            <SelectTrigger className="w-full sm:w-36">
               <SelectValue placeholder={t('admin:announcements.type')} />
             </SelectTrigger>
             <SelectContent>
@@ -148,7 +161,7 @@ export default function AdminAnnouncementsPage() {
           </Select>
 
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[120px] h-8 text-xs">
+            <SelectTrigger className="w-full sm:w-32">
               <SelectValue placeholder={t('admin:announcements.allStatuses')} />
             </SelectTrigger>
             <SelectContent>
@@ -159,151 +172,149 @@ export default function AdminAnnouncementsPage() {
           </Select>
         </div>
 
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-          <Input
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            placeholder={t('admin:announcements.searchPlaceholder')}
-            className="pl-8 h-8 text-xs"
-          />
+        <div className="flex w-full flex-wrap gap-2 sm:flex-nowrap lg:w-auto">
+          <Button className="w-full sm:w-auto" onClick={handleOpenCreate}>
+            <Plus className="size-4" />
+            <span>{t('admin:announcements.newAnnouncement')}</span>
+          </Button>
         </div>
       </div>
 
       {/* 公告列表表格 */}
-      <div className="rounded-xl border border-border bg-card shadow-2xs overflow-hidden">
-        {isLoading ? (
-          <div className="py-20 text-center text-xs text-muted-foreground">
-            {t('admin:announcements.loading')}
-          </div>
-        ) : announcements.length === 0 ? (
-          <EmptyState
-            title={t('admin:announcements.emptyTitle')}
-            description={t('admin:announcements.emptyDesc')}
-            action={
-              <Button size="sm" variant="outline" onClick={handleOpenCreate} className="gap-1.5 text-xs">
-                <Plus className="size-3.5" />
-                <span>{t('admin:announcements.createNow')}</span>
-              </Button>
-            }
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-border bg-muted/40 font-semibold text-muted-foreground">
-                  <th className="py-3 px-4">{t('admin:announcements.table.titleSummary')}</th>
-                  <th className="py-3 px-4">{t('admin:announcements.table.type')}</th>
-                  <th className="py-3 px-4">{t('admin:announcements.table.strategies')}</th>
-                  <th className="py-3 px-4">{t('admin:announcements.table.status')}</th>
-                  <th className="py-3 px-4">{t('admin:announcements.table.updatedAt')}</th>
-                  <th className="py-3 px-4 text-right">{t('admin:announcements.table.actions')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
+      <Card>
+        <CardContent className="min-w-0 p-0">
+          {isLoading ? (
+            <div className="space-y-3 p-4">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : announcements.length === 0 ? (
+            <EmptyState
+              title={t('admin:announcements.emptyTitle')}
+              description={t('admin:announcements.emptyDesc')}
+              className="border-0"
+              action={
+                <Button size="sm" variant="outline" onClick={handleOpenCreate} className="gap-1.5">
+                  <Plus className="size-4" />
+                  <span>{t('admin:announcements.createNow')}</span>
+                </Button>
+              }
+            />
+          ) : (
+            <Table className="min-w-[800px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[34%]">{t('admin:announcements.table.titleSummary')}</TableHead>
+                  <TableHead>{t('admin:announcements.table.type')}</TableHead>
+                  <TableHead>{t('admin:announcements.table.strategies')}</TableHead>
+                  <TableHead>{t('admin:announcements.table.status')}</TableHead>
+                  <TableHead>{t('admin:announcements.table.updatedAt')}</TableHead>
+                  <TableHead className="text-right">{t('admin:announcements.table.actions')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {announcements.map((item) => {
                   const IconComp = getTypeIconComponent(item.type);
                   const preview = stripMarkdownPreview(item.content);
                   const displayTime = item.updatedAt || item.createdAt;
 
                   return (
-                    <tr key={item.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="py-3 px-4 max-w-[340px]">
+                    <TableRow key={item.id}>
+                      <TableCell className="max-w-[340px]">
                         <div className="flex items-start gap-2.5">
                           <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-foreground/80">
                             <IconComp className="size-3.5" />
                           </span>
-                          <div className="min-w-0">
+                          <div className="min-w-0 space-y-0.5">
                             <div className="flex items-center gap-1.5">
                               {item.isPinned && (
-                                <Pin className="size-3 text-primary shrink-0" />
+                                <Pin className="size-3.5 text-primary shrink-0" />
                               )}
-                              <div className="font-semibold text-foreground truncate" title={item.title}>
+                              <div className="font-medium text-foreground truncate" title={item.title}>
                                 {item.title}
                               </div>
                             </div>
                             {preview && (
-                              <div className="text-[11px] text-muted-foreground truncate mt-0.5" title={preview}>
+                              <div className="text-xs text-muted-foreground truncate" title={preview}>
                                 {preview}
                               </div>
                             )}
                           </div>
                         </div>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap">
                         <Badge
                           variant="outline"
-                          className={`text-[10px] px-1.5 py-0 h-4 font-normal ${getAnnouncementTypeBadgeClass(item.type)}`}
+                          className={getAnnouncementTypeBadgeClass(item.type)}
                         >
                           {t(`admin:announcements.types.${item.type}`)}
                         </Badge>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {item.isPinned && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal">
+                            <Badge variant="secondary">
                               {t('admin:announcements.table.pinned')}
                             </Badge>
                           )}
                           {item.showBanner && (
-                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal border-primary/30 text-primary">
+                            <Badge variant="outline" className="border-primary/30 text-primary">
                               {t('admin:announcements.table.banner')}
                             </Badge>
                           )}
                           {item.popupOnLogin && (
-                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal border-rose-500/30 text-rose-600 dark:text-rose-400">
+                            <Badge variant="outline" className="border-rose-500/30 text-rose-600 dark:text-rose-400">
                               {t('admin:announcements.table.popup')}
                             </Badge>
                           )}
                           {!item.isPinned && !item.showBanner && !item.popupOnLogin && (
-                            <span className="text-muted-foreground">—</span>
+                            <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </div>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={item.enabled}
                             onCheckedChange={(checked) => handleToggleStatus(item, checked)}
                           />
-                          <span className={item.enabled ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-muted-foreground'}>
+                          <span className={item.enabled ? 'text-xs text-emerald-600 dark:text-emerald-400 font-medium' : 'text-xs text-muted-foreground'}>
                             {item.enabled
                               ? t('admin:announcements.statusActive')
                               : t('admin:announcements.statusDisabled')}
                           </span>
                         </div>
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 whitespace-nowrap text-muted-foreground font-mono">
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                         {displayTime && displayTime.includes('T') ? formatDateTime(displayTime) : '—'}
-                      </td>
+                      </TableCell>
 
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <TableCell className="text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1">
                           <IconButton
                             variant="ghost"
-                            size="icon-xs"
-                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            size="icon-sm"
                             onClick={() => handleOpenEdit(item)}
                             title={t('admin:announcements.edit')}
                             aria-label={t('admin:announcements.edit')}
                           >
-                            <Edit className="size-3.5" />
+                            <Edit className="size-4" />
                           </IconButton>
 
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
                               <IconButton
                                 variant="ghost"
-                                size="icon-xs"
-                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                size="icon-sm"
                                 title={t('admin:announcements.delete')}
                                 aria-label={t('admin:announcements.delete')}
                               >
-                                <Trash2 className="size-3.5" />
+                                <Trash2 className="size-4 text-destructive" />
                               </IconButton>
                             </AlertDialogTrigger>
                             <AlertDialogContent>
@@ -327,15 +338,15 @@ export default function AdminAnnouncementsPage() {
                             </AlertDialogContent>
                           </AlertDialog>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* 编辑器对话框 */}
       <AnnouncementEditorDialog
