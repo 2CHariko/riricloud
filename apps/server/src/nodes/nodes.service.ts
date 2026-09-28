@@ -53,7 +53,7 @@ export class NodesService {
       configuredBaseUrl: settings?.publicBaseUrl,
       requestBaseUrl
     });
-    const agentImage = process.env.AGENT_IMAGE || 'riricloud/agent:latest';
+    const agentImage = process.env.AGENT_IMAGE || '2chariko/riricloud-agent:latest';
     const decryptedToken = decryptSecret(node.agentToken);
     return {
       node: {
@@ -91,7 +91,7 @@ export class NodesService {
       },
       include: nodeLinesInclude
     });
-    const agentImage = process.env.AGENT_IMAGE || 'riricloud/agent:latest';
+    const agentImage = process.env.AGENT_IMAGE || '2chariko/riricloud-agent:latest';
     return {
       node: this.sanitize(node),
       // Token 只在创建成功响应中返回一次；数据库字段保存的是加密密文。
@@ -123,7 +123,7 @@ export class NodesService {
       metadata: { nodeId: id, operatorId: operatorId ?? null },
       nodeId: id
     });
-    const agentImage = process.env.AGENT_IMAGE || 'riricloud/agent:latest';
+    const agentImage = process.env.AGENT_IMAGE || '2chariko/riricloud-agent:latest';
     const installCommands = this.buildInstallCommands(node.osArch, publicBaseUrl, id, token, node.communicationMode);
     return {
       nodeId: id,
@@ -553,7 +553,7 @@ export class NodesService {
       ? baseUrl
       : appendPublicPath(toWebSocketBaseUrl(baseUrl), 'ws/agent');
     const agentMode = mode === 'HTTP' ? 'http' : 'ws';
-    const agentImage = process.env.AGENT_IMAGE || 'riricloud/agent:latest';
+    const agentImage = process.env.AGENT_IMAGE || '2chariko/riricloud-agent:latest';
     if (agentToken) {
       return `docker run -d --name riri-agent --restart unless-stopped --network host --cap-add=NET_ADMIN --cap-add=NET_BIND_SERVICE -v /var/lib/riri-agent:/var/lib/riri-agent -e AGENT_TOKEN="${agentToken}" -e AGENT_MASTER_URL='${master}' -e AGENT_MODE='${agentMode}' ${agentImage}`;
     }

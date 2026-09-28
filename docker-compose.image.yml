@@ -1,19 +1,23 @@
-# RiriCloud 预构建镜像部署模板：适用于离线镜像包导入或从 Docker Hub / GHCR (GitHub Packages) 在线拉取。
-# 在线镜像示例（在 .env.image 或环境变量中指定）：
-#   方式 1 (Docker Hub):
-#     MASTER_IMAGE=<dockerhub_user>/riricloud-master:latest
-#     AGENT_IMAGE=<dockerhub_user>/riricloud-agent:latest
-#   方式 2 (GHCR):
-#     MASTER_IMAGE=ghcr.io/<owner>/riricloud-master:latest
-#     AGENT_IMAGE=ghcr.io/<owner>/riricloud-agent:latest
+# RiriCloud 预构建镜像部署模板：适用于从 Docker Hub 官方源在线拉取、GHCR 在线拉取或离线镜像包导入。
+# 默认镜像源已对齐 Docker Hub 官方仓库：2chariko/riricloud-master:latest 与 2chariko/riricloud-agent:latest
+# 在线镜像示例（可在 .env.image 或环境变量中覆盖指定）：
+#   方式 1 (Docker Hub，默认):
+#     MASTER_IMAGE=2chariko/riricloud-master:latest
+#     AGENT_IMAGE=2chariko/riricloud-agent:latest
+#   方式 2 (GHCR 备用源):
+#     MASTER_IMAGE=ghcr.io/2chariko/riricloud-master:latest
+#     AGENT_IMAGE=ghcr.io/2chariko/riricloud-agent:latest
+#   方式 3 (本地离线包导入):
+#     MASTER_IMAGE=riricloud/master:0.9.5
+#     AGENT_IMAGE=riricloud/agent:0.8.5
 #   IMAGE_PULL_POLICY=if_not_present (或 always)
 #   DOCKER_USER=0:0 (可选：若在 VPS 以 root 部署出现挂载目录权限问题，可设为 0:0 免改宿主目录权限)
 name: riricloud
 
 services:
   master:
-    image: ${MASTER_IMAGE:-riricloud/master:latest}
-    pull_policy: ${IMAGE_PULL_POLICY:-never}
+    image: ${MASTER_IMAGE:-2chariko/riricloud-master:latest}
+    pull_policy: ${IMAGE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     user: "${DOCKER_USER:-65532:65532}"
     read_only: true
@@ -33,7 +37,7 @@ services:
       AUTO_SEED: ${AUTO_SEED:-false}
       MASTER_LOCAL_HOST: ${MASTER_LOCAL_HOST:-}
       MASTER_LOCAL_AGENT_TOKEN: ${MASTER_LOCAL_AGENT_TOKEN:-}
-      AGENT_IMAGE: ${AGENT_IMAGE:-riricloud/agent:latest}
+      AGENT_IMAGE: ${AGENT_IMAGE:-2chariko/riricloud-agent:latest}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
@@ -57,8 +61,8 @@ services:
       start_period: 20s
 
   agent:
-    image: ${AGENT_IMAGE:-riricloud/agent:latest}
-    pull_policy: ${IMAGE_PULL_POLICY:-never}
+    image: ${AGENT_IMAGE:-2chariko/riricloud-agent:latest}
+    pull_policy: ${IMAGE_PULL_POLICY:-if_not_present}
     restart: unless-stopped
     command: ["run"]
     user: "${DOCKER_USER:-65532:65532}"

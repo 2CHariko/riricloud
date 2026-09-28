@@ -15,7 +15,7 @@ export class SystemService {
     return {
       version: SystemService.readRootVersion(),
       agentVersion: SystemService.readAgentVersion(),
-      agentImage: process.env.AGENT_IMAGE || 'riricloud/agent:latest'
+      agentImage: process.env.AGENT_IMAGE || '2chariko/riricloud-agent:latest'
     };
   }
 

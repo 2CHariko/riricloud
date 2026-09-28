@@ -133,41 +133,39 @@ gzip -dc artifacts/docker/linux-amd64/riricloud-agent_<agent-version>_linux_amd6
 (cd artifacts/docker/linux-amd64 && sha256sum -c riricloud-docker-images_<master-version>_linux_amd64.sha256)
 ```
 
-仓库提供 `docker-compose.image.yml` 与 `.env.image.example`，用于直接运行已导入的离线镜像或从在线仓库拉取镜像：
+仓库提供 `docker-compose.image.yml` 与 `.env.image.example`，默认已配置使用 Docker Hub 官方在线镜像（`2chariko/riricloud-master:latest` 与 `2chariko/riricloud-agent:latest`），亦支持导入的离线镜像包或 GHCR 备用源：
 
-**方式 A：离线镜像（默认，`pull_policy: never`）**
+**方式 A：从 Docker Hub 官方镜像在线拉取运行（推荐，默认 `pull_policy: if_not_present`）**
+
+只需准备 `.env.image` 配置文件，无需本地预先构建即可一键拉取并启动：
 
 ```bash
 cp .env.image.example .env.image
-# 编辑 .env.image：确认 MASTER_IMAGE 与 AGENT_IMAGE 镜像标签；填写配置
-docker compose --env-file .env.image -f docker-compose.image.yml up -d --no-build
-docker compose --env-file .env.image -f docker-compose.image.yml ps
-```
-
-**方式 B：从 Docker Hub / GitHub Packages (GHCR) 在线拉取运行（`linux/amd64`）**
-
-项目已配置 GitHub Actions 自动将构建好的 Docker 镜像推送到 **Docker Hub** 与 **GitHub Container Registry (`ghcr.io`)**。可在 `.env.image` 中指定在线镜像与拉取策略：
-
-```env
-# 选项 1：从 Docker Hub 拉取（默认推荐，无需前缀或指定命名空间）
-MASTER_IMAGE=<dockerhub_user>/riricloud-master:latest
-AGENT_IMAGE=<dockerhub_user>/riricloud-agent:latest
-IMAGE_PULL_POLICY=if_not_present
-
-# 选项 2：从 GitHub Container Registry (GHCR) 拉取
-# MASTER_IMAGE=ghcr.io/<owner>/riricloud-master:latest
-# AGENT_IMAGE=ghcr.io/<owner>/riricloud-agent:latest
-# IMAGE_PULL_POLICY=if_not_present
-```
-
-随后一键启动并拉取最新镜像：
-
-```bash
+# 编辑 .env.image：填写 JWT_SECRET、RIRICLOUD_ENCRYPTION_KEY、ADMIN_EMAIL、ADMIN_PASSWORD 等必要环境配置
 docker compose --env-file .env.image -f docker-compose.image.yml pull
 docker compose --env-file .env.image -f docker-compose.image.yml up -d
 ```
 
-> 注：`<dockerhub_user>` / `<owner>` 替换为 Docker Hub 用户名或 GitHub 仓库所属用户/组织名（全小写）。
+默认配置下 `docker-compose.image.yml` 会自动从 Docker Hub 拉取：
+- `MASTER_IMAGE`: `2chariko/riricloud-master:latest`
+- `AGENT_IMAGE`: `2chariko/riricloud-agent:latest`
+
+**方式 B：从 GitHub Packages (GHCR) 在线拉取或运行离线导入镜像**
+
+若需切换至 GitHub Packages (GHCR) 或离线包导入，可在 `.env.image` 中覆盖指定：
+
+```env
+# 选项 1：切换为 GHCR 备用源
+MASTER_IMAGE=ghcr.io/2chariko/riricloud-master:latest
+AGENT_IMAGE=ghcr.io/2chariko/riricloud-agent:latest
+IMAGE_PULL_POLICY=if_not_present
+
+# 选项 2：运行本地导入的离线镜像包（设置 pull_policy 为 never）
+# MASTER_IMAGE=riricloud/master:0.9.5
+# AGENT_IMAGE=riricloud/agent:0.8.5
+# IMAGE_PULL_POLICY=never
+```
+
 > 官方镜像流水线采用双 Registry 并行分发与严格双轨解耦：发布 `vX.Y.Z` Release 时主控镜像（`riricloud-master`）自动打上 `vX.Y.Z`、`X.Y.Z` 与 `latest` 标签；发布 `agent-vA.B.C` Release 时边缘节点镜像（`riricloud-agent`）自动打上 `agent-vA.B.C`、`vA.B.C`、`A.B.C` 与 `latest` 标签（同时支持通过 GitHub Actions `workflow_dispatch` 手动按需触发构建）。构建过程自动同步推送至 Docker Hub 与 GHCR。
 
 停止并清理容器：
@@ -281,7 +279,7 @@ riri-agent uninstall --purge --yes
 直接在连接终端中运行 `riri-agent`（不带子命令）会进入 Bubble Tea 全屏控制台 GUI/TUI：使用方向键选择菜单，Enter 执行，Esc 返回，q 退出；安装页提供 AgentToken、Master URL 和通信模式表单，长诊断/日志输出可在结果页滚动查看。脚本、服务管理器、内置 Agent 和无 TTY 环境继续使用上面的一级子命令，不依赖交互输入。
 
 ### 2.2 方式二：Docker 容器化部署
-如果节点偏好容器化环境，可直接通过 Docker 启动：
+如果节点偏好容器化环境，可直接通过 Docker 启动（默认从 Docker Hub 拉取官方镜像）：
 
 ```bash
 docker run -d \
@@ -290,7 +288,7 @@ docker run -d \
   --network host \
   -e AGENT_TOKEN="<YOUR_AGENT_TOKEN>" \
   -e MASTER_WS_URL="wss://<master-domain>/ws/agent" \
-  riricloud/agent:latest
+  2chariko/riricloud-agent:latest
 ```
 
 HTTP 容器模式只需替换为：

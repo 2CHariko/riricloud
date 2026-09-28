@@ -20,6 +20,7 @@
   - 更新 `docker-compose.image.yml`、`.env.image.example` 与 `docs/DEPLOYMENT_GUIDE.md`，提供从 Docker Hub 在线拉取与部署说明。
 
 ### Changed
+- **Docker 部署模板与节点容器安装命令默认镜像源全面切换为 Docker Hub 官方源**：将 `docker-compose.image.yml`、`.env.image.example`、`.env.example` 以及服务端节点安装指令生成器（`NodesService`、`SystemService`）的默认镜像源统一对齐至 `2chariko/riricloud-master:latest` 与 `2chariko/riricloud-agent:latest`，并将 `docker-compose.image.yml` 默认拉取策略更新为 `if_not_present`，支持开箱即用在线拉取部署与本地离线包导入双兼容。
 
 ### Fixed
 
