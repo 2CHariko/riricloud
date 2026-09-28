@@ -84,8 +84,8 @@ const buildPlanSchema = () =>
   allowRenewal: z.boolean(),
   deviceLimit: z.coerce.number().int().min(0).max(1000),
   speedLimitMbps: z.preprocess(
-    (val) => (val === '' || val === null || val === undefined || val === 0 ? null : Number(val)),
-    z.number().int().min(1).max(100000).nullable().optional()
+    (val) => (val === '' || val === null || val === undefined ? null : Number(val)),
+    z.number().int().min(0).max(100000).nullable().optional()
   ),
   appendSpeedBadge: z.enum(['INHERIT', 'ENABLE', 'DISABLE']).default('INHERIT'),
   // 视觉与营销动效配置
@@ -487,7 +487,8 @@ export function PlanFormDialog({
                   <Input
                     id="plan-speed-limit"
                     type="number"
-                    min="1"
+                    min="0"
+                    max="100000"
                     placeholder={t('admin:planForm.speedLimitPlaceholder')}
                     {...form.register('speedLimitMbps')}
                   />
