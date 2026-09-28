@@ -2098,6 +2098,21 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         const targetLineHasOverride = Boolean(targetLine.endpointOverrideEnabled && targetLine.serverHost);
         const defaultHost = targetLineHasOverride ? targetLine.serverHost!.trim() : targetLine.entryNode.serverHost;
         const defaultPort = (targetLine.endpointOverrideEnabled && targetLine.serverPort) ? targetLine.serverPort : targetLine.entryPort;
+
+        // 解耦物理拨号目标与应用层 TLS SNI / HTTP Host：
+        // 若目标线路显式指定了 serverName，优先使用；
+        // 若未指定且目标线路的接入端点域名有效（非纯 IP），自动继承该域名作为 TLS SNI，防止使用回源 IP 时因缺少 SNI 导致 x509 证书校验失败；
+        // 若目标节点的主机地址为域名，亦可作为兜底。
+        const targetTlsServerName = (targetLine.endpointOverrideEnabled && targetLine.serverName?.trim())
+          ? targetLine.serverName.trim()
+          : (targetLineHasOverride && isIP(targetLine.serverHost!.trim()) === 0
+              ? targetLine.serverHost!.trim()
+              : (isIP(targetLine.entryNode.serverHost.trim()) === 0 ? targetLine.entryNode.serverHost.trim() : undefined));
+
+        const targetTransportHost = (targetLine.endpointOverrideEnabled && targetLine.host?.trim())
+          ? targetLine.host.trim()
+          : targetTlsServerName;
+
         const outbound = this.buildProtocolRelayOutbound({
           id: line.id,
           protocolType: targetLine.protocolType,
@@ -2107,7 +2122,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           landingEndpointOverrideEnabled: line.landingEndpointOverrideEnabled,
           landingServerHost: line.landingServerHost,
           landingServerPort: line.landingServerPort,
-          serverNameOverride: (targetLine.endpointOverrideEnabled && targetLine.serverName) ? targetLine.serverName : undefined
+          serverNameOverride: targetTlsServerName,
+          hostOverride: targetTransportHost
         });
         if (!outbound) {
           inbounds.splice(-relayInbounds.length, relayInbounds.length);
@@ -2352,6 +2368,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       landingServerHost?: string | null;
       landingServerPort?: number | null;
       serverNameOverride?: string | null;
+      hostOverride?: string | null;
     }
   ): Record<string, unknown> | undefined {
     if (!line.landingNode || !line.landingPort) return undefined;
@@ -2359,12 +2376,18 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     const params = revealInboundSecrets(JSON.parse(line.paramsJson) as Record<string, unknown>);
     const tls = (params.tls ?? {}) as Record<string, unknown>;
     const reality = tls.reality as Record<string, unknown> | undefined;
-    const fallbackServerName = typeof tls.serverName === 'string'
-      ? tls.serverName
+    const fallbackServerName = typeof tls.serverName === 'string' && tls.serverName.trim()
+      ? tls.serverName.trim()
       : reality && Array.isArray(reality.serverNames) && typeof reality.serverNames[0] === 'string'
         ? reality.serverNames[0]
         : undefined;
-    const tlsServerName = line.serverNameOverride || fallbackServerName;
+
+    // 当连接目标被覆盖为纯 IP 时，若未提供显式 SNI，尝试使用落地节点的域名（若其不为 IP）
+    const nodeDomainServerName = (line.landingNode && isIP(line.landingNode.serverHost.trim()) === 0)
+      ? line.landingNode.serverHost.trim()
+      : undefined;
+
+    const tlsServerName = line.serverNameOverride?.trim() || fallbackServerName || nodeDomainServerName;
     const isNatLanding = line.landingNode.reachability === 'NAT';
     const hasLandingOverride = !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
     const targetHost = isNatLanding
@@ -2432,9 +2455,10 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     );
     if (clientTls) outbound.tls = clientTls;
     const transport = (params.transport ?? {}) as Record<string, unknown>;
+    const transportHost = line.hostOverride?.trim() || (typeof transport.host === 'string' ? transport.host : null);
     const clientTransport = buildClientTransport(
       transport as unknown as Parameters<typeof buildClientTransport>[0],
-      null
+      transportHost
     );
     if (clientTransport) outbound.transport = clientTransport;
     return outbound;
