@@ -1,7 +1,11 @@
-# RiriCloud 预构建镜像部署模板：适用于离线镜像包导入或从 GHCR (GitHub Packages) 在线拉取。
+# RiriCloud 预构建镜像部署模板：适用于离线镜像包导入或从 Docker Hub / GHCR (GitHub Packages) 在线拉取。
 # 在线镜像示例（在 .env.image 或环境变量中指定）：
-#   MASTER_IMAGE=ghcr.io/<owner>/riricloud-master:latest
-#   AGENT_IMAGE=ghcr.io/<owner>/riricloud-agent:latest
+#   方式 1 (Docker Hub):
+#     MASTER_IMAGE=<dockerhub_user>/riricloud-master:latest
+#     AGENT_IMAGE=<dockerhub_user>/riricloud-agent:latest
+#   方式 2 (GHCR):
+#     MASTER_IMAGE=ghcr.io/<owner>/riricloud-master:latest
+#     AGENT_IMAGE=ghcr.io/<owner>/riricloud-agent:latest
 #   IMAGE_PULL_POLICY=if_not_present (或 always)
 #   DOCKER_USER=0:0 (可选：若在 VPS 以 root 部署出现挂载目录权限问题，可设为 0:0 免改宿主目录权限)
 name: riricloud

@@ -1,4 +1,4 @@
-name: Docker Publish (GHCR)
+name: Docker Publish (GHCR & Docker Hub)
 
 on:
   release:
@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   build-and-push:
-    name: 构建并发布镜像至 GHCR (linux/amd64)
+    name: 构建并发布镜像至 GHCR 与 Docker Hub (linux/amd64)
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
@@ -40,9 +40,20 @@ jobs:
 
       - name: 解析镜像元数据与标签
         id: meta
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           OWNER_LC="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           echo "owner_lc=${OWNER_LC}" >> "$GITHUB_OUTPUT"
+
+          DOCKERHUB_USER_LC=""
+          HAS_DOCKERHUB="false"
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            DOCKERHUB_USER_LC="$(echo "$DOCKERHUB_USERNAME" | tr '[:upper:]' '[:lower:]')"
+            HAS_DOCKERHUB="true"
+          fi
+          echo "has_dockerhub=${HAS_DOCKERHUB}" >> "$GITHUB_OUTPUT"
 
           VERSION="$(node -p "require('./package.json').version")"
           if [ -f "apps/agent/VERSION" ]; then
@@ -70,46 +81,75 @@ jobs:
 
           BUILD_MASTER="false"
           BUILD_AGENT="false"
-          MASTER_TAGS=""
-          AGENT_TAGS=""
+          MASTER_TAGS=()
+          AGENT_TAGS=()
+
+          append_master_tags() {
+            local tag="$1"
+            MASTER_TAGS+=("ghcr.io/${OWNER_LC}/riricloud-master:${tag}")
+            if [ "$HAS_DOCKERHUB" = "true" ]; then
+              MASTER_TAGS+=("${DOCKERHUB_USER_LC}/riricloud-master:${tag}")
+            fi
+          }
+
+          append_agent_tags() {
+            local tag="$1"
+            AGENT_TAGS+=("ghcr.io/${OWNER_LC}/riricloud-agent:${tag}")
+            if [ "$HAS_DOCKERHUB" = "true" ]; then
+              AGENT_TAGS+=("${DOCKERHUB_USER_LC}/riricloud-agent:${tag}")
+            fi
+          }
 
           if [[ "$TAG_NAME" =~ ^v[0-9] ]]; then
             # 正式发布 Master Release (如 v0.9.4)：严格双轨解耦，仅构建 Master 镜像
             RAW_VER="${TAG_NAME#v}"
             VERSION="$RAW_VER"
             BUILD_MASTER="true"
-            MASTER_TAGS="ghcr.io/${OWNER_LC}/riricloud-master:${TAG_NAME},ghcr.io/${OWNER_LC}/riricloud-master:${RAW_VER},ghcr.io/${OWNER_LC}/riricloud-master:latest"
+            append_master_tags "${TAG_NAME}"
+            append_master_tags "${RAW_VER}"
+            append_master_tags "latest"
           elif [[ "$TAG_NAME" =~ ^agent-v[0-9] ]]; then
             # 独立发布 Agent Release (如 agent-v0.8.4)：严格双轨解耦，仅构建 Agent 镜像
             RAW_VER="${TAG_NAME#agent-v}"
             AGENT_VERSION="$RAW_VER"
             BUILD_AGENT="true"
-            AGENT_TAGS="ghcr.io/${OWNER_LC}/riricloud-agent:${TAG_NAME},ghcr.io/${OWNER_LC}/riricloud-agent:v${RAW_VER},ghcr.io/${OWNER_LC}/riricloud-agent:${RAW_VER},ghcr.io/${OWNER_LC}/riricloud-agent:latest"
+            append_agent_tags "${TAG_NAME}"
+            append_agent_tags "v${RAW_VER}"
+            append_agent_tags "${RAW_VER}"
+            append_agent_tags "latest"
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             if [ "$TARGET_INPUT" = "all" ] || [ "$TARGET_INPUT" = "master" ]; then
               BUILD_MASTER="true"
               if [ -n "$CUSTOM_TAG" ]; then
-                MASTER_TAGS="ghcr.io/${OWNER_LC}/riricloud-master:${CUSTOM_TAG}"
+                append_master_tags "${CUSTOM_TAG}"
               else
-                MASTER_TAGS="ghcr.io/${OWNER_LC}/riricloud-master:v${VERSION},ghcr.io/${OWNER_LC}/riricloud-master:${VERSION},ghcr.io/${OWNER_LC}/riricloud-master:latest"
+                append_master_tags "v${VERSION}"
+                append_master_tags "${VERSION}"
+                append_master_tags "latest"
               fi
             fi
             if [ "$TARGET_INPUT" = "all" ] || [ "$TARGET_INPUT" = "agent" ]; then
               BUILD_AGENT="true"
               if [ -n "$CUSTOM_TAG" ]; then
-                AGENT_TAGS="ghcr.io/${OWNER_LC}/riricloud-agent:${CUSTOM_TAG}"
+                append_agent_tags "${CUSTOM_TAG}"
               else
-                AGENT_TAGS="ghcr.io/${OWNER_LC}/riricloud-agent:agent-v${AGENT_VERSION},ghcr.io/${OWNER_LC}/riricloud-agent:v${AGENT_VERSION},ghcr.io/${OWNER_LC}/riricloud-agent:${AGENT_VERSION},ghcr.io/${OWNER_LC}/riricloud-agent:latest"
+                append_agent_tags "agent-v${AGENT_VERSION}"
+                append_agent_tags "v${AGENT_VERSION}"
+                append_agent_tags "${AGENT_VERSION}"
+                append_agent_tags "latest"
               fi
             fi
           else
             echo "::warning::未匹配到有效的发布版本 Tag (${TAG_NAME:-$REF})，跳过镜像构建"
           fi
 
+          MASTER_TAGS_STR=$(IFS=,; echo "${MASTER_TAGS[*]}")
+          AGENT_TAGS_STR=$(IFS=,; echo "${AGENT_TAGS[*]}")
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "agent_version=${AGENT_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "master_tags=${MASTER_TAGS}" >> "$GITHUB_OUTPUT"
-          echo "agent_tags=${AGENT_TAGS}" >> "$GITHUB_OUTPUT"
+          echo "master_tags=${MASTER_TAGS_STR}" >> "$GITHUB_OUTPUT"
+          echo "agent_tags=${AGENT_TAGS_STR}" >> "$GITHUB_OUTPUT"
           echo "build_master=${BUILD_MASTER}" >> "$GITHUB_OUTPUT"
           echo "build_agent=${BUILD_AGENT}" >> "$GITHUB_OUTPUT"
 
@@ -125,7 +165,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建并推送 Master 镜像 (ghcr.io)
+      - name: 登录 Docker Hub
+        if: (steps.meta.outputs.build_master == 'true' || steps.meta.outputs.build_agent == 'true') && steps.meta.outputs.has_dockerhub == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 构建并推送 Master 镜像 (GHCR & Docker Hub)
         if: steps.meta.outputs.build_master == 'true'
         uses: docker/build-push-action@v6
         with:
@@ -143,7 +190,7 @@ jobs:
           cache-from: type=gha,scope=docker-master
           cache-to: type=gha,mode=max,scope=docker-master
 
-      - name: 构建并推送 Agent 镜像 (ghcr.io)
+      - name: 构建并推送 Agent 镜像 (GHCR & Docker Hub)
         if: steps.meta.outputs.build_agent == 'true'
         uses: docker/build-push-action@v6
         with:
