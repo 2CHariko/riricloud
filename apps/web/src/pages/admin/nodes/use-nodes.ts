@@ -290,6 +290,7 @@ export interface NodeTaskStatus {
   status: 'PENDING' | 'QUEUED' | 'DISPATCHED' | 'COMPLETED' | 'FAILED';
   success?: boolean;
   message?: string;
+  completedAt?: string | null;
 }
 
 export interface NodeDeploymentTask {
@@ -314,6 +315,20 @@ export interface NodeDeploymentTask {
     release?: { id: string; kind: string; upstreamVersion: string; revision: number };
   } | null;
 }
+
+export interface BatchNodeUpgradeResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: Array<{
+    nodeId: string;
+    taskId?: string;
+    status: 'DISPATCHED' | 'QUEUED' | 'FAILED';
+    requested?: boolean;
+    message?: string;
+  }>;
+}
+
 
 // 节点列表：5 秒轮询实时观察 Agent 在线状态与负载
 export function useAdminNodes() {
@@ -458,6 +473,19 @@ export function useNodeMutations() {
     onError: (e: unknown) => toast.error(extractErrorMessage(e, t('admin:nodes.toastUpgradeDispatchFailed')))
   });
 
+  const batchUpgradeNodes = useMutation({
+    mutationFn: async (payload: { ids: string[]; resourceId?: string }) =>
+      (await api.post<BatchNodeUpgradeResult>('/admin/nodes/batch-upgrade', payload)).data,
+    onSuccess: (data) => {
+      if (data.failed) toast.warning(t('admin:nodes.toastBatchUpgradePartial', { succeeded: data.succeeded, failed: data.failed }));
+      else toast.success(t('admin:nodes.toastBatchUpgradeAccepted', { count: data.succeeded }));
+      invalidate();
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'nodes'], predicate: (query) => query.queryKey.includes('tasks') });
+    },
+    onError: (e: unknown) => toast.error(extractErrorMessage(e, t('admin:nodes.toastUpgradeDispatchFailed')))
+  });
+
+
   const probeNode = useMutation({
     mutationFn: async ({ id, probes }: { id: string; probes: Array<{ type: 'tcp' | 'dns' | 'icmp'; target: string; port?: number; timeoutMs?: number }> }) =>
       (await api.post(`/admin/nodes/${id}/probe`, { probes })).data,
@@ -522,5 +550,5 @@ export function useNodeMutations() {
     return undefined;
   };
 
-  return { createNode, rotateToken, updateNode, deleteNode, reloadNode, upgradeNode, probeNode, restartAgent, importBinary, retryTask, rollbackTask, waitForTask, enableLogDiagnostics, disableLogDiagnostics };
+  return { createNode, rotateToken, updateNode, deleteNode, reloadNode, upgradeNode, batchUpgradeNodes, probeNode, restartAgent, importBinary, retryTask, rollbackTask, waitForTask, enableLogDiagnostics, disableLogDiagnostics };
 }

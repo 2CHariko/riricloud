@@ -15,6 +15,17 @@
 ### Added
 
 ### Changed
+
+### Fixed
+
+
+## [0.9.7] - 2026-09-29
+
+### Added
+- **节点管理支持批量 Agent 升级**：管理员可在节点列表跨平台多选最多 100 个节点，按各节点架构选择 ACTIVE 托管资源并批量下发；在线 WS 立即投递，HTTP/离线任务排队，禁用节点及架构不匹配等逐项失败在结果中单独报告，不影响其他节点。
+- **修复本地 E2E Agent 版本与资源标签不一致**：`scripts/dev-e2e.sh` 默认从 `apps/agent/VERSION` 解析 Agent 版本，并将同一版本注入本地构建和资源登记；新增 `E2E_AGENT_VERSION` 覆盖，兼容既有 `E2E_RESOURCE_VERSION` 覆盖，两个覆盖值冲突时提前报错。`E2E_APP_VERSION` 仅保留为构建来源元数据，不再误用为 Agent 版本。
+
+### Changed
 - **重构「用户管理」与通用复合组件 `DataTable` 的样式与交互对齐**：
   - 将 `DataTable` 内部容器从裸 `<div className="min-w-0 rounded-xl border">` 升级为标准 `<Card className="min-w-0"><CardContent className="min-w-0 p-0"><Table>` 贴边容器，恢复 `bg-card` 浮雕景深与卡片阴影；
   - 增加 `actions` 右侧操作插槽与 `banner` 独立横幅插槽；修复 `DataTable` 行多选列自动注入判定缺陷，完善受控 `rowSelection` 与批量操作后自动清空勾选状态；
@@ -22,6 +33,8 @@
 
 ### Fixed
 - **修复套餐编辑的带宽速率上限无法输入 0**：统一前端输入范围与后端契约，允许 `0` 或留空表示不限速，并正确处理数字输入产生的字符串 `"0"`。
+
+
 
 ## [0.9.6] - 2026-09-28
 

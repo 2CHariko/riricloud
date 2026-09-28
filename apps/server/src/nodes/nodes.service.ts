@@ -13,6 +13,7 @@ import { ProbeNodeDto } from './dto/probe-node.dto';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import { UpgradeNodeDto } from './dto/upgrade-node.dto';
+import { BatchUpgradeNodeDto } from './dto/batch-upgrade-node.dto';
 import { SettingsService } from '../system/settings.service';
 import { appendPublicPath, resolvePublicBaseUrl, toWebSocketBaseUrl } from '../common/public-url';
 import { decryptSecret, encryptSecret } from '../common/secret-crypto';
@@ -196,6 +197,47 @@ export class NodesService {
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : '升级任务参数无效');
     }
+  }
+
+  async requestBatchUpgrade(dto: BatchUpgradeNodeDto, requestBaseUrl?: string, operatorId?: string) {
+    const results: Array<{
+      nodeId: string;
+      taskId?: string;
+      status: 'DISPATCHED' | 'QUEUED' | 'FAILED';
+      requested?: boolean;
+      message?: string;
+    }> = [];
+    const concurrency = 4;
+
+    for (let offset = 0; offset < dto.ids.length; offset += concurrency) {
+      const chunk = dto.ids.slice(offset, offset + concurrency);
+      const settled = await Promise.allSettled(chunk.map(async (nodeId) => {
+        const node = await this.requireNode(nodeId);
+        if (node.status === 'DISABLED') {
+          return { nodeId, status: 'FAILED' as const, message: '节点已禁用，未下发升级任务' };
+        }
+        const task = await this.requestUpgrade(nodeId, { target: 'agent', resourceId: dto.resourceId }, requestBaseUrl, operatorId);
+        const status = task.requested && node.status === 'ONLINE' && node.communicationMode === 'WS' ? 'DISPATCHED' as const : 'QUEUED' as const;
+        return { nodeId, taskId: task.taskId, status, requested: task.requested };
+      }));
+
+      settled.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+          return;
+        }
+        const reason = result.reason instanceof Error ? result.reason.message : '升级任务创建失败';
+        const message = reason
+          .replace(/https?:\/\/\S+/gi, '[URL]')
+          .replace(/\b[a-f0-9]{64}\b/gi, '[REDACTED]')
+          .slice(0, 240);
+        results.push({ nodeId: chunk[index], status: 'FAILED', message });
+      });
+    }
+
+    const succeeded = results.filter((result) => result.status !== 'FAILED').length;
+    const failed = results.length - succeeded;
+    return { total: results.length, succeeded, failed, results };
   }
 
   async requestProbe(id: string, dto: ProbeNodeDto) {

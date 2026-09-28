@@ -32,7 +32,7 @@
 | **`UI-02`** | 认证 | 注册页面 | `/register` | `apps/web/src/pages/register/**`, `apps/web/src/components/shared/captcha-challenge.tsx` | 左上角返回首页按钮（带 ArrowLeft 图标与多语言文本）、右上角语言切换器与 ThemeToggle 主题切换并列排布、表单字段对齐、昵称选填与默认昵称提示、可选副标题不展示默认开发文案、邮箱/密码正式占位提示、密码确认校验、邮箱验证码获取按钮与 60 秒倒计时、本地 SVG CAPTCHA 弹窗/内嵌验证或 Turnstile 状态、返回登录跳转链接、底栏客服支持联系渠道与页脚版权渲染 |
 | **`UI-03`** | 门户与控制台 | 根路径与落地页路由 | `/` | `apps/web/src/router/index.tsx`, `apps/web/src/pages/landing/**` | 根路径受系统设置 `landingEnabled` 驱动：开启首页门户时（默认）访问根路径直接渲染首页，未登录提供登录/注册入口，已登录自适应提供进入控制台入口；关闭首页时自动根据会话状态回退（未登录跳转 `/login`，已登录跳转 `/subscription` 或 `/admin/nodes`）、品牌 Logo 首页链接 Tooltip 样式与图标按钮一致、首页顶部特性/套餐/FAQ 快速导航平滑滚动并遵循减少动态效果偏好、公开套餐价格按元正确展示（含免费套餐本地化标签） |
 | **`UI-04`** | 用户订阅 | 公告与客户端使用指引 | `/subscription` | `apps/web/src/components/shared/announcement-card.tsx`, `apps/web/src/components/shared/announcement-detail-dialog.tsx`, `apps/web/src/components/shared/client-guide-card.tsx` | 公告横幅自动消费置顶/横幅公告（按分类着色、显示标题与发布时间、点击「查看详情」唤起居中完整 Markdown 弹窗）、关闭状态本地记忆、无订阅与有订阅状态下均展示客户端三步指引，明暗主题与移动端不溢出 |
-| **`UI-05`** | 节点管理 | 节点管理列表 | `/admin/nodes` | `apps/web/src/pages/admin/nodes/index.tsx` | 节点名称与地址即时搜索、通信状态与内核状态组合筛选（筛选器联动在线状态）、网络可达性徽标（公网 VPS / NAT 落地，NAT 节点带有黄色外发链路图标与反向穿透说明）、节点数据表格、内核运行状态 Badge（离线节点置灰展示为未知状态破折号 `—` 并带 Tooltip 提示，避免残留历史状态误导）、CPU/内存/带宽遥测实时刷新（离线统一回退展示 `—`）、统一时区心跳时间展示 |
+| **`UI-05`** | 节点管理 | 节点管理列表 | `/admin/nodes` | `apps/web/src/pages/admin/nodes/index.tsx` | 节点名称与地址即时搜索、通信状态与内核状态组合筛选（筛选器联动在线状态）、网络可达性徽标（公网 VPS / NAT 落地，NAT 节点带有黄色外发链路图标与反向穿透说明）、表格行/当前筛选结果全选 Checkbox 与已选计数、跨筛选保留选择/清空、100 节点选择上限与节点删除后的陈旧选择清理、批量升级入口、节点数据表格、内核运行状态 Badge（离线节点置灰展示为未知状态破折号 `—` 并带 Tooltip 提示，避免残留历史状态误导）、CPU/内存/带宽遥测实时刷新（离线统一回退展示 `—`）、统一时区心跳时间展示；明暗主题与移动端表格局部横向滚动 |
 | **`UI-06`** | 节点管理 | 添加节点弹窗 | `/admin/nodes`（点击“添加节点”） | `apps/web/src/pages/admin/nodes/components/node-form-dialog.tsx`, `apps/web/src/pages/admin/nodes/components/install-commands-picker.tsx` | Dialog 居中、网络可达性单选（公网 VPS / NAT 落地）、服务器地址与名称输入框（NAT 模式下地址设为选填并自动提供 127.0.0.1 兜底与反向隧道接入提示）、通信协议选择、创建成功后展示 AgentToken，并提供「原生安装 / 免安装运行 / Docker / 离线安装包」四 Tab × 目标操作系统（Linux / macOS / Windows，Docker Tab 隐藏系统选择）× WS/HTTP 模式的命令切换、系统化提示文案、原生模式专属预编排免交互安装脚本一键下载、离线安装包直接下载与一键安装命令复制 |
 | **`UI-07`** | 节点详情 | 线路承载与角色列表 Tab | `/admin/nodes/:id` (Tab 1) | `apps/web/src/pages/admin/nodes/detail.tsx` | 当前承载线路、协议徽章、直连/中转/落地角色三态徽章、监听端口与线路状态 |
 | **`UI-08`** | 节点详情 | 派生监听端口卡片 | `/admin/nodes/:id` (Tab 1) | `apps/web/src/pages/admin/nodes/detail.tsx` | 线路派生端口按 DIRECT/TRANSIT/LANDING 三态角色展示、消除直连幽灵双端口、端口文本不溢出、无线路时 EmptyState |
@@ -67,6 +67,7 @@
 | **`UI-38`** | 门户 | 首页门户 | `/` | `apps/web/src/pages/landing/**` | 纯正 shadcn/ui New York 风格高品质首页：Sticky 毛玻璃顶栏（品牌 Logo、平滑锚点、语言/主题切换、智能控制台按钮与用户快捷菜单）、Hero 导流区（胶囊徽标、一级标题、副标题、CTA 按钮组、面向普通用户的感知亮点微胶囊）、核心特性 6 宫格网格（Lucide 动态图标、精致边框与卡片悬浮提升）、公开套餐卡片预览（对接公共 API、价格周期与速率特性）、常见问题（FAQ）折叠手风琴、优雅客服支持与版权页脚；明暗双主题自适应、移动端单列优雅排版与防溢出、系统设置动态配置与 i18n 即时切换 |
 | **`UI-39`** | 共享组件 | 在线设备管理弹窗（用户/管理员） | `UI-11` / `UI-21` 操作入口 | `apps/web/src/components/shared/device-management-dialog.tsx` | 管理员侧显示配置上限、设备上限及策略来源；用户侧仅显示在线设备数与设备上限，隐藏配置上限、策略来源及在线汇总说明；设备 IP 复制、跨节点节点名/线路名、连接数与活跃时间；管理员保留管理操作措辞，用户侧单台与全部设备操作统一称为「下线」；确认弹窗、处理中状态、空态、错误 Toast；Light/Dark 与桌面/移动弹窗布局 |
 | **`UI-40`** | 业务运营 | 管理端公告管理与分屏编辑器 | `/admin/announcements` | `apps/web/src/pages/admin/announcements/**` | 公告管理数据表格（标题、摘要、分类、展示策略徽标、行内启用 Switch、更新时间）、分类/状态/搜索组合筛选、新建/编辑公告全屏分屏弹窗（CodeMirror 源码高亮 + 语法快捷插入工具条 + 实时渲染预览 + 4 维展示策略开关）、删除确认弹窗、明暗主题与移动端局部滚动 |
+| **`UI-41`** | 节点运维 | 批量 Agent 升级确认与逐节点结果 | `/admin/nodes`（选择节点并点击批量升级） | `apps/web/src/pages/admin/nodes/components/batch-upgrade-nodes-dialog.tsx` | 展示所选节点及混合 OS/架构、仅显示覆盖全部目标平台的 ACTIVE Agent 资源、默认主控资源提示、HTTP/离线排队说明；确认后逐节点展示 DISPATCHED/QUEUED/FAILED 与错误信息、部分成功汇总；下发期间防重复提交；Light/Dark、1440x900、375x812 与 768x1024 下检查 Dialog/Sheet 滚动、资源选择器和结果列表不溢出 |
 
 认证页面的会话验证以 Cookie 为浏览器实现细节：视觉走查只需确认登录/注册成功后正确进入已认证路由、刷新页面仍保持登录态、注销后返回登录页；不得在页面 DOM、localStorage 或 sessionStorage 中出现 JWT 文本。
 
@@ -106,6 +107,7 @@ flowchart TD
     PathCheck -->|个人中心\npages/user/profile/*| Profile[精准走查: UI-29]
     PathCheck -->|卡密管理\npages/admin/redeem-codes/*| Redeem[精准走查: UI-30]
     PathCheck -->|节点升级\npages/admin/nodes/components/upgrade-node-dialog.tsx| Upgrade[精准走查: UI-22]
+    PathCheck -->|节点批量升级\npages/admin/nodes/components/batch-upgrade-nodes-dialog.tsx| BatchUpgrade[精准走查: UI-05, UI-41]
     PathCheck -->|线路管理\npages/admin/lines/*| Lines[精准走查: UI-23 ~ UI-24]
     PathCheck -->|证书管理\npages/admin/certificates/*| Certificates[精准走查: UI-26]
     PathCheck -->|系统日志\npages/admin/logs/*| Logs[精准走查: UI-32]
@@ -137,6 +139,7 @@ flowchart TD
 | `apps/web/src/pages/user/profile/**`, `apps/web/src/components/shared/quick-redeem-form.tsx` | `UI-29` | **增量** |
 | `apps/web/src/pages/admin/redeem-codes/**` | `UI-30` | **增量** |
 | `apps/web/src/pages/admin/nodes/components/upgrade-node-dialog.tsx` | `UI-22` | **增量** |
+| `apps/web/src/pages/admin/nodes/components/batch-upgrade-nodes-dialog.tsx` | `UI-05`, `UI-41` | **增量** |
 | `apps/web/src/pages/admin/binaries/**` | `UI-31` | **增量** |
 | `apps/web/src/pages/admin/lines/**` | `UI-23`, `UI-24` | **增量** |
 | `apps/web/src/pages/admin/certificates/**` | `UI-26` | **增量** |
