@@ -504,6 +504,59 @@ describe('AgentGatewayService', () => {
         server_port: 9443
       })
     ]));
+    const bridgeWithOriginIp = line({
+      id: 'bridge-origin-ip',
+      name: '回源 IP 桥接保持域名 SNI',
+      tag: 'relay-bridge-origin-ip',
+      type: 'RELAY',
+      relayMode: 'TARGET_LINE',
+      protocolType: 'VLESS',
+      entryNodeId: 'node-1',
+      entryPort: 25001,
+      targetLineId: 'target-hk',
+      landingEndpointOverrideEnabled: true,
+      landingServerHost: '10.0.0.88',
+      targetLine: {
+        id: 'target-hk',
+        type: 'DIRECT',
+        protocolType: 'TROJAN',
+        paramsJson: JSON.stringify({
+          tls: { enabled: true, mode: 'tls' },
+          transport: { type: 'ws', path: '/ws' }
+        }),
+        entryPort: 25002,
+        status: 'ACTIVE',
+        endpointOverrideEnabled: true,
+        serverHost: 'hk-domain.example.com',
+        serverPort: 443,
+        serverName: null,
+        host: null,
+        entryNode: { serverHost: '203.0.113.10', status: 'ONLINE' }
+      },
+      landingNode: null
+    });
+
+    prisma.node.findUnique.mockResolvedValueOnce({
+      id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [bridgeWithOriginIp], landingLines: []
+    });
+    prisma.user.findMany.mockResolvedValue([user]);
+
+    const originConfig = await service.buildConfigSync('node-1');
+    expect(originConfig.singboxConfig.outbounds).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'trojan',
+        server: '10.0.0.88',
+        server_port: 443,
+        tls: expect.objectContaining({
+          enabled: true,
+          server_name: 'hk-domain.example.com'
+        }),
+        transport: expect.objectContaining({
+          type: 'ws',
+          headers: { Host: 'hk-domain.example.com' }
+        })
+      })
+    ]));
   });
 
   it('心跳遥测独立落库，流量账务在单独事务内完成', async () => {
