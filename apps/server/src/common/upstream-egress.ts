@@ -1,5 +1,7 @@
 import { protectInboundSecrets, revealInboundSecrets } from './inbound';
 import { decryptSecret, encryptSecret, isEncryptedSecret } from './secret-crypto';
+import { buildSingboxOutbound, type SubEntry } from '../subscription/builders';
+import type { ProtocolType } from './constants';
 
 /**
  * 上游订阅出口编排的共享定义（v0.9.10）。
@@ -140,6 +142,42 @@ export function protectEntryParams(params: Record<string, unknown>): Record<stri
 
 /** 上游条目中属于凭据的字段名（与 Sing-box client outbound 的字段名一致）。 */
 const CREDENTIAL_FIELDS = ['uuid', 'password', 'username'] as const;
+
+/**
+ * 组装指向上游服务器的 Sing-box 客户端出站。
+ *
+ * 这是上游出口出站组装的**单一实现**：Agent 配置编译器与主控探测引擎都走这里，
+ * 保证"用户实际走的那条出口"与"我们测速测的那条出口"永远一致。
+ *
+ * 复用 `subscription/builders.ts` 的 `buildSingboxOutbound`——即订阅输出链路本身，
+ * 因此上游出站与用户订阅出站在协议知识上不可能分叉。
+ */
+export function buildUpstreamOutbound(input: {
+  entry: { id: string; name: string; protocolType: string; paramsJson: string };
+  server: string;
+  port: number;
+  tag: string;
+}): Record<string, unknown> | undefined {
+  if (!isUpstreamEgressProtocol(input.entry.protocolType)) return undefined;
+  const params = revealEntryParams(input.entry.paramsJson);
+  const credentials = resolveUpstreamCredentials(input.entry);
+  const entryPayload: SubEntry = {
+    label: input.tag,
+    node: { name: input.entry.name, serverHost: input.server, inbounds: [] },
+    inbound: {
+      type: input.entry.protocolType as ProtocolType,
+      tag: input.tag,
+      port: input.port,
+      params
+    }
+  };
+  const outbound = buildSingboxOutbound(
+    { uuid: credentials.uuid, email: credentials.email, credential: credentials.secret },
+    entryPayload
+  );
+  if (!outbound) return undefined;
+  return { ...outbound, tag: input.tag, server: input.server, server_port: input.port };
+}
 
 function pickString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;

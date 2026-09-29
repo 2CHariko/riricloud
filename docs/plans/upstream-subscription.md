@@ -34,22 +34,22 @@ author: "Antigravity & Maintainers"
 - [x] 任务 1.8: 单测覆盖编译器单跳/双跳/不可用上游/跨节点出口补载，以及五条校验规则与端口例外
 
 ### 里程碑 2：上游解析器（P2）
-- [ ] 任务 2.1: 格式识别（mihomo YAML / sing-box JSON / Base64 URI）与 `proxy-providers` 递归一层
-- [ ] 任务 2.2: mihomo 解析器（`reality-opts` / `ws-opts` / `ss` 等变体）
-- [ ] 任务 2.3: sing-box 解析器（`outbounds[]`）
-- [ ] 任务 2.4: Base64 URI 列表解析器（vless / vmess / trojan / hysteria2 / tuic / ss）
-- [ ] 任务 2.5: 出口参数归一化（显式写 `tls`，不依赖入站默认值），`entryKey` 排除凭据
-- [ ] 任务 2.6: 不支持项逐条给出跳过原因，不因单节点失败中断整批导入
-- [ ] 任务 2.7: 三种格式的真实脱敏样本 fixture 单测与 `entryKey` 稳定性断言
+- [x] 任务 2.1: 格式识别（mihomo YAML / sing-box JSON / Base64 URI）与 `proxy-providers` 递归一层
+- [x] 任务 2.2: mihomo 解析器（`reality-opts` / `ws-opts` / `ss` 等变体）
+- [x] 任务 2.3: sing-box 解析器（`outbounds[]`）
+- [x] 任务 2.4: Base64 URI 列表解析器（vless / vmess / trojan / hysteria2 / tuic / ss）
+- [x] 任务 2.5: 出口参数归一化（显式写 `tls`，不依赖入站默认值），`entryKey` 排除凭据
+- [x] 任务 2.6: 不支持项逐条给出跳过原因，不因单节点失败中断整批导入
+- [x] 任务 2.7: 三种格式的真实脱敏样本 fixture 单测与 `entryKey` 稳定性断言
 
 ### 里程碑 3：订阅源、物化与健康门（P3）
-- [ ] 任务 3.1: `fetchSafeRemoteBuffer` 封装、`maskUpstreamUrl` 脱敏、URL 不入日志
-- [ ] 任务 3.2: 订阅源 CRUD、立即同步、导入预览（预览不落库）
-- [ ] 任务 3.3: 物化（一键生成线路）与对账（凭据刷新、条目下线保留线路）
-- [ ] 任务 3.4: 定时同步（`setInterval` + `unref`，零新依赖）
-- [ ] 任务 3.5: 健康门：上游出口线路直连探测 + `getAvailableForPlan` 新鲜度过滤
-- [ ] 任务 3.6: `upstreamSubscriptionEnabled` / `upstreamHealthGateEnabled` / `upstreamHealthMaxAgeSecs` 系统设置
-- [ ] 任务 3.7: 全部 `/admin/upstreams/*` REST API 与 Swagger 注解
+- [x] 任务 3.1: `fetchSafeRemoteBuffer` 封装、`maskUpstreamUrl` 脱敏、URL 不入日志
+- [x] 任务 3.2: 订阅源 CRUD、立即同步、导入预览（预览不落库）
+- [x] 任务 3.3: 物化（一键生成线路）与对账（凭据刷新、条目下线保留线路）
+- [x] 任务 3.4: 定时同步（`setInterval` + `unref`，零新依赖）
+- [x] 任务 3.5: 健康门：上游出口线路直连探测 + `getAvailableForPlan` 新鲜度过滤
+- [x] 任务 3.6: `upstreamSubscriptionEnabled` / `upstreamHealthGateEnabled` / `upstreamHealthMaxAgeSecs` 系统设置
+- [x] 任务 3.7: 全部 `/admin/upstreams/*` REST API 与 Swagger 注解
 
 ### 里程碑 4：前端与文档（P4）
 - [ ] 任务 4.1: `/admin/upstreams` 页面（列表、创建/编辑、导入预览与物化、条目页签）
@@ -65,6 +65,7 @@ author: "Antigravity & Maintainers"
 - [x] P1 单元测试：`pnpm --filter @riricloud/server exec jest` 全绿（72 套 / 636 用例）
 - [x] P1 手工验收（单跳）：手工建入口线路 + 上游出口线路，客户端导入订阅后出口 IP 为上游 IP
 - [x] P1 手工验收（计费）：上游线路流量正常入账，配额熔断与设备限制生效
-- [ ] P2 解析器 fixture 全过
-- [ ] P3 真实机场订阅走通"导入 → 预览 → 物化 → 订阅可见"
+- [x] P2 解析器 fixture 全过（22 条解析单测）
+- [x] P3 上游服务单测全过（23 条：脱敏、预览、对账、物化、CRUD）+ 健康门 9 条
+- [ ] P3 真实机场订阅联调走通"导入 → 预览 → 物化 → 订阅可见"
 - [ ] P4 `pnpm gate` 六门禁全绿

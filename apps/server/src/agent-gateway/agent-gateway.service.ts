@@ -23,7 +23,7 @@ import { parseWhitelistIps } from '../proxy-pool/proxy-key.util';
 import { resolveLineTags } from '../common/line-tags';
 import {
   UPSTREAM_EGRESS_INCLUDE,
-  resolveUpstreamCredentials,
+  buildUpstreamOutbound,
   type EgressLineSnapshot,
   type UpstreamEntrySnapshot
 } from '../common/upstream-egress';
@@ -2574,7 +2574,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
    * 单跳（DIRECT 入口、RELAY/TARGET_LINE 入口）与双跳（RELAY 落地）共用同一实现，
    * 差异只在 `inboundTags`：前者是入口线路的入站 tag，后者是落地区域承载转发的入站 tag。
    *
-   * 上游条目不可用或协议不支持时静默跳过——宁可不生成畸形出站，也不让整份节点配置预检失败。
+   * 出站组装走 `buildUpstreamOutbound`（与主控探测引擎同一实现），
+   * 条目不可用或协议不支持时静默跳过——宁可不生成畸形出站，也不让整份节点配置预检失败。
    */
   private appendUpstreamEgress(input: {
     line: { id: string };
@@ -2585,19 +2586,14 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   }): boolean {
     const entry = input.egressLine.upstreamEntry;
     if (!entry || !entry.available) return false;
-    const outbound = this.buildProtocolRelayOutbound(
-      {
-        id: entry.id,
-        protocolType: entry.protocolType,
-        paramsJson: entry.paramsJson,
-        landingPort: entry.port,
-        landingNode: { serverHost: entry.server, reachability: 'PUBLIC' }
-      },
-      resolveUpstreamCredentials(entry)
-    );
-    if (!outbound) return false;
     const tag = `upstream-out-${input.line.id}`;
-    outbound.tag = tag;
+    const outbound = buildUpstreamOutbound({
+      entry,
+      server: entry.server,
+      port: entry.port,
+      tag
+    });
+    if (!outbound) return false;
     input.outbounds.push(outbound);
     const tags = input.inboundTags.filter((value) => typeof value === 'string' && value.length > 0);
     if (tags.length) {

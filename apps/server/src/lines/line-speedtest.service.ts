@@ -14,6 +14,7 @@ import {
   INTERNAL_SPEEDTEST_UUID,
   type ProtocolType
 } from '../common/constants';
+import { buildUpstreamOutbound } from '../common/upstream-egress';
 import {
   buildSingboxOutbound,
   buildShadowtlsTransportOutbound,
@@ -425,6 +426,183 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * 上游出口直连探测（v0.9.10）。
+   *
+   * 出口线路不监听任何入站，因此无法用常规端口握手判定健康。
+   * 这里在主控本地拉起一个仅回环的 mixed 入站 + 单个上游出站，直接向上游服务器
+   * 发起真实 HTTP 204/200 请求，结果写入该出口线路的测速快照，供订阅健康门读取。
+   *
+   * 不复用 `runSingboxProbe`：后者构造的是"拨测我方入口线路"的出站，
+   * 而这里需要的是"拨测第三方服务器"的出站（真实上游凭据 + 上游端点）。
+   */
+  async testUpstreamEgress(lineId: string): Promise<SpeedTestExecutionResult> {
+    const line = await this.prisma.line.findUnique({
+      where: { id: lineId },
+      include: { upstreamEntry: true }
+    });
+    if (!line) throw new NotFoundException(`线路 ${lineId} 不存在`);
+    if (!line.upstreamEntryId || !line.upstreamEntry) {
+      throw new NotFoundException(`线路 ${lineId} 不是上游出口线路`);
+    }
+
+    const entry = line.upstreamEntry;
+    const settings = await this.settingsService.getSettings();
+    const targetUrl = settings.lineSpeedtestTargetUrl || 'http://cp.cloudflare.com/generate_204';
+    const timeoutMs = Math.min(Math.max(settings.lineSpeedtestTimeoutMs || 3000, 500), 30000);
+
+    const stages: SpeedTestStage[] = [];
+    const topology = {
+      isRelay: false,
+      relayMode: null,
+      masterHost: 'Master 主控',
+      entryNode: {
+        id: entry.id,
+        name: line.name,
+        host: entry.server,
+        port: entry.port
+      },
+      landingNode: null
+    };
+
+    const singboxBin = await this.resolveSingboxBinary();
+    stages.push(
+      singboxBin
+        ? { id: 'master_ready', name: '主控探测引擎', target: 'Master 服务端', status: 'SUCCESS', message: 'Sing-box 探针引擎就绪' }
+        : { id: 'master_ready', name: '主控探测引擎', target: 'Master 服务端', status: 'FAILED', message: '未检测到 Sing-box 探针内核，无法执行端到端代理拨测' }
+    );
+
+    let latencyMs: number | null = null;
+    let status: 'SUCCESS' | 'TIMEOUT' | 'ERROR' = 'ERROR';
+    let message = '';
+
+    if (singboxBin && entry.available) {
+      try {
+        const outbound = buildUpstreamOutbound({
+          entry: { id: entry.id, name: entry.name, protocolType: entry.protocolType, paramsJson: entry.paramsJson },
+          server: entry.server,
+          port: entry.port,
+          tag: 'probe-out'
+        });
+        if (!outbound || Object.keys(outbound).length === 0) {
+          throw new Error(`协议 ${entry.protocolType} 不支持作为上游出口`);
+        }
+
+        const result = await this.runLocalProbeConfig(singboxBin, outbound, targetUrl, timeoutMs);
+        stages.push({
+          id: 'target_http',
+          name: '上游端到端请求',
+          target: `${entry.server}:${entry.port} → ${targetUrl}`,
+          status: 'SUCCESS',
+          latencyMs: result.latencyMs,
+          message: `HTTP ${result.statusCode} OK (往返 ${result.latencyMs}ms)`
+        });
+        status = 'SUCCESS';
+        latencyMs = result.latencyMs;
+        message = `204 OK (上游端到端 ${latencyMs}ms)`;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        stages.push({
+          id: 'target_http',
+          name: '上游端到端请求',
+          target: `${entry.server}:${entry.port}`,
+          status: 'FAILED',
+          message: `上游代理请求失败: ${detail}`
+        });
+        status = this.isTimeoutError(detail) ? 'TIMEOUT' : 'ERROR';
+        message = detail;
+      }
+    } else if (!entry.available) {
+      stages.push({
+        id: 'target_http',
+        name: '上游端到端请求',
+        target: `${entry.server}:${entry.port}`,
+        status: 'FAILED',
+        message: '该上游节点已不在订阅中（条目已下线）'
+      });
+      status = 'ERROR';
+      message = '该上游节点已不在订阅中（条目已下线）';
+    } else {
+      stages.push({
+        id: 'target_http',
+        name: '上游端到端请求',
+        target: targetUrl,
+        status: 'FAILED',
+        message: '因主控缺少 Sing-box 探针内核，无法发起端到端代理请求'
+      });
+    }
+
+    const testedAt = new Date();
+    await this.prisma.line.update({
+      where: { id: lineId },
+      data: {
+        lastLatencyMs: latencyMs,
+        lastTestedAt: testedAt,
+        lastTestStatus: status,
+        lastTestMessage: message
+      }
+    });
+
+    return {
+      lineId: line.id,
+      lineName: line.name,
+      latencyMs,
+      status,
+      message,
+      testedAt,
+      mode: 'END_TO_END',
+      targetUrl,
+      protocolType: entry.protocolType,
+      topology,
+      stages
+    };
+  }
+
+  /**
+   * 在本地拉起"仅回环 mixed 入站 + 单出站全量路由"的探测内核并发起真实 HTTP 请求。
+   * 与 `runSingboxProbe` 共用端口分配、就绪等待、HTTP 探测与进程清理逻辑，
+   * 差异只在出站由调用方提供。
+   */
+  private async runLocalProbeConfig(
+    singboxBin: string,
+    outbound: Record<string, unknown>,
+    targetUrl: string,
+    timeoutMs: number
+  ): Promise<{ latencyMs: number; statusCode: number }> {
+    const localPort = await this.getAvailableLocalPort();
+    const configObj = {
+      log: { level: 'warn', disabled: false },
+      inbounds: [{ type: 'mixed', listen: '127.0.0.1', listen_port: localPort }],
+      outbounds: [outbound, { type: 'direct', tag: 'direct' }],
+      route: { rules: [{ outbound: outbound.tag }] }
+    };
+
+    const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir();
+    const tmpConfigFile = path.join(tmpDir, `riri-upstream-probe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+    await fs.writeFile(tmpConfigFile, JSON.stringify(configObj), 'utf8');
+
+    let childProc: ReturnType<typeof spawn> | null = null;
+    let stderrOutput = '';
+    try {
+      childProc = spawn(singboxBin, ['run', '-c', tmpConfigFile], { stdio: ['ignore', 'ignore', 'pipe'] });
+      childProc.stderr?.on('data', (chunk: Buffer) => {
+        if (stderrOutput.length < 4096) stderrOutput += chunk.toString('utf8');
+      });
+
+      await this.waitForPortReady('127.0.0.1', localPort, 2000, childProc, () => stderrOutput);
+      return await this.httpGetViaHttpProxy('127.0.0.1', localPort, targetUrl, timeoutMs, () => stderrOutput);
+    } finally {
+      if (childProc) {
+        try {
+          childProc.kill('SIGTERM');
+        } catch {
+          // ignore
+        }
+      }
+      await fs.unlink(tmpConfigFile).catch(() => undefined);
+    }
+  }
+
+  /**
    * 批量测试全部已启用线路（并发受控）
    */
   async testAllActiveLines(): Promise<{ total: number; success: number; failed: number }> {
@@ -437,7 +615,8 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     try {
       const activeLines = await this.prisma.line.findMany({
         where: { status: 'ACTIVE' },
-        select: { id: true, name: true }
+        // 上游出口线路没有入站，必须走直连上游探测路径，否则会在端口握手阶段误判失败
+        select: { id: true, name: true, upstreamEntryId: true }
       });
 
       let success = 0;
@@ -446,7 +625,9 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
 
       for (let i = 0; i < activeLines.length; i += chunkSize) {
         const chunk = activeLines.slice(i, i + chunkSize);
-        const results = await Promise.allSettled(chunk.map((item) => this.testLine(item.id)));
+        const results = await Promise.allSettled(
+          chunk.map((item) => (item.upstreamEntryId ? this.testUpstreamEgress(item.id) : this.testLine(item.id)))
+        );
         for (const res of results) {
           if (res.status === 'fulfilled' && res.value.status === 'SUCCESS') {
             success++;

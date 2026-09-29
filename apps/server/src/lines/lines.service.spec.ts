@@ -25,6 +25,8 @@ describe('LinesService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // 健康门用例会临时注入 settingsService，必须在每个用例前清理，避免跨用例泄漏
+    delete (service as unknown as { settingsService?: unknown }).settingsService;
     prisma.line.findMany.mockResolvedValue([]);
     prisma.line.findFirst.mockResolvedValue(null);
     prisma.line.findUnique.mockReset();
@@ -184,6 +186,126 @@ describe('LinesService', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('active-1');
+  });
+
+  describe('上游出口健康门', () => {
+    const egress = (overrides: Record<string, unknown> = {}) => ({
+      id: 'egress-1',
+      name: '上游出口',
+      status: 'ACTIVE',
+      type: 'DIRECT',
+      protocolType: 'TROJAN',
+      upstreamEntryId: 'entry-1',
+      upstreamEntry: { id: 'entry-1', name: '东京', protocolType: 'TROJAN', server: 'jp.example.com', port: 443, available: true },
+      lastTestStatus: 'SUCCESS',
+      lastTestedAt: new Date(),
+      lastLatencyMs: 80,
+      ...overrides
+    });
+
+    const upstreamLine = (overrides: Record<string, unknown> = {}) => ({
+      ...rawLine,
+      id: 'upstream-line',
+      isPublic: true,
+      tagsJson: '["premium"]',
+      egressLineId: 'egress-1',
+      egressLine: egress(),
+      upstreamHealthGate: true,
+      upstreamHealthMaxAgeSecs: null,
+      ...overrides
+    });
+
+    const settings = (overrides: Record<string, unknown> = {}) => ({
+      publicLinesEnabled: true,
+      upstreamHealthGateEnabled: true,
+      upstreamHealthMaxAgeSecs: 1800,
+      ...overrides
+    });
+
+    // 本 spec 未注入 SettingsService（可选依赖），按需为本组单测直接替换实例属性即可
+    const mockSettings = (value: Record<string, unknown>): void => {
+      (service as unknown as { settingsService?: unknown }).settingsService = {
+        getSettings: async () => value
+      };
+    };
+
+    it('出口探测成功且快照新鲜时正常下发', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([upstreamLine()]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result.map((line) => line.id)).toEqual(['upstream-line']);
+    });
+
+    it('出口探测失败时从订阅中剔除，但不改变线路自身状态', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([
+        upstreamLine({ egressLine: egress({ lastTestStatus: 'ERROR' }) })
+      ]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result).toEqual([]);
+    });
+
+    it('从未探测过（无快照）时不出现在订阅中', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([
+        upstreamLine({ egressLine: egress({ lastTestStatus: null, lastTestedAt: null }) })
+      ]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result).toEqual([]);
+    });
+
+    it('健康快照超过最大容忍时长时视同不健康', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([
+        upstreamLine({ egressLine: egress({ lastTestedAt: new Date(Date.now() - 3600_000) }) })
+      ]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result).toEqual([]);
+    });
+
+    it('线路级 maxAge 覆盖全局设置', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([
+        upstreamLine({
+          upstreamHealthMaxAgeSecs: 7200,
+          egressLine: egress({ lastTestedAt: new Date(Date.now() - 3600_000) })
+        })
+      ]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result.map((line) => line.id)).toEqual(['upstream-line']);
+    });
+
+    it('全局健康门关闭时不做过滤', async () => {
+      mockSettings(settings({ upstreamHealthGateEnabled: false }));
+      prisma.line.findMany.mockResolvedValue([
+        upstreamLine({ egressLine: egress({ lastTestStatus: 'ERROR', lastTestedAt: null }) })
+      ]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result.map((line) => line.id)).toEqual(['upstream-line']);
+    });
+
+    it('线路显式关闭健康门时不做过滤', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([
+        upstreamLine({ upstreamHealthGate: false, egressLine: egress({ lastTestStatus: 'ERROR' }) })
+      ]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result.map((line) => line.id)).toEqual(['upstream-line']);
+    });
+
+    it('出口线路已消失时不下发（避免暴露连不通的节点）', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([upstreamLine({ egressLine: null })]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result).toEqual([]);
+    });
+
+    it('未挂出口的普通线路完全不受健康门影响', async () => {
+      mockSettings(settings());
+      prisma.line.findMany.mockResolvedValue([{ ...rawLine, id: 'plain', egressLineId: null, egressLine: null, isPublic: true, tagsJson: '["premium"]' }]);
+      const result = await service.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+      expect(result.map((line) => line.id)).toEqual(['plain']);
+    });
   });
 
   it('套餐线路视图会解析对外端点覆盖', async () => {

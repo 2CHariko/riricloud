@@ -213,6 +213,9 @@ export interface SystemSettings {
   landingShowFaq: boolean;
   landingCustomFeaturesJson: string;
   landingCustomFaqJson: string;
+  upstreamSubscriptionEnabled: boolean;
+  upstreamHealthGateEnabled: boolean;
+  upstreamHealthMaxAgeSecs: number;
 }
 
 export type SystemSettingsPatch = {
@@ -344,7 +347,10 @@ export const DEFAULTS: SystemSettings = {
   landingShowPlans: true,
   landingShowFaq: true,
   landingCustomFeaturesJson: '[]',
-  landingCustomFaqJson: '[]'
+  landingCustomFaqJson: '[]',
+  upstreamSubscriptionEnabled: true,
+  upstreamHealthGateEnabled: true,
+  upstreamHealthMaxAgeSecs: 1800
 };
 
 const DESCRIPTIONS: Record<keyof SystemSettings, string> = {
@@ -424,7 +430,10 @@ const DESCRIPTIONS: Record<keyof SystemSettings, string> = {
   landingShowPlans: '首页是否展示公开套餐模块',
   landingShowFaq: '首页是否展示常见问答 FAQ 模块',
   landingCustomFeaturesJson: '首页自定义特性列表（JSON 格式）',
-  landingCustomFaqJson: '首页自定义 FAQ 列表（JSON 格式）'
+  landingCustomFaqJson: '首页自定义 FAQ 列表（JSON 格式）',
+  upstreamSubscriptionEnabled: '是否启用上游订阅功能（关闭后停止定时抓取并拒绝新导入）',
+  upstreamHealthGateEnabled: '是否启用上游出口健康门总开关',
+  upstreamHealthMaxAgeSecs: '上游出口健康快照最大容忍时长（秒）'
 };
 
 const SETTING_VALUES = Object.values(SETTING_KEYS);
@@ -603,7 +612,10 @@ export class SettingsService implements OnModuleInit {
       landingShowPlans: this.readBoolean(map, 'landingShowPlans'),
       landingShowFaq: this.readBoolean(map, 'landingShowFaq'),
       landingCustomFeaturesJson: this.readString(map, 'landingCustomFeaturesJson'),
-      landingCustomFaqJson: this.readString(map, 'landingCustomFaqJson')
+      landingCustomFaqJson: this.readString(map, 'landingCustomFaqJson'),
+      upstreamSubscriptionEnabled: this.readBoolean(map, 'upstreamSubscriptionEnabled'),
+      upstreamHealthGateEnabled: this.readBoolean(map, 'upstreamHealthGateEnabled'),
+      upstreamHealthMaxAgeSecs: this.readInteger(map, 'upstreamHealthMaxAgeSecs', 60, 86400)
     };
   }
 

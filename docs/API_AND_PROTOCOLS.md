@@ -856,4 +856,26 @@ Agent 默认单请求超时 10 分钟、响应上限 256 MiB、单节点镜像�
 
 ### 6.4 管理接口
 
-上游订阅源的抓取、预览、物化与条目管理接口随里程碑 P3 落地，统一挂载在 `/admin/upstreams` 下，均要求 `role=ADMIN`。订阅 `url` 内嵌机场鉴权 Token，属密钥：不得写入日志、错误消息或 API 明文响应，响应中仅暴露 host 与订阅名。
+上游订阅统一挂载在 `/api/v1/admin/upstreams` 下，均要求 `role=ADMIN`。订阅 `url` 内嵌机场鉴权 Token，属密钥：**不得写入日志、错误消息或 API 明文响应**，所有响应只暴露 host 与订阅名。路由注册顺序要求全部静态路径（`entries` / `preview` / `import`）排在 `:id` 之前。
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| `GET` | `/admin/upstreams` | 分页列出订阅源；返回 `host`、开关、同步周期、条目数与可用条目数、最近抓取状态与脱敏错误 |
+| `POST` | `/admin/upstreams` | 创建订阅源 `{ name, url, enabled?, syncIntervalMins?, userAgent? }`；**仅落库，不立即抓取** |
+| `GET` | `/admin/upstreams/:id` | 订阅详情 + 条目前 100 条摘要 |
+| `PATCH` | `/admin/upstreams/:id` | 更新名称 / 地址 / 开关 / 周期 / User-Agent；改 URL 会重置抓取状态 |
+| `DELETE` | `/admin/upstreams/:id` | 删除订阅源；其条目被线路引用时返回 `409` |
+| `GET` | `/admin/upstreams/:id/entries` | 分页列出该订阅的条目 |
+| `POST` | `/admin/upstreams/:id/sync` | 立即抓取并对账，返回 `{ format, fetchedBytes, parsed, added, refreshed, credentialsRotated, orphaned, skipped[] }` |
+| `GET` | `/admin/upstreams/entries` | 分页列出全部条目（含手工导入的单节点条目） |
+| `POST` | `/admin/upstreams/preview` | 导入预览（**不落库**）`{ url?, content?, userAgent?, followProviders? }` → `{ format, nodes[], skipped[], providerCount }`；`url` 与 `content` 二选一 |
+| `POST` | `/admin/upstreams/import` | 把订阅内容落库为上游条目（不创建线路），返回 `{ imported, entryIds[], skipped[] }` |
+| `POST` | `/admin/upstreams/entries/materialize` | 一键生成线路，返回 `{ created[], total }` |
+
+**`materialize` 请求**：`{ entryIds[], entryNodeId, entryProtocolType, params?, namePrefix?, tags?, level?, trafficRate?, isPublic?, status?, speedLimitMbps? }`。每条上游条目生成**两条线路**：一条不公开的上游出口线路（`upstreamEntryId` 已绑定），以及一条用户面向的入口线路（`egressLineId` 指向前者）。入口节点必须为 `PUBLIC`，`reachability=NAT` 返回 `400`；`isPublic` 默认为 `false`，由管理员显式上架。
+
+**同步语义（`sync`）**：按 `entryKey` 对账——命中则刷新名称与凭据（机场轮换凭据时用户侧不断流）；新增条目只入库**不自动生成线路**（避免订阅列表被上游静默污染）；本次未再见到的条目置 `available=false` 并**保留**已生成线路，是否下发交由健康门决定。抓取失败记录 `lastFetchStatus=FAILED` 与脱敏错误，返回 `502`，既有线路不受影响。单次同步刷新凭据的条目数 > 0 时额外写一条 `WARN` 系统日志提示核查上游是否被换手。
+
+**导入预览的跳过原因**：`UNSUPPORTED_PROTOCOL`（如 `ssr` / `snell` / `wireguard` / `anytls`）、`MISSING_SERVER`、`MISSING_CREDENTIAL`、`INVALID_PARAMS`、`DUPLICATE`。单节点失败不影响整批导入；单次解析上限 2000 个节点，超出部分记入跳过清单而非静默丢弃。
+
+**抓取约束**：统一走 `fetchSafeRemoteBuffer`（内网与元数据地址拦截、重定向 ≤5、响应体 ≤2 MiB、总超时 20 秒），默认 `User-Agent: clash-verge/v2.0.0` 以获取 mihomo 配置；`followProviders=true` 时额外抓取 mihomo `proxy-providers` 中的远程订阅，最多 5 个。

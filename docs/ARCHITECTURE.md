@@ -366,3 +366,59 @@ sequenceDiagram
 2. **冒号安全的入站用户名**：HTTP CONNECT 的 Basic 认证按首个 `:` 切分用户名，因此代理池凭据使用裸 `pk_xxxx` 而非 `pk_xxxx::lineId` 复合形态；线路归属由节点级活动线路解析确定（详见 docs/API_AND_PROTOCOLS.md §5.1）。
 3. **白名单以逻辑路由规则表达**：`invert` 必须内嵌在 `logical/and` 子规则中，避免顶层反转误伤同入站的其他凭据与订阅用户。
 4. **零新增基础设施**：不引入额外数据库、缓存或守护进程；代理池与订阅共享同一 Agent 通道、同一 `config_sync` 热更新链路与同一 WAL 单写者事务模型。
+
+## 11. 上游订阅导入与出口编排（v0.9.10）
+
+RiriCloud 支持导入 mihomo（Clash Meta）、sing-box 与 Base64/明文 URI 列表三种格式的上游订阅，把其中的第三方节点转换为自有线路。**核心架构决策**：上游节点不会直接出现在用户订阅中——用户订阅里的每个条目都是"我们的公网节点 + 我们生成的入站凭据"，直接透传上游服务器与凭据会把上游账号交给用户，并绕开配额、设备限制与计费。因此三种交付形态（独立线路、指定线路中转、直连代理池）统一收敛为**出口编排**：
+
+> 任何线路都可以通过 `egressLineId` 声明一个上游出口，把自己的用户流量路由到一个指向上游的 Sing-box outbound。
+
+| 拓扑 | 触发条件 | 出站与路由生成位置 |
+| :--- | :--- | :--- |
+| **单跳** | `DIRECT` 挂出口；`RELAY/TARGET_LINE` 挂出口 | 入口节点：`inbound[入口 tag] → upstream-out-<lineId>`（桥接模式先经 `relay-out` 再到目标线路） |
+| **双跳** | `RELAY/BLIND_FORWARD` 或 `RELAY/PROTOCOL_PROXY` 挂出口 | 落地节点：`inbound[落地 tag] → upstream-out-<lineId>`，入口节点只负责中转到落地 |
+
+**上游出口线路**（`Line.upstreamEntryId != null`）不监听任何入站，只提供一份指向第三方服务器的客户端出站定义；其 `entryPort` 是满足 schema 非空约束的占位值，不参与端口占用判定。出口出站使用上游条目的**真实凭据**，与协议代理/桥接中继使用的内部中转凭证 `INTERNAL_RELAY_TRANSIT_*` 严格区分。
+
+**出站组装的单一实现**：`common/upstream-egress.ts` 的 `buildUpstreamOutbound()` 复用 `subscription/builders.ts` 的 `buildSingboxOutbound()`——即订阅输出链路本身——因此"用户实际走的那条出口"与"主控测速测的那条出口"在协议知识上不可能分叉。Agent 配置编译器与主控探测引擎都调用它。
+
+**健康门**：上游线路默认参与套餐公开列表，因此一条挂掉的上游必须被拦在下发之外。`LineSpeedtestService.testUpstreamEgress()` 在主控本地拉起仅回环的 `mixed` 入站 + 单个上游出站，向 `lineSpeedtestTargetUrl` 发起真实 HTTP 204/200 探测，结果写入该出口线路的测速快照；`LinesService.getAvailableForPlan()` 仅当出口线路最近一次探测为 `SUCCESS` 且快照新鲜（`upstreamHealthMaxAgeSecs`）时才下发引用方线路。判定只影响"是否下发"，**不修改线路自身的 `status`**。
+
+**对账与调度**：`UpstreamService` 以进程内 `setInterval`（每 5 分钟自省，`unref` 不阻止退出）驱动同步，不引入 cron 或队列。对账以 `entryKey`（`sha256(协议｜服务器｜端口｜区分性字段)`，**刻意排除凭据**）为键：命中则刷新凭据使机场轮换密码时用户侧不断流；未命中则新增条目但**不自动生成线路**；消失则置 `available=false` 并保留已生成线路。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as 管理员
+    participant Web as Web 面板 (/admin/upstreams)
+    participant Master as Master 后端
+    participant Agent as 入口节点 Agent
+    participant Sbx as Sing-box
+    participant Up as 上游服务器
+
+    Admin->>Web: 粘贴订阅 URL 并预览
+    Web->>Master: POST /admin/upstreams/preview
+    Master->>Up: fetchSafeRemoteBuffer（SSRF 防护 / 2 MiB / 20s）
+    Master-->>Web: 可导入节点 + 逐条跳过原因（不落库）
+
+    Admin->>Web: 勾选节点 + 选入口节点与协议
+    Web->>Master: POST /admin/upstreams/entries/materialize
+    Master->>Master: 生成出口线路（绑定 upstreamEntryId）+ 入口线路（挂 egressLineId）
+    Master->>Agent: config_sync（入口入站 + upstream-out + 路由规则）
+    Agent->>Sbx: 预检、落盘、重载
+
+    Note over Master,Up: 定时同步：entryKey 对账，命中刷新凭据 / 消失置不可用
+    Master->>Up: testUpstreamEgress 真实 HTTP 204 探测
+    Master->>Master: 写 lastTestStatus / lastTestedAt
+
+    Note over Web,Sbx: 用户连接入口协议，流量经上游出口出网，入站侧按用户正常计费
+```
+
+**关键架构约束**：
+
+1. **零新增基础设施**：不引入数据库、缓存、队列或 cron；复用既有 `setInterval` 调度范式、既有 `config_sync` 热更新链路与既有 WAL 单写者事务模型。
+2. **凭据加密与响应脱敏**：上游条目的 `uuid` / `password` / `username` 以应用层 AES-GCM 密文保存（`protectEntryParams` 幂等）；线路响应只 select 非敏感字段，凭据不进入任何管理端响应。订阅 URL 内嵌机场鉴权 Token，全链路只暴露 host。
+3. **抓取复用既有 SSRF 防护**：一律走 `fetchSafeRemoteBuffer`，不自建网络客户端。
+4. **禁止链式出口**：上游出口线路自身不可再挂出口，避免环路与出站层层套娃；API 层直接拒绝。
+5. **UDP 能力一致性**：`MIXED`/`SOCKS`/`HTTP` 入站无法承载 UDP，不得直连 `HYSTERIA2`/`TUIC` 上游，物化前返回 `400`。
+6. **不自动污染订阅列表**：同步只更新条目，线路生成必须由管理员显式触发。

@@ -549,6 +549,24 @@ export class UpdateSettingsDto {
   @MaxLength(50000)
   @IsOptional()
   landingCustomFaqJson?: string;
+
+  @ApiPropertyOptional({ description: '是否启用上游订阅功能' })
+  @IsBoolean()
+  @IsOptional()
+  upstreamSubscriptionEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: '是否启用上游出口健康门总开关' })
+  @IsBoolean()
+  @IsOptional()
+  upstreamHealthGateEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: 1800, minimum: 60, maximum: 86400, description: '上游出口健康快照最大容忍时长（秒）' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(60)
+  @Max(86400)
+  @IsOptional()
+  upstreamHealthMaxAgeSecs?: number;
 }
 
 export class ResetSettingsDto {

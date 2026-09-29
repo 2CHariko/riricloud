@@ -58,7 +58,11 @@ const egressLineSummary = {
     type: true,
     protocolType: true,
     upstreamEntryId: true,
-    upstreamEntry: upstreamEntrySummary
+    upstreamEntry: upstreamEntrySummary,
+    // 健康门判定需要最近一次探测结果与时间
+    lastTestStatus: true,
+    lastTestedAt: true,
+    lastLatencyMs: true
   }
 } as const;
 const lineInclude = {
@@ -166,10 +170,20 @@ export class LinesService {
   }
 
   async remove(id: string) {
-    await this.findRaw(id);
+    const current = await this.findRaw(id);
     const referencingLine = await this.prisma.line.findFirst({ where: { targetLineId: id }, select: { id: true } });
     if (referencingLine) {
       throw new BadRequestException('该线路正被其他中继线路作为落地目标引用，请先解除引用后再删除');
+    }
+    // 上游出口线路被引用时数据库外键为 Restrict，不先拦截会抛出难以理解的 Prisma 错误
+    if (current.upstreamEntryId) {
+      const egressDependent = await this.prisma.line.findFirst({
+        where: { egressLineId: id },
+        select: { id: true, name: true }
+      });
+      if (egressDependent) {
+        throw new BadRequestException(`该上游出口线路正被线路「${egressDependent.name}」引用，请先解除出口绑定后再删除`);
+      }
     }
     await this.prisma.line.delete({ where: { id } });
     void this.agentGateway.pushConfigToAll();
@@ -258,11 +272,36 @@ export class LinesService {
       include: lineInclude,
       orderBy: [{ sortOrder: 'asc' }, { level: 'desc' }, { createdAt: 'asc' }]
     });
+    const healthGateEnabled = settings?.upstreamHealthGateEnabled !== false;
+    const globalMaxAgeSecs = settings?.upstreamHealthMaxAgeSecs ?? 1800;
     return rows
       .filter((line) => line.status === undefined || line.status === 'ACTIVE')
       .filter((line) => line.relayMode !== 'TARGET_LINE' || line.targetLine?.status === 'ACTIVE')
+      .filter((line) => this.isEgressHealthy(line, healthGateEnabled, globalMaxAgeSecs))
       .filter((line) => isLineAuthorized(plan, line, extraIds))
       .map((line) => this.toView(line));
+  }
+
+  /**
+   * 上游出口健康门。
+   *
+   * 上游线路默认参与套餐公开列表，因此一条挂掉的上游必须被拦在下发之外，
+   * 否则所有用户都会看到一个连不通的节点。判定只影响"是否下发"，
+   * **不修改线路自身的 status**，管理员仍能在管理端看到并修复它。
+   */
+  private isEgressHealthy(
+    line: { egressLineId?: string | null; upstreamHealthGate?: boolean; upstreamHealthMaxAgeSecs?: number | null },
+    gateEnabled: boolean,
+    globalMaxAgeSecs: number
+  ): boolean {
+    if (!line.egressLineId) return true;
+    if (!gateEnabled || line.upstreamHealthGate === false) return true;
+    const egress = (line as { egressLine?: { lastTestStatus?: string | null; lastTestedAt?: Date | null } | null }).egressLine;
+    // 出口缺失（已删除或停用）时不出现在订阅中
+    if (!egress) return false;
+    if (egress.lastTestStatus !== 'SUCCESS' || !egress.lastTestedAt) return false;
+    const maxAgeSecs = line.upstreamHealthMaxAgeSecs ?? globalMaxAgeSecs;
+    return Date.now() - egress.lastTestedAt.getTime() <= maxAgeSecs * 1000;
   }
 
   private async findRaw(id: string): Promise<LineWithRelations> {

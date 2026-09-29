@@ -19,6 +19,15 @@
   - 支持单跳（入口节点直接出上游）与双跳（先中转到落地节点、再由落地节点出上游）两种拓扑：`DIRECT`、`TARGET_LINE` 桥接与 `BLIND_FORWARD`/`PROTOCOL_PROXY` 落地均按各自的"最后一跳"位置生成上游出站与路由规则；
   - 线路管理 API 新增 `egressLineId`、`upstreamHealthGate`、`upstreamHealthMaxAgeSecs` 字段，并新增四条出口引用校验（必须指向上游出口线路、禁止链式出口、上游出口线路不支持中继机制、本地代理入站不得直连纯 UDP 上游协议）；
   - 上游出口线路不占用真实监听端口，端口冲突检查与随机分配显式排除该类线路，避免出现"幽灵端口占用"。
+- **上游订阅源管理、导入预览、物化与健康门（P3）**：
+  - 新增 `UpstreamSubscription` / `UpstreamProxyEntry` 的完整 CRUD 与 `/api/v1/admin/upstreams` 系列接口：订阅源管理、立即同步、导入预览、条目落库、一键物化；
+  - 导入预览不落库，返回可导入节点与逐条跳过原因（不支持协议 / 缺地址 / 缺凭据 / 参数非法 / 重复），单节点失败不中断整批导入；
+  - 同步按 `entryKey` 对账：命中刷新凭据（机场轮换密码时用户侧不断流）、未命中新增条目、消失置为不可用并保留已生成线路；单次刷新凭据数大于 0 时写 `WARN` 审计日志提示核查上游是否被换手；
+  - 新增进程内定时同步调度（每 5 分钟自省，`unref` 不阻止退出），不引入 cron、队列或外部服务；
+  - 新增上游出口直连探测 `testUpstreamEgress()`：主控本地拉起仅回环 mixed 入站 + 单个上游出站发起真实 HTTP 204/200 探测，结果驱动订阅健康门；批量测速自动按线路类型分流到该探测路径；
+  - 新增上游出口健康门：仅当出口线路探测成功且快照新鲜时下发引用方线路，判定只影响下发、不修改线路自身状态，并受全局 `upstreamHealthGateEnabled` 与 `upstreamHealthMaxAgeSecs` 约束；
+  - 新增系统设置 `upstreamSubscriptionEnabled` / `upstreamHealthGateEnabled` / `upstreamHealthMaxAgeSecs`；
+  - 出站组装收敛为单一实现 `buildUpstreamOutbound()`，复用订阅输出链路的 `buildSingboxOutbound()`，保证用户实际出口与主控测速口径永不分离。
 
 ### Security
 - **上游凭据落库加密与响应脱敏**：上游条目的 `uuid`/`password`/`username` 以应用层 AES-GCM 密文保存（`protectEntryParams` 幂等，重复写入不产生新密文），线路管理接口只返回上游服务器与端口等非敏感字段，凭据不进入任何管理端响应。

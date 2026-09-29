@@ -830,6 +830,9 @@ model HelpArticle {
 | `landingShowFaq` | `"true"` / `"false"` | `"true"` | 首页是否展示常见问答 FAQ 折叠模块 |
 | `landingCustomFeaturesJson` | JSON 数组字符串 | `"[]"` | 首页自定义特性卡片列表（留空使用内置高质量默认特性） |
 | `landingCustomFaqJson` | JSON 数组字符串 | `"[]"` | 首页自定义 FAQ 问答列表（留空使用内置高质量默认问答） |
+| `upstreamSubscriptionEnabled` | `"true"` / `"false"` | `"true"` | 上游订阅功能总开关；关闭后停止定时抓取并拒绝新的导入/抓取请求（既有线路继续可用） |
+| `upstreamHealthGateEnabled` | `"true"` / `"false"` | `"true"` | 上游出口健康门总开关；关闭后不再按出口探测快照过滤订阅下发 |
+| `upstreamHealthMaxAgeSecs` | 十进制整数（60~86400） | `"1800"` | 上游出口健康快照最大容忍时长；线路级 `upstreamHealthMaxAgeSecs` 优先 |
 
 存储日志设置仅更新清理和采集策略，不会在保存时立即删除数据；旧版 `TrafficLog` 作为过渡数据继续按固定 7 天清理，不暴露为长期保留项。
 
