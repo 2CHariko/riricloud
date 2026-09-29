@@ -320,6 +320,12 @@ model Line {
   landingEndpointOverrideEnabled Boolean @default(false) // 是否启用中继落地端点覆盖；关闭时复用落地节点或目标线路默认设置
   landingServerHost String?   // 中继落地连接地址/域名覆盖 (仅 RELAY 生效)
   landingServerPort Int?      // 中继落地连接端口覆盖 (仅 RELAY 生效)
+  // 上游订阅出口编排（v0.9.10）
+  upstreamEntryId         String? // 非空 => 本线路是"上游出口线路"，不监听入站，仅提供 client outbound 定义
+  egressLineId            String? // 非空 => 本线路的用户流量经由此上游出口线路出网
+  upstreamSubscriptionId  String? // 物化来源订阅；手工单节点导入为 null
+  upstreamHealthGate      Boolean @default(true) // 启用后仅在出口健康快照新鲜且成功时下发
+  upstreamHealthMaxAgeSecs Int?   // 健康快照最大容忍秒数，null 时回退全局设置
   trafficRate     Float    @default(1)
   allowLanAccess  Boolean  @default(false) // 落地端是否允许访问局域网私网 IP (默认 false 拦截私网目标保护家庭内网安全)
   tunnelType      String?  // 反向穿透隧道类型：TCP_MUX (Yamux 多路复用) | WIREGUARD (NAT 落地中继时生效)
@@ -349,6 +355,10 @@ model Line {
   targetLine    Line? @relation("LineRelayTarget", fields: [targetLineId], references: [id], onDelete: Restrict)
   relaySources  Line[] @relation("LineRelayTarget")
   certificate   Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  upstreamEntry        UpstreamProxyEntry?  @relation(fields: [upstreamEntryId], references: [id], onDelete: Restrict)
+  upstreamSubscription UpstreamSubscription? @relation(fields: [upstreamSubscriptionId], references: [id], onDelete: SetNull)
+  egressLine           Line?                 @relation("LineEgress", fields: [egressLineId], references: [id], onDelete: Restrict)
+  egressDependents     Line[]                @relation("LineEgress")
 
   @@index([entryNodeId])
   @@index([landingNodeId])
@@ -358,6 +368,61 @@ model Line {
   @@index([type, status])
   @@index([isPublic])
   @@index([sortOrder])
+  @@index([upstreamEntryId])
+  @@index([egressLineId])
+  @@index([upstreamSubscriptionId])
+}
+
+// ==============================
+// 2.2.2 上游订阅源实体 (UpstreamSubscription，v0.9.10)
+// url 内嵌机场鉴权 Token，属密钥：不得写入日志、错误消息或 API 明文响应。
+// ==============================
+model UpstreamSubscription {
+  id               String    @id @default(uuid())
+  name             String
+  url              String
+  enabled          Boolean   @default(true)
+  syncIntervalMins Int       @default(720)
+  userAgent        String?
+  lastFetchedAt    DateTime?
+  lastFetchStatus  String?  // SUCCESS | FAILED | NEVER
+  lastFetchError   String?  // 已脱敏错误摘要，不含 url
+  detectedFormat   String?  // MIHOMO | SINGBOX | BASE64_URI
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  entries UpstreamProxyEntry[]
+  lines   Line[]
+
+  @@index([enabled])
+}
+
+// ==============================
+// 2.2.3 上游节点条目实体 (UpstreamProxyEntry，v0.9.10)
+// paramsJson 仅保存客户端出站字段（uuid / password / username / tls.reality.publicKey / transport），
+// 凭据经 protectEntryParams 应用层 AES-GCM 加密；entryKey 刻意排除凭据，
+// 使机场轮换凭据时不产生孤儿条目、不打断已生成线路。
+// ==============================
+model UpstreamProxyEntry {
+  id             String   @id @default(uuid())
+  subscriptionId String?
+  name           String
+  protocolType   String // 出口协议白名单：VLESS | VMESS | TROJAN | HYSTERIA2 | TUIC | SHADOWSOCKS | NAIVE
+  server         String
+  port           Int
+  paramsJson     String   @default("{}")
+  entryKey       String // sha256(protocol|server|port|区分性字段)，不含凭据
+  available      Boolean  @default(true)
+  lastSeenAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  subscription UpstreamSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  lines        Line[]
+
+  @@unique([subscriptionId, entryKey])
+  @@index([subscriptionId])
+  @@index([available])
 }
 
 // ==============================
@@ -870,6 +935,29 @@ model HelpArticle {
 | `cardConfigJson` | 套餐市场卡片视觉动效定制 JSON，包含主题色、Lucide 矢量图标、流光边框动效模式、流光色彩、原价划线、折扣文案、自定义行动按钮文案、微光扫光、角标视觉风格及「我的订阅」特效同步开关（`syncToSubscription`） |
 
 节点只提供底层健康状态；线路只有 `status=ACTIVE`、`isPublic=true` 且入口节点与出口节点均在线时，才会作为套餐市场的可用线路返回；`TARGET_LINE` 还要求目标直连线路自身为 `ACTIVE`。订阅详情直接返回线路协议、倍率、等级、标签、端点覆盖和中继机制。
+
+### 3.3.1 `Line` 上游出口编排（v0.9.10）
+
+上游订阅解析出的第三方节点**不会**直接进入用户订阅——用户订阅里的每个条目都是"我们的公网节点 + 我们生成的入站凭据"，直接透传上游服务器与凭据会把上游账号交给用户，并绕开配额、设备限制与计费。因此上游统一以**出口**形态接入：
+
+| 字段 / 规则 | 说明 |
+| :--- | :--- |
+| `upstreamEntryId` | 非空表示本线路是**上游出口线路**：不监听任何入站，只提供一份指向第三方服务器的 client outbound 定义；服务器、端口、协议与真实凭据均取自 `UpstreamProxyEntry` |
+| `egressLineId` | 任意线路指向一条上游出口线路，使本线路的用户流量改由上游出网 |
+| `upstreamSubscriptionId` | 物化来源订阅；手工单节点导入为 null |
+| `upstreamHealthGate` | 默认 `true`；启用后仅在出口线路探测成功且快照新鲜时下发，受全局 `upstreamHealthGateEnabled` 覆盖 |
+| `upstreamHealthMaxAgeSecs` | 健康快照最大容忍秒数；留空回退全局 `upstreamHealthMaxAgeSecs` |
+| 端口语义 | 上游出口线路的 `entryPort` 仅为满足 schema 非空约束的占位值，**不参与端口占用判定**，也不生成入站 |
+| 凭据来源 | 出口出站使用上游条目真实凭据，与协议代理/桥接中继使用的内部中转凭证 `INTERNAL_RELAY_TRANSIT_*` 严格区分 |
+| 单跳拓扑 | `DIRECT` 与 `RELAY/TARGET_LINE`：出口出站与路由规则生成在**入口节点** |
+| 双跳拓扑 | `RELAY/BLIND_FORWARD` 与 `RELAY/PROTOCOL_PROXY`：出口出站与路由规则生成在**落地节点**，入口节点只负责中转到落地 |
+| 跨节点绑定 | 出口线路绑定节点与引用方不一致时，配置编译器按 `egressLineId` 补载并回填关系，解析顺序不影响出站生成 |
+| 不可用降级 | 上游条目不可用时跳过出站与路由生成，但引用方入站仍然生成；是否下发由健康门决定 |
+| `entryKey` | `sha256(协议｜服务器｜端口｜区分性字段)`，**刻意排除凭据**，使机场轮换凭据时不产生孤儿条目、不打断已生成线路 |
+
+**约束**：出口必须指向上游出口线路；上游出口线路自身不可再挂出口（禁止链式嵌套）；上游出口线路不支持中继机制；本地代理入站（`MIXED`/`SOCKS`/`HTTP`）不得直连纯 UDP 上游协议（`HYSTERIA2`/`TUIC`），因为该类入站无法承载 UDP 语义。被引用的上游出口线路不可直接删除（`onDelete: Restrict`）。
+
+**上游凭据保护**：`UpstreamProxyEntry.paramsJson` 的 `uuid`、`password`、`username` 以应用层 AES-GCM 密文保存（`protectEntryParams` 幂等，重复写入不产生新密文），线路管理接口只返回服务器与端口等非敏感字段。`UpstreamSubscription.url` 内嵌机场鉴权 Token，属密钥：不得写入日志、错误消息或 API 明文响应。
 
 ### 3.4 `Subscription` 生命周期与兼容镜像
 

@@ -23,6 +23,7 @@
 | [实时节点镜像站与 Agent 流式代理](./node-mirror-site-proxy.md) | `v0.7.2+` | 2026-09-09 | 93/123 (76%) |
 | [公开线路与中继落地凭据安全整改 TODO（2026-09-08）](./security-audit-public-relay-credentials.md) | `v0.7.2+` | 2026-09-08 | 0/58 (0%) |
 | [流量账务与 SQLite 写入链路优化](./traffic-accounting-sqlite-optimization.md) | `0.5.0` | 2026-09-03 | 19/20 (95%) |
+| [upstream-subscription](./upstream-subscription.md) | `v0.4.0` | 2026-09-30 | 0/8 (0%) |
 
 ---
 

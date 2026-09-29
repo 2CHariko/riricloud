@@ -13,6 +13,15 @@
 ## [Unreleased]
 
 ### Added
+- **上游订阅出口编排（P1 出口机制）**：
+  - `Line` 新增上游出口维度：`upstreamEntryId`（标记该线路为"上游出口线路"，不监听任何入站、仅提供指向第三方服务器的客户端出站定义）、`egressLineId`（本线路用户流量经由此上游出口出网）、`upstreamHealthGate` 与 `upstreamHealthMaxAgeSecs`（出口健康门策略），并新增 `UpstreamSubscription` 与 `UpstreamProxyEntry` 两个实体用于承载订阅源与解析出的上游节点条目；
+  - `AgentGatewayService` 的出站组装支持凭据来源切换：协议代理/桥接中继继续使用内部中转专用凭证，上游出口改用上游节点自身的真实 `uuid`/`password`/`username`；
+  - 支持单跳（入口节点直接出上游）与双跳（先中转到落地节点、再由落地节点出上游）两种拓扑：`DIRECT`、`TARGET_LINE` 桥接与 `BLIND_FORWARD`/`PROTOCOL_PROXY` 落地均按各自的"最后一跳"位置生成上游出站与路由规则；
+  - 线路管理 API 新增 `egressLineId`、`upstreamHealthGate`、`upstreamHealthMaxAgeSecs` 字段，并新增四条出口引用校验（必须指向上游出口线路、禁止链式出口、上游出口线路不支持中继机制、本地代理入站不得直连纯 UDP 上游协议）；
+  - 上游出口线路不占用真实监听端口，端口冲突检查与随机分配显式排除该类线路，避免出现"幽灵端口占用"。
+
+### Security
+- **上游凭据落库加密与响应脱敏**：上游条目的 `uuid`/`password`/`username` 以应用层 AES-GCM 密文保存（`protectEntryParams` 幂等，重复写入不产生新密文），线路管理接口只返回上游服务器与端口等非敏感字段，凭据不进入任何管理端响应。
 
 ### Changed
 

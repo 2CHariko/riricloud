@@ -47,7 +47,28 @@ const targetLineSummary = {
     entryNode: nodeSummary
   }
 } as const;
-const lineInclude = { entryNode: nodeSummary, landingNode: nodeSummary, targetLine: targetLineSummary, certificate: certificateSummary } as const;
+const upstreamEntrySummary = {
+  select: { id: true, name: true, protocolType: true, server: true, port: true, available: true }
+} as const;
+const egressLineSummary = {
+  select: {
+    id: true,
+    name: true,
+    status: true,
+    type: true,
+    protocolType: true,
+    upstreamEntryId: true,
+    upstreamEntry: upstreamEntrySummary
+  }
+} as const;
+const lineInclude = {
+  entryNode: nodeSummary,
+  landingNode: nodeSummary,
+  targetLine: targetLineSummary,
+  certificate: certificateSummary,
+  upstreamEntry: upstreamEntrySummary,
+  egressLine: egressLineSummary
+} as const;
 type LineWithRelations = Prisma.LineGetPayload<{ include: typeof lineInclude }>;
 
 type LineInput = {
@@ -64,6 +85,9 @@ type LineInput = {
   landingPort?: number | null;
   targetLineId?: string | null;
   certificateId?: string | null;
+  egressLineId?: string | null;
+  upstreamHealthGate?: boolean;
+  upstreamHealthMaxAgeSecs?: number | null;
   endpointOverrideEnabled?: boolean;
   serverHost?: string | null;
   serverPort?: number | null;
@@ -92,6 +116,8 @@ type LineInput = {
 };
 
 const UDP_PROTOCOLS = new Set<ProtocolType>(['HYSTERIA2', 'TUIC']);
+// 本地代理入站协议：由 Sing-box mixed/socks/http 承载，无法承载 UDP 语义
+const LAND_PROXY_PROTOCOLS = new Set<ProtocolType>(['MIXED', 'SOCKS', 'HTTP']);
 
 @Injectable()
 export class LinesService {
@@ -285,6 +311,8 @@ export class LinesService {
     const entryNodeId = input.entryNodeId !== undefined ? input.entryNodeId : current?.entryNodeId;
     if (!entryNodeId) throw new BadRequestException('必须指定入口节点');
 
+    const egressLineId = await this.resolveEgressLineId(input, current, protocolType);
+
     let landingNodeId: string | null = null;
     let landingPort: number | null = null;
     let targetLineId: string | null = null;
@@ -416,6 +444,7 @@ export class LinesService {
       landingPort,
       targetLineId,
       certificateId,
+      egressLineId,
       allowLanAccess,
       tunnelType,
       tunnelPort,
@@ -434,6 +463,10 @@ export class LinesService {
       landingServerPort: type === 'RELAY'
         ? (input.landingServerPort !== undefined ? input.landingServerPort : current?.landingServerPort ?? null)
         : null,
+      upstreamHealthGate: input.upstreamHealthGate ?? current?.upstreamHealthGate ?? true,
+      upstreamHealthMaxAgeSecs: input.upstreamHealthMaxAgeSecs !== undefined
+        ? input.upstreamHealthMaxAgeSecs
+        : current?.upstreamHealthMaxAgeSecs ?? null,
       trafficRate: input.trafficRate ?? current?.trafficRate ?? 1,
       tagsJson: JSON.stringify(tags),
       speedLimitMbps: input.speedLimitMbps !== undefined ? input.speedLimitMbps : current?.speedLimitMbps ?? 0,
@@ -450,10 +483,63 @@ export class LinesService {
     };
   }
 
+  /**
+   * 校验并解析线路的上游出口引用。
+   *
+   * 规则（单跳 = 入口节点自己出上游；双跳 = 落地节点出上游，两者都支持）：
+   * 1) 出口必须指向一条"上游出口线路"（`upstreamEntryId != null`）；
+   * 2) 上游出口线路自身不可再挂出口（第一版禁止链式嵌套，避免环路与出站层层套娃）；
+   * 3) 上游出口线路不支持中继机制（它不监听入站，落地概念对其无意义）；
+   * 4) 本地代理入站（mixed/socks/http）无法承载 UDP，禁止直连纯 UDP 上游协议。
+   */
+  private async resolveEgressLineId(
+    input: LineInput,
+    current: LineWithRelations | undefined,
+    protocolType: ProtocolType
+  ): Promise<string | null> {
+    const requested = input.egressLineId !== undefined ? input.egressLineId : current?.egressLineId ?? null;
+    if (!requested) return null;
+    if (current?.upstreamEntryId) {
+      throw new BadRequestException('上游出口线路自身不能再指定出口');
+    }
+    const egress = await this.prisma.line.findUnique({
+      where: { id: requested },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        type: true,
+        relayMode: true,
+        protocolType: true,
+        upstreamEntryId: true,
+        egressLineId: true,
+        upstreamEntry: { select: { protocolType: true, available: true } }
+      }
+    });
+    if (!egress) throw new NotFoundException('上游出口线路不存在');
+    if (!egress.upstreamEntryId) {
+      throw new BadRequestException('出口必须指向一条上游出口线路');
+    }
+    if (egress.egressLineId) {
+      throw new BadRequestException('上游出口线路自身不能再指定出口（不支持链式出口）');
+    }
+    if (egress.type === 'RELAY' || egress.relayMode) {
+      throw new BadRequestException('上游出口线路不支持中继机制');
+    }
+    const upstreamProtocol = egress.upstreamEntry?.protocolType;
+    if (upstreamProtocol && UDP_PROTOCOLS.has(upstreamProtocol as ProtocolType) && LAND_PROXY_PROTOCOLS.has(protocolType)) {
+      throw new BadRequestException('本地代理入站（MIXED/SOCKS/HTTP）无法承载 UDP，不能直连 Hysteria2/TUIC 上游');
+    }
+    return requested;
+  }
+
   private async assertPortAvailable(nodeId: string, port: number, protocolType: ProtocolType, currentId?: string) {
     const rows = await this.prisma.line.findMany({
       where: {
         ...(currentId ? { id: { not: currentId } } : {}),
+        // 上游出口线路不监听任何入站，其 entryPort 只是满足 schema 非空约束的占位值，
+        // 因此不参与端口占用判定，避免出现"幽灵端口占用"。
+        upstreamEntryId: null,
         OR: [{ entryNodeId: nodeId, entryPort: port }, { landingNodeId: nodeId, landingPort: port }]
       },
       select: { protocolType: true }
@@ -470,6 +556,7 @@ export class LinesService {
         const rows = await this.prisma.line.findMany({
           where: {
             ...(currentId ? { id: { not: currentId } } : {}),
+            upstreamEntryId: null,
             OR: [{ entryNodeId: nodeId, entryPort: port }, { landingNodeId: nodeId, landingPort: port }]
           },
           select: { protocolType: true }
@@ -645,6 +732,21 @@ export class LinesService {
         landingServerPort: line.landingServerPort ?? null
       },
       tags: this.parseTags(line.tagsJson),
+      // 上游订阅出口编排：上游出口线路暴露自身条目；普通线路暴露它引用的出口摘要。
+      // upstreamEntrySummary / egressLineSummary 只 select 非敏感字段，
+      // 不含 paramsJson，因此上游 uuid/password 天然不会进入任何管理端响应。
+      upstreamEntry: line.upstreamEntry
+        ? { ...line.upstreamEntry, isEgressLine: true as const }
+        : null,
+      egress: line.egressLine
+        ? {
+            lineId: line.egressLine.id,
+            name: line.egressLine.name,
+            status: line.egressLine.status,
+            protocolType: line.egressLine.protocolType,
+            entry: line.egressLine.upstreamEntry
+          }
+        : null,
       topology: {
         entry: { node: line.entryNode, port: line.entryPort },
         landing

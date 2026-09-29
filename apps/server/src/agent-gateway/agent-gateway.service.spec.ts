@@ -1699,5 +1699,181 @@ describe('AgentGatewayService', () => {
     }
   });
 
+  describe('上游订阅出口编排', () => {
+    const routeRules = (config: { singboxConfig: Record<string, unknown> }) =>
+      ((config.singboxConfig.route as { rules?: Array<Record<string, unknown>> } | undefined)?.rules ?? []);
+
+    const upstreamEntry = (overrides: Record<string, unknown> = {}) => ({
+      id: 'up-entry-1',
+      name: '🇯🇵 东京 01',
+      protocolType: 'TROJAN',
+      server: '198.51.100.77',
+      port: 8443,
+      paramsJson: JSON.stringify({
+        password: 'upstream-secret',
+        tls: { enabled: true, mode: 'tls', serverName: 'upstream.example.com' }
+      }),
+      available: true,
+      ...overrides
+    });
+
+    const egressLine = (overrides: Record<string, unknown> = {}) => ({
+      id: 'egress-1',
+      name: '上游出口 · 东京 01',
+      status: 'ACTIVE',
+      type: 'DIRECT',
+      protocolType: 'TROJAN',
+      paramsJson: '{}',
+      entryNodeId: 'node-1',
+      upstreamEntryId: 'up-entry-1',
+      upstreamEntry: upstreamEntry(),
+      ...overrides
+    });
+
+    it('直连线路挂出口时生成上游出站并按入站 tag 建路由，凭证取自上游条目', async () => {
+      const entryLine = line({
+        id: 'direct-with-egress',
+        tag: 'direct-egress',
+        type: 'DIRECT',
+        entryNodeId: 'node-1',
+        entryPort: 25010,
+        egressLineId: 'egress-1',
+        egressLine: egressLine()
+      });
+
+      prisma.node.findUnique.mockResolvedValueOnce({
+        id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null,
+        entryLines: [entryLine], landingLines: []
+      });
+      prisma.user.findMany.mockResolvedValue([user]);
+
+      const config = await service.buildConfigSync('node-1');
+      const outbounds = config.singboxConfig.outbounds as Array<Record<string, unknown>>;
+      const egressOutbound = outbounds.find((item) => item.tag === 'upstream-out-direct-with-egress');
+
+      expect(egressOutbound).toMatchObject({
+        type: 'trojan',
+        server: '198.51.100.77',
+        server_port: 8443,
+        password: 'upstream-secret'
+      });
+      // 必须使用上游真实凭证，而不是内部中转专用凭证
+      expect(egressOutbound?.password).not.toBe(INTERNAL_RELAY_TRANSIT_SECRET);
+      expect(routeRules(config)).toEqual(expect.arrayContaining([
+        { inbound: ['direct-egress'], outbound: 'upstream-out-direct-with-egress' }
+      ]));
+    });
+
+    it('上游出口线路自身不生成任何入站', async () => {
+      const pureEgress = egressLine({ entryPort: 25011 });
+
+      prisma.node.findUnique.mockResolvedValueOnce({
+        id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null,
+        entryLines: [pureEgress], landingLines: []
+      });
+      prisma.user.findMany.mockResolvedValue([user]);
+
+      const config = await service.buildConfigSync('node-1');
+      const tags = (config.singboxConfig.inbounds as Array<Record<string, unknown>>).map((item) => item.tag);
+
+      expect(tags).not.toContain('line-egress-1');
+      expect(tags).not.toContain('egress-1');
+      // 未被任何线路引用时也不应产生悬空出站
+      expect((config.singboxConfig.outbounds as Array<Record<string, unknown>>).some((item) => item.tag === 'upstream-out-egress-1')).toBe(false);
+    });
+
+    it('双跳：中继落地节点把落地入站的流量导出上游', async () => {
+      const relay = line({
+        id: 'relay-two-hop',
+        tag: 'relay-hop',
+        type: 'RELAY',
+        relayMode: 'PROTOCOL_PROXY',
+        protocolType: 'VLESS',
+        entryNodeId: 'node-1',
+        entryPort: 25020,
+        landingNodeId: 'node-2',
+        landingPort: 25021,
+        egressLineId: 'egress-1',
+        egressLine: egressLine({ entryNodeId: 'node-2' })
+      });
+
+      // 落地节点视角：node-2 承担落地角色
+      prisma.node.findUnique.mockResolvedValueOnce({
+        id: 'node-2', serverHost: '198.51.100.20', status: 'ONLINE', configOverride: null, reachability: 'PUBLIC',
+        entryLines: [], landingLines: [relay]
+      });
+      prisma.user.findMany.mockResolvedValue([user]);
+
+      const config = await service.buildConfigSync('node-2');
+      const outbounds = config.singboxConfig.outbounds as Array<Record<string, unknown>>;
+
+      expect(outbounds).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tag: 'upstream-out-relay-two-hop', server: '198.51.100.77', server_port: 8443 })
+      ]));
+      // 落地入站 tag 决定路由键，而非入口 tag
+      expect(routeRules(config)).toEqual(expect.arrayContaining([
+        { inbound: ['relay-hop-landing'], outbound: 'upstream-out-relay-two-hop' }
+      ]));
+    });
+
+    it('上游条目不可用时跳过出口出站，且不产生悬空路由规则', async () => {
+      const entryLine = line({
+        id: 'direct-unavailable',
+        tag: 'direct-unavailable',
+        type: 'DIRECT',
+        entryNodeId: 'node-1',
+        entryPort: 25030,
+        egressLineId: 'egress-1',
+        egressLine: egressLine({ upstreamEntry: upstreamEntry({ available: false }) })
+      });
+
+      prisma.node.findUnique.mockResolvedValueOnce({
+        id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null,
+        entryLines: [entryLine], landingLines: []
+      });
+      prisma.user.findMany.mockResolvedValue([user]);
+
+      const config = await service.buildConfigSync('node-1');
+      const outbounds = config.singboxConfig.outbounds as Array<Record<string, unknown>>;
+      const rules = routeRules(config);
+
+      expect(outbounds.some((item) => item.tag === 'upstream-out-direct-unavailable')).toBe(false);
+      expect(rules.some((rule) => rule.outbound === 'upstream-out-direct-unavailable')).toBe(false);
+      // 入站本身仍然生成，用户侧不会因为上游不可用而丢失节点定义
+      expect((config.singboxConfig.inbounds as Array<Record<string, unknown>>).map((item) => item.tag)).toContain('direct-unavailable');
+    });
+
+    it('上游条目绑定在其他节点时，出口线路按 egressLineId 补载', async () => {
+      const entryLine = line({
+        id: 'direct-foreign-egress',
+        tag: 'direct-foreign',
+        type: 'DIRECT',
+        entryNodeId: 'node-1',
+        entryPort: 25040,
+        egressLineId: 'egress-remote',
+        // 出口线路登记在 node-9，不在本节点的 entryLines/landingLines 中
+        egressLine: null
+      });
+      prisma.line.findMany.mockResolvedValueOnce([egressLine({ id: 'egress-remote' })]);
+
+      prisma.node.findUnique.mockResolvedValueOnce({
+        id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null,
+        entryLines: [entryLine], landingLines: []
+      });
+      prisma.user.findMany.mockResolvedValue([user]);
+
+      const config = await service.buildConfigSync('node-1');
+      expect(prisma.line.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ['egress-remote'] }, status: 'ACTIVE' } })
+      );
+      expect(config.singboxConfig.outbounds).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tag: 'upstream-out-direct-foreign-egress', server: '198.51.100.77' })
+      ]));
+      expect(routeRules(config)).toEqual(expect.arrayContaining([
+        { inbound: ['direct-foreign'], outbound: 'upstream-out-direct-foreign-egress' }
+      ]));
+    });
+  });
+
 });
 

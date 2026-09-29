@@ -80,6 +80,24 @@ export class UpdateLineDto {
   @IsOptional()
   certificateId?: string | null;
 
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: '上游出口线路 ID；传 null 解除上游出口' })
+  @IsUUID()
+  @IsOptional()
+  egressLineId?: string | null;
+
+  @ApiPropertyOptional({ description: '上游出口健康门开关' })
+  @IsBoolean()
+  @IsOptional()
+  upstreamHealthGate?: boolean;
+
+  @ApiPropertyOptional({ minimum: 60, maximum: 86400, nullable: true, description: '健康快照最大容忍秒数' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(60)
+  @Max(86400)
+  @IsOptional()
+  upstreamHealthMaxAgeSecs?: number | null;
+
   @ApiPropertyOptional()
   @IsBoolean()
   @IsOptional()

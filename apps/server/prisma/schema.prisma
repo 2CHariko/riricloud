@@ -289,6 +289,12 @@ model Line {
   landingEndpointOverrideEnabled Boolean   @default(false)
   landingServerHost       String?
   landingServerPort       Int?
+  // 上游订阅出口编排（v0.9.10）
+  upstreamEntryId         String? // 非空 => 本线路是"上游出口线路"，不监听任何入站，仅提供 outbound 定义
+  egressLineId            String? // 非空 => 本线路的用户流量经由此上游出口线路出网
+  upstreamSubscriptionId  String? // 物化来源订阅；手工单节点导入为 null
+  upstreamHealthGate      Boolean   @default(true) // 启用后仅在出口线路健康快照新鲜且成功时下发
+  upstreamHealthMaxAgeSecs Int? // 健康快照最大容忍时长（秒），null 时回退全局设置
   trafficRate             Float     @default(1)
   allowLanAccess          Boolean   @default(false) // 落地端是否允许访问局域网私网 IP (默认 false 拦截)
   tunnelType              String? // TCP_MUX | WIREGUARD (反向穿透隧道类型，NAT 落地中继时生效)
@@ -321,6 +327,12 @@ model Line {
   trafficLogs     TrafficLog[]
   extraLineGrants UserLineGrant[]
 
+  // 上游出口关系：出口线路被引用时不可删除
+  upstreamEntry        UpstreamProxyEntry?  @relation(fields: [upstreamEntryId], references: [id], onDelete: Restrict)
+  upstreamSubscription UpstreamSubscription? @relation(fields: [upstreamSubscriptionId], references: [id], onDelete: SetNull)
+  egressLine           Line?                 @relation("LineEgress", fields: [egressLineId], references: [id], onDelete: Restrict)
+  egressDependents     Line[]                @relation("LineEgress")
+
   @@index([entryNodeId])
   @@index([landingNodeId])
   @@index([targetLineId])
@@ -329,6 +341,61 @@ model Line {
   @@index([type, status])
   @@index([isPublic])
   @@index([sortOrder])
+  @@index([upstreamEntryId])
+  @@index([egressLineId])
+  @@index([upstreamSubscriptionId])
+}
+
+// ==============================
+// 2.2.2 上游订阅源实体 (UpstreamSubscription，v0.9.10)
+// url 内嵌机场鉴权 Token，属密钥：不得写入日志、不得进入错误消息或 API 明文响应。
+// ==============================
+model UpstreamSubscription {
+  id               String    @id @default(uuid())
+  name             String
+  url              String
+  enabled          Boolean   @default(true)
+  syncIntervalMins Int       @default(720)
+  userAgent        String?
+  lastFetchedAt    DateTime?
+  lastFetchStatus  String? // SUCCESS | FAILED | NEVER
+  lastFetchError   String? // 已脱敏错误摘要，不含 url
+  detectedFormat   String? // MIHOMO | SINGBOX | BASE64_URI
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  entries UpstreamProxyEntry[]
+  lines   Line[]
+
+  @@index([enabled])
+}
+
+// ==============================
+// 2.2.3 上游节点条目实体 (UpstreamProxyEntry，v0.9.10)
+// paramsJson 仅保存客户端出站字段（uuid / password / tls.reality.publicKey / transport），
+// 凭据经 protectInboundSecrets 应用层 AES-GCM 加密；entryKey 刻意排除凭据，
+// 使机场轮换凭据时不产生孤儿条目、不打断已生成线路。
+// ==============================
+model UpstreamProxyEntry {
+  id             String   @id @default(uuid())
+  subscriptionId String?
+  name           String
+  protocolType   String // 出口协议白名单：VLESS | VMESS | TROJAN | HYSTERIA2 | TUIC | SHADOWSOCKS | NAIVE
+  server         String
+  port           Int
+  paramsJson     String   @default("{}")
+  entryKey       String // sha256(protocol|server|port|区分性字段)，不含凭据
+  available      Boolean  @default(true)
+  lastSeenAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  subscription UpstreamSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  lines        Line[]
+
+  @@unique([subscriptionId, entryKey])
+  @@index([subscriptionId])
+  @@index([available])
 }
 
 model Certificate {

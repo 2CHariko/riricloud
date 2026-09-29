@@ -123,7 +123,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 #### 线路管理
 - `GET /admin/lines?page&pageSize&search&type&status&tag`：分页查询线路，可按名称/地址、类型、启停状态和标签筛选；响应包含 `tag`、`listen`、`protocolType`、脱敏后的 `params`、`certificateId`/`certificate` 简要关联、`targetLineId`/`targetLine` 目标摘要、`topology`（入口/落地节点与端口）、最终生效的 `serverHost/serverPort`、原始 `endpointOverrides` 以及测速快照（`lastLatencyMs`、`lastTestedAt`、`lastTestStatus`、`lastTestMessage`）。旧客户端仍可读取只读 `targetInbound` 摘要。⭐
 - `GET /admin/lines/:id`：查询线路详情及入口/落地节点关联、协议参数、证书简要信息、端点解析结果与最新测速快照。⭐
-- `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`proxyProtocol` 为布尔类型（开启时自动兼容解析 v1 与 v2 协议头），`proxyProtocolAcceptNoHeader` 控制是否允许无 PROXY 头的连接；`speedLimitMbps` 控制单端口限速；`certificateId` 只能用于标准 TLS，关联后无需在 `params.tls` 中填写本地证书/私钥路径，Master 会在配置同步时注入最新 PEM。`params` 按 `docs/DATA_MODELS.md` §3.1 归一化并在响应中脱敏，TLS `alpn` 使用字符串数组，可按协议/传输层从预设值多选。直连线路仅需指定入口节点与端口，落地字段保持为 null；普通中继线路必须指定入口、落地和机制，`TARGET_LINE` 必须指定其他节点上的 `DIRECT` 目标线路，落地节点与端口动态由目标线路解析（默认自动继承目标线路生效的 `endpointOverrideEnabled` 对外覆盖端点与 SNI）。中继线路支持开启 `landingEndpointOverrideEnabled` 显式覆盖入口连接落地时的拨号目标地址/端口（`landingServerHost`/`landingServerPort`），当配置为纯回源 IP 时自动解耦并保留目标线路或落地节点的绑定域名作为 TLS `server_name` 与传输层 `Host` 请求头；当落地为 NAT 节点时强制走 127.0.0.1 反向隧道。入口节点 `entryNodeId` 必须为公网可达节点（`reachability=PUBLIC`）；落地节点支持公网节点或 NAT 节点（`reachability=NAT`）。当落地为 NAT 节点时，系统自动编排反向 Yamux 多路复用隧道（`tunnelType=YAMUX`），复用或自动分配隧道端口（`tunnelPort`）与高熵密钥（`tunnelSecret`）；`allowLanAccess` 控制落地端是否放行家庭/私网局域网资源访问（布尔值，默认 `false` 严格拦截私网网段）。目标协议仅支持 `VLESS`、`VMESS`、`TROJAN`、`HYSTERIA2`、`TUIC`、`SHADOWSOCKS`、`NAIVE`。端口省略时由服务端在 `20000~65535` 范围随机分配五位端口。同节点同 TCP/UDP 传输层端口冲突返回 `409`，自定义 Tag 冲突返回 `409`，HYSTERIA2/TUIC 按 UDP 计算。
+- `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), egressLineId?(UUID|null), upstreamHealthGate?, upstreamHealthMaxAgeSecs?, endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`proxyProtocol` 为布尔类型（开启时自动兼容解析 v1 与 v2 协议头），`proxyProtocolAcceptNoHeader` 控制是否允许无 PROXY 头的连接；`speedLimitMbps` 控制单端口限速；`certificateId` 只能用于标准 TLS，关联后无需在 `params.tls` 中填写本地证书/私钥路径，Master 会在配置同步时注入最新 PEM。`params` 按 `docs/DATA_MODELS.md` §3.1 归一化并在响应中脱敏，TLS `alpn` 使用字符串数组，可按协议/传输层从预设值多选。直连线路仅需指定入口节点与端口，落地字段保持为 null；普通中继线路必须指定入口、落地和机制，`TARGET_LINE` 必须指定其他节点上的 `DIRECT` 目标线路，落地节点与端口动态由目标线路解析（默认自动继承目标线路生效的 `endpointOverrideEnabled` 对外覆盖端点与 SNI）。中继线路支持开启 `landingEndpointOverrideEnabled` 显式覆盖入口连接落地时的拨号目标地址/端口（`landingServerHost`/`landingServerPort`），当配置为纯回源 IP 时自动解耦并保留目标线路或落地节点的绑定域名作为 TLS `server_name` 与传输层 `Host` 请求头；当落地为 NAT 节点时强制走 127.0.0.1 反向隧道。`egressLineId` 指向上游出口线路，使本线路的用户流量经上游出网（单跳 = 入口节点出上游；双跳 = 中继线路由落地节点出上游），校验规则见 §6.2。入口节点 `entryNodeId` 必须为公网可达节点（`reachability=PUBLIC`）；落地节点支持公网节点或 NAT 节点（`reachability=NAT`）。当落地为 NAT 节点时，系统自动编排反向 Yamux 多路复用隧道（`tunnelType=YAMUX`），复用或自动分配隧道端口（`tunnelPort`）与高熵密钥（`tunnelSecret`）；`allowLanAccess` 控制落地端是否放行家庭/私网局域网资源访问（布尔值，默认 `false` 严格拦截私网网段）。目标协议仅支持 `VLESS`、`VMESS`、`TROJAN`、`HYSTERIA2`、`TUIC`、`SHADOWSOCKS`、`NAIVE`。端口省略时由服务端在 `20000~65535` 范围随机分配五位端口。同节点同 TCP/UDP 传输层端口冲突返回 `409`，自定义 Tag 冲突返回 `409`，HYSTERIA2/TUIC 按 UDP 计算。
 - `PATCH /admin/lines/:id`：部分更新线路，字段同创建请求。⭐ 保存后触发全量 Agent 配置推送防抖。
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
@@ -816,3 +816,44 @@ Agent 默认单请求超时 10 分钟、响应上限 256 MiB、单节点镜像�
 - `format=json`（`application/json`）：`{ version, generatedAt, key, proxies[] }`，`proxies[]` 含 `name`、`region`、`tags`、`node`、`nodeId`、`lineId`、`protocol`、`host`、`port`、`username`、`password`、`latencyMs`、`lastTestStatus`。
 
 所有导出响应均带 `Cache-Control: no-store`。免登录拉取令牌可通过 `rotate-token` 随时轮换，旧令牌立即失效；凭据停用或归属账号停用时令牌同样失效（401）。
+
+---
+
+## 6. 上游订阅与出口编排 (Upstream Egress, v0.9.10)
+
+### 6.1 模型与拓扑
+
+上游节点**不会**直接出现在用户订阅中：用户订阅里的每个条目都是"我们的公网节点 + 我们生成的入站凭据"。直接透传上游服务器与凭据会把上游账号交给用户，并绕开配额、设备限制与计费。因此上游统一以**出口（egress）**形态接入：
+
+- **上游出口线路**：`Line.upstreamEntryId != null`。该线路**不监听任何入站**，只提供一份指向第三方服务器的 client outbound 定义（服务器、端口、协议、真实凭据均取自 `UpstreamProxyEntry`）。其 `entryPort` 只是满足 schema 非空约束的占位值，**不参与端口占用判定**，也不生成任何入站。
+- **引用方线路**：任意线路通过 `Line.egressLineId` 指向上游出口线路，其用户流量改由上游出网。
+
+| 拓扑 | 触发条件 | 出站与路由生成位置 |
+| :--- | :--- | :--- |
+| **单跳** | `type=DIRECT` 且挂载出口 | 入口节点：`inbound[入口 tag] → upstream-out-<lineId>` |
+| **单跳** | `type=RELAY` + `relayMode=TARGET_LINE` 且挂载出口 | 入口节点：`inbound[入口 tag] → relay-out-<lineId> → upstream-out-<lineId>`（目标线路为最后一跳） |
+| **双跳** | `type=RELAY` + `relayMode=BLIND_FORWARD`/`PROTOCOL_PROXY` 且挂载出口 | 落地节点：`inbound[落地 tag] → upstream-out-<lineId>`，入口节点只负责中转到落地 |
+
+出口出站使用上游条目的**真实凭据**，与协议代理/桥接中继使用的内部中转专用凭证（`INTERNAL_RELAY_TRANSIT_*`）严格区分。上游条目不可用时跳过出站与路由生成，但引用方线路的入站仍然生成，用户侧不会因此丢失节点定义（是否下发由 §6.3 健康门决定）。
+
+出口线路若绑定在与引用方不同的节点上，配置编译器会按 `egressLineId` 补载该出口线路并回填关系，因此解析顺序与绑定节点不影响出站生成。
+
+### 6.2 出口引用校验规则
+
+`POST /admin/lines` 与 `PATCH /admin/lines/:id` 在写入 `egressLineId` 时执行以下校验，任一不满足返回 `400`：
+
+1. 出口必须指向一条**上游出口线路**（`upstreamEntryId != null`）；
+2. 上游出口线路**自身不能再指定出口**（第一版禁止链式嵌套，避免环路与出站层层套娃）；
+3. 上游出口线路**不支持中继机制**（它不监听入站，落地概念对其无意义）；
+4. 本地代理入站（`MIXED`/`SOCKS`/`HTTP`）**不得直连纯 UDP 上游协议**（`HYSTERIA2`/`TUIC`），因为该类入站无法承载 UDP 语义。
+
+出口不存在时返回 `404`。
+
+### 6.3 凭据保护与健康门
+
+- 上游条目的 `uuid`、`password`、`username` 以应用层 AES-GCM 密文保存（`protectEntryParams` 幂等，重复写入不产生新密文）；线路管理接口只返回服务器与端口等非敏感字段，**凭据不进入任何管理端响应**。
+- `upstreamHealthGate`（默认 `true`，可被全局 `upstreamHealthGateEnabled` 总开关覆盖）与 `upstreamHealthMaxAgeSecs`（留空回退全局 `upstreamHealthMaxAgeSecs`）共同约束下发：仅当出口线路最近一次探测为 `SUCCESS` 且快照未过期时，引用方线路才进入订阅；否则**仅从下发结果中剔除**，不改变线路自身的 `status`。
+
+### 6.4 管理接口
+
+上游订阅源的抓取、预览、物化与条目管理接口随里程碑 P3 落地，统一挂载在 `/admin/upstreams` 下，均要求 `role=ADMIN`。订阅 `url` 内嵌机场鉴权 Token，属密钥：不得写入日志、错误消息或 API 明文响应，响应中仅暴露 host 与订阅名。

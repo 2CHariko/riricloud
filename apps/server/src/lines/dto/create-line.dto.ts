@@ -79,6 +79,28 @@ export class CreateLineDto {
   @IsOptional()
   certificateId?: string | null;
 
+  @ApiPropertyOptional({
+    format: 'uuid',
+    nullable: true,
+    description: '上游出口线路 ID；设置后本线路的用户流量经由该上游出网（单跳=入口节点出上游，双跳=落地节点出上游）'
+  })
+  @IsUUID()
+  @IsOptional()
+  egressLineId?: string | null;
+
+  @ApiPropertyOptional({ default: true, description: '上游出口健康门：仅在出口探测成功且快照新鲜时下发订阅' })
+  @IsBoolean()
+  @IsOptional()
+  upstreamHealthGate?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, minimum: 60, maximum: 86400, description: '健康快照最大容忍秒数；留空回退全局设置' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(60)
+  @Max(86400)
+  @IsOptional()
+  upstreamHealthMaxAgeSecs?: number | null;
+
   @ApiPropertyOptional({ default: false })
   @IsBoolean()
   @IsOptional()

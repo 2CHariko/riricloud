@@ -328,7 +328,6 @@ describe('LinesService', () => {
       };
       expect(parsedUpdatedParams.tls.reality.privateKey).toBeDefined();
     });
-    });
 
     it('中继线路支持落地端点覆盖，并在 toView 与 topology.landing 中反映覆盖后的 host 与 port', async () => {
       const relay = {
@@ -407,4 +406,125 @@ describe('LinesService', () => {
       expect(result.line.topology.landing?.host).toBe('target-cdn.example.com');
       expect(result.line.topology.landing?.port).toBe(8443);
     });
+  });
+
+  describe('上游出口引用校验', () => {
+    const egressRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'egress-1',
+      name: '上游出口 · 东京 01',
+      status: 'ACTIVE',
+      type: 'DIRECT',
+      relayMode: null,
+      protocolType: 'TROJAN',
+      upstreamEntryId: 'up-entry-1',
+      egressLineId: null,
+      upstreamEntry: { protocolType: 'TROJAN', available: true },
+      ...overrides
+    });
+
+    // resolveEgressLineId 的查询带 `select`，据此与 findRaw 的 `include` 查询区分
+    const mockEgressLookup = (row: Record<string, unknown> | null) => {
+      prisma.line.findUnique.mockImplementation(async (args: { select?: unknown }) =>
+        args && 'select' in args ? row : null
+      );
+    };
+
+    it('出口必须指向一条上游出口线路', async () => {
+      mockEgressLookup(egressRow({ upstreamEntryId: null }));
+
+      await expect(service.create({
+        name: '普通线路挂普通线路',
+        protocolType: 'VLESS',
+        entryNodeId: entryNode.id,
+        entryPort: 24443,
+        egressLineId: 'egress-1'
+      })).rejects.toThrow(new BadRequestException('出口必须指向一条上游出口线路'));
+    });
+
+    it('拒绝链式出口：上游出口线路自身不能再挂出口', async () => {
+      mockEgressLookup(egressRow({ egressLineId: 'egress-2' }));
+
+      await expect(service.create({
+        name: '链式出口',
+        protocolType: 'VLESS',
+        entryNodeId: entryNode.id,
+        entryPort: 24443,
+        egressLineId: 'egress-1'
+      })).rejects.toThrow(new BadRequestException('上游出口线路自身不能再指定出口（不支持链式出口）'));
+    });
+
+    it('拒绝把带中继机制的线路当作上游出口', async () => {
+      mockEgressLookup(egressRow({ type: 'RELAY', relayMode: 'BLIND_FORWARD' }));
+
+      await expect(service.create({
+        name: '中继出口',
+        protocolType: 'VLESS',
+        entryNodeId: entryNode.id,
+        entryPort: 24443,
+        egressLineId: 'egress-1'
+      })).rejects.toThrow(new BadRequestException('上游出口线路不支持中继机制'));
+    });
+
+    it('拒绝本地代理入站直连纯 UDP 上游协议', async () => {
+      mockEgressLookup(egressRow({ upstreamEntry: { protocolType: 'HYSTERIA2', available: true } }));
+
+      await expect(service.create({
+        name: '代理池直连 Hysteria2',
+        protocolType: 'MIXED',
+        entryNodeId: entryNode.id,
+        entryPort: 24443,
+        egressLineId: 'egress-1'
+      })).rejects.toThrow(new BadRequestException('本地代理入站（MIXED/SOCKS/HTTP）无法承载 UDP，不能直连 Hysteria2/TUIC 上游'));
+    });
+
+    it('出口不存在时返回 404', async () => {
+      mockEgressLookup(null);
+
+      await expect(service.create({
+        name: '悬空出口',
+        protocolType: 'VLESS',
+        entryNodeId: entryNode.id,
+        entryPort: 24443,
+        egressLineId: 'missing-egress'
+      })).rejects.toThrow(new NotFoundException('上游出口线路不存在'));
+    });
+
+    it('UDP 入口协议挂 UDP 上游时放行并持久化出口引用', async () => {
+      mockEgressLookup(egressRow({ upstreamEntry: { protocolType: 'HYSTERIA2', available: true } }));
+      prisma.line.create.mockResolvedValue({ ...rawLine, egressLineId: 'egress-1', upstreamEntry: null, egressLine: null });
+
+      const result = await service.create({
+        name: 'Hysteria2 入口出 Hysteria2 上游',
+        protocolType: 'HYSTERIA2',
+        params: { tls: { enabled: true, mode: 'tls', serverName: 'entry.example.com', certificatePath: '/etc/ssl/entry.crt', keyPath: '/etc/ssl/entry.key' } },
+        entryNodeId: entryNode.id,
+        entryPort: 24443,
+        egressLineId: 'egress-1'
+      });
+
+      expect(prisma.line.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ egressLineId: 'egress-1' })
+      }));
+      expect(result.line).toBeDefined();
+    });
+
+    it('上游出口线路的 entryPort 不参与端口占用判定', async () => {
+      prisma.line.create.mockResolvedValue(rawLine);
+
+      await service.create({
+        name: '常规线路',
+        protocolType: 'VLESS',
+        entryNodeId: entryNode.id,
+        entryPort: 24443
+      });
+
+      // assertPortAvailable / findAvailablePort 的查询都必须显式排除上游出口线路
+      for (const call of prisma.line.findMany.mock.calls) {
+        const where = (call[0] as { where?: Record<string, unknown> } | undefined)?.where;
+        if (where && 'OR' in where) {
+          expect(where).toMatchObject({ upstreamEntryId: null });
+        }
+      }
+    });
+  });
 });

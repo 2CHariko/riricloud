@@ -21,6 +21,12 @@ import {
 } from '../common/inbound';
 import { parseWhitelistIps } from '../proxy-pool/proxy-key.util';
 import { resolveLineTags } from '../common/line-tags';
+import {
+  UPSTREAM_EGRESS_INCLUDE,
+  resolveUpstreamCredentials,
+  type EgressLineSnapshot,
+  type UpstreamEntrySnapshot
+} from '../common/upstream-egress';
 import { DEFAULT_INBOUND_LISTEN, getClashApiListen, getStatsApiListen } from '../common/ports';
 import {
   INTERNAL_RELAY_TRANSIT_EMAIL,
@@ -250,6 +256,20 @@ const PROXY_KEY_USERNAME_PREFIX = 'pk_';
 
 // 需要用户认证的本地代理协议：空 users 的 mixed/socks/http 在 Sing-box 中等价于开放代理
 const AUTHENTICATED_PROXY_PROTOCOLS: readonly ProtocolType[] = ['MIXED', 'SOCKS', 'HTTP'];
+
+// 指向远端协议服务端的 client outbound 所使用的凭证三元组。
+// INTERNAL_* 用于协议代理/桥接中继；上游订阅出口改用上游节点自身的真实凭证。
+type RelayOutboundCredentials = {
+  uuid: string;
+  email: string;
+  secret: string;
+};
+
+const INTERNAL_RELAY_CREDENTIALS: RelayOutboundCredentials = {
+  uuid: INTERNAL_RELAY_TRANSIT_UUID,
+  email: INTERNAL_RELAY_TRANSIT_EMAIL,
+  secret: INTERNAL_RELAY_TRANSIT_SECRET
+};
 
 type PendingHeartbeat = {
   data: HeartbeatData;
@@ -1774,6 +1794,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
             landingNode: true,
             certificate: true,
             targetLine: { include: { entryNode: true } },
+            ...UPSTREAM_EGRESS_INCLUDE,
             relaySources: {
               where: { status: 'ACTIVE' },
               select: { id: true, tagsJson: true, isPublic: true, status: true }
@@ -1787,6 +1808,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
             entryNode: true,
             certificate: true,
             targetLine: { include: { entryNode: true } },
+            ...UPSTREAM_EGRESS_INCLUDE,
             relaySources: {
               where: { status: 'ACTIVE' },
               select: { id: true, tagsJson: true, isPublic: true, status: true }
@@ -1905,6 +1927,12 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       entryNode?: { serverHost: string; status?: string; reachability?: string } | null;
       landingNode?: { serverHost: string; status?: string; reachability?: string } | null;
       certificate: { certificatePem: string; privateKeyPem: string } | null;
+      // 上游订阅出口编排：本线路自身的上游条目（仅上游出口线路非空），
+      // 以及本线路用户流量要经过的上游出口线路。
+      upstreamEntryId?: string | null;
+      upstreamEntry?: UpstreamEntrySnapshot | null;
+      egressLineId?: string | null;
+      egressLine?: EgressLineSnapshot | null;
       targetLine?: {
         id: string;
         type: string;
@@ -1934,6 +1962,33 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           ...line,
           landingNode: { serverHost: node.serverHost, status: node.status, reachability: (node as { reachability?: string }).reachability ?? 'PUBLIC' }
         });
+      }
+    }
+
+    // 上游出口线路可能绑定在与引出它的线路不同的节点上（例如入口节点单跳出上游、
+    // 而出口线路登记在中转节点）。此处按 egressLineId 补齐引用方需要的出口线路，
+    // 保证解析与物化顺序、绑定节点都不影响出站生成。
+    const missingEgressIds = [
+      ...new Set(
+        [...lines.values()]
+          .map((line) => (line as { egressLineId?: string | null }).egressLineId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0 && !lines.has(id))
+      )
+    ];
+    if (missingEgressIds.length) {
+      const extraEgressLines = await this.prisma.line.findMany({
+        where: { id: { in: missingEgressIds }, status: 'ACTIVE' },
+        include: { ...UPSTREAM_EGRESS_INCLUDE }
+      });
+      for (const line of extraEgressLines) {
+        lines.set(line.id, line as unknown as ConfigLine);
+      }
+      // 关系是单向的：补载只把出口线路放进 map，引用方仍持有 egressLine = null。
+      // 必须显式回填，否则"出口线路绑定在其他节点"时会静默丢失整条出口链路。
+      for (const line of lines.values()) {
+        if (line.egressLine || !line.egressLineId) continue;
+        const resolved = lines.get(line.egressLineId);
+        if (resolved) line.egressLine = resolved as unknown as EgressLineSnapshot;
       }
     }
 
@@ -1986,6 +2041,12 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       const isEntry = line.entryNodeId === nodeId;
       const isLanding = line.landingNodeId === nodeId;
       if (node.status === 'DISABLED') continue;
+      // 上游出口线路自身不监听任何入站：它只是其他线路引用的一份 client outbound 定义，
+      // 由引用方的 egress 分支按需生成出站与路由规则。
+      if (line.upstreamEntryId) continue;
+      // 上游出口与中继机制互斥（API 层已拒绝该组合），此处以 egress 优先保证不会生成双份路由。
+      const upstreamEgress = line.egressLine ?? null;
+      const hasUpstreamEgress = Boolean(upstreamEgress);
       const users = usersForLine(line);
       const inboundUsers = line.type === 'DIRECT' && line.relaySources?.length
         ? [...new Map(
@@ -2032,10 +2093,19 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           proxyPoolUsers: proxyPoolUsersForTag(tag),
           listenOptions
         }));
+        if (upstreamEgress) {
+          this.appendUpstreamEgress({
+            line,
+            egressLine: upstreamEgress,
+            inboundTags: [tag],
+            outbounds,
+            relayRules
+          });
+        }
         continue;
       }
 
-      if (isEntry && line.relayMode === 'BLIND_FORWARD' && line.landingNode && line.landingPort) {
+      if (isEntry && !hasUpstreamEgress && line.relayMode === 'BLIND_FORWARD' && line.landingNode && line.landingPort) {
         const isNatLanding = line.landingNode.reachability === 'NAT';
         const blindListenFields = buildSharedListenFields(listenOptions);
         const hasLandingOverride = !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
@@ -2056,7 +2126,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         });
       }
 
-      if (isEntry && line.relayMode === 'PROTOCOL_PROXY') {
+      if (isEntry && !hasUpstreamEgress && line.relayMode === 'PROTOCOL_PROXY') {
         const relayTag = lineTags.entry ?? `relay-${line.id}-entry`;
         const relayInbounds = buildServerInbounds({
           type: protocolType,
@@ -2079,7 +2149,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         relayRules.push({ inbound: [relayTag], outbound: `relay-out-${line.id}` });
       }
 
-      if (isEntry && line.relayMode === 'TARGET_LINE') {
+      if (isEntry && !hasUpstreamEgress && line.relayMode === 'TARGET_LINE') {
         const targetLine = line.targetLine;
         if (!targetLine || targetLine.status !== 'ACTIVE') continue;
         const relayTag = lineTags.entry ?? `relay-${line.id}-entry`;
@@ -2131,6 +2201,21 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         }
         outbounds.push(outbound);
         relayRules.push({ inbound: [relayTag], outbound: `relay-out-${line.id}` });
+        // 单跳出口：目标线路是"最后一跳"，把 relay-out 再串到上游出站上，
+        // 流量路径为 用户 → 入口 → 目标线路 → 上游。
+        if (upstreamEgress) {
+          this.appendUpstreamEgress({
+            line,
+            egressLine: upstreamEgress,
+            inboundTags: [],
+            outbounds,
+            relayRules
+          });
+          const egressTag = `upstream-out-${line.id}`;
+          if (outbounds.some((item) => item.tag === egressTag)) {
+            relayRules.push({ inbound: [`relay-out-${line.id}`], outbound: egressTag });
+          }
+        }
       }
 
       if (isLanding && !(line.type === 'RELAY' && line.relayMode === 'TARGET_LINE') && line.landingPort) {
@@ -2155,6 +2240,17 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
             inbound: [landingTag],
             ip_cidr: PRIVATE_CIDR_BLOCKS,
             outbound: 'block'
+          });
+        }
+        // 双跳出口：落地节点在常规"中转到本节点协议入站"之外，再把该入站的流量导出上游。
+        // 盲转发落地入站是 direct 类型、协议代理落地入站是协议类型，两者都按入站 tag 命中同一规则。
+        if (upstreamEgress) {
+          this.appendUpstreamEgress({
+            line,
+            egressLine: upstreamEgress,
+            inboundTags: [landingTag],
+            outbounds,
+            relayRules
           });
         }
       }
@@ -2357,6 +2453,13 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     return payload;
   }
 
+  /**
+   * 组装指向"远端协议服务端"的 client outbound。
+   *
+   * 两个调用方共享同一份协议知识：
+   * 1) `credentialSource: 'INTERNAL'`（默认）—— 协议代理 / 目标线路桥接中继，使用内部中转专用凭证；
+   * 2) `credentialSource: 'UPSTREAM'` —— 上游订阅出口，使用上游节点的真实凭证与出站参数。
+   */
   private buildProtocolRelayOutbound(
     line: {
       id: string;
@@ -2369,7 +2472,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       landingServerPort?: number | null;
       serverNameOverride?: string | null;
       hostOverride?: string | null;
-    }
+    },
+    credentials: RelayOutboundCredentials = INTERNAL_RELAY_CREDENTIALS
   ): Record<string, unknown> | undefined {
     if (!line.landingNode || !line.landingPort) return undefined;
     const protocolType = line.protocolType as ProtocolType;
@@ -2404,26 +2508,26 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     };
     switch (protocolType) {
       case 'VLESS':
-        outbound.uuid = INTERNAL_RELAY_TRANSIT_UUID;
+        outbound.uuid = credentials.uuid;
         if (typeof params.flow === 'string') outbound.flow = params.flow;
         break;
       case 'VMESS':
-        outbound.uuid = INTERNAL_RELAY_TRANSIT_UUID;
+        outbound.uuid = credentials.uuid;
         outbound.alter_id = typeof params.alterId === 'number' ? params.alterId : 0;
         outbound.security = 'auto';
         break;
       case 'TROJAN':
-        outbound.password = INTERNAL_RELAY_TRANSIT_SECRET;
+        outbound.password = credentials.secret;
         break;
       case 'HYSTERIA2':
-        outbound.password = INTERNAL_RELAY_TRANSIT_SECRET;
+        outbound.password = credentials.secret;
         if (typeof params.upMbps === 'number') outbound.up_mbps = params.upMbps;
         if (typeof params.downMbps === 'number') outbound.down_mbps = params.downMbps;
         if (params.obfs) outbound.obfs = params.obfs;
         break;
       case 'TUIC':
-        outbound.uuid = INTERNAL_RELAY_TRANSIT_UUID;
-        outbound.password = INTERNAL_RELAY_TRANSIT_SECRET;
+        outbound.uuid = credentials.uuid;
+        outbound.password = credentials.secret;
         outbound.congestion_control = typeof params.congestionControl === 'string' ? params.congestionControl : 'bbr';
         if (params.zeroRttHandshake === true) outbound.zero_rtt_handshake = true;
         break;
@@ -2433,14 +2537,14 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           ? buildShadowsocksClientPassword(
             outbound.method as string,
             typeof params.password === 'string' ? params.password : '',
-            INTERNAL_RELAY_TRANSIT_SECRET,
-            INTERNAL_RELAY_TRANSIT_UUID
+            credentials.secret,
+            credentials.uuid
           )
           : normalizeShadowsocksPassword(outbound.method as string, typeof params.password === 'string' ? params.password : '');
         break;
       case 'NAIVE':
-        outbound.username = INTERNAL_RELAY_TRANSIT_EMAIL;
-        outbound.password = INTERNAL_RELAY_TRANSIT_SECRET;
+        outbound.username = credentials.email;
+        outbound.password = credentials.secret;
         break;
       case 'SHADOWTLS':
         return undefined;
@@ -2462,6 +2566,44 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     );
     if (clientTransport) outbound.transport = clientTransport;
     return outbound;
+  }
+
+  /**
+   * 生成"经上游出口出网"的 outbound 与路由规则。
+   *
+   * 单跳（DIRECT 入口、RELAY/TARGET_LINE 入口）与双跳（RELAY 落地）共用同一实现，
+   * 差异只在 `inboundTags`：前者是入口线路的入站 tag，后者是落地区域承载转发的入站 tag。
+   *
+   * 上游条目不可用或协议不支持时静默跳过——宁可不生成畸形出站，也不让整份节点配置预检失败。
+   */
+  private appendUpstreamEgress(input: {
+    line: { id: string };
+    egressLine: EgressLineSnapshot;
+    inboundTags: string[];
+    outbounds: Array<Record<string, unknown>>;
+    relayRules: Array<Record<string, unknown>>;
+  }): boolean {
+    const entry = input.egressLine.upstreamEntry;
+    if (!entry || !entry.available) return false;
+    const outbound = this.buildProtocolRelayOutbound(
+      {
+        id: entry.id,
+        protocolType: entry.protocolType,
+        paramsJson: entry.paramsJson,
+        landingPort: entry.port,
+        landingNode: { serverHost: entry.server, reachability: 'PUBLIC' }
+      },
+      resolveUpstreamCredentials(entry)
+    );
+    if (!outbound) return false;
+    const tag = `upstream-out-${input.line.id}`;
+    outbound.tag = tag;
+    input.outbounds.push(outbound);
+    const tags = input.inboundTags.filter((value) => typeof value === 'string' && value.length > 0);
+    if (tags.length) {
+      input.relayRules.push({ inbound: tags, outbound: tag });
+    }
+    return true;
   }
 
   private internalRelayTransitUser(): InboundUserCredential {
