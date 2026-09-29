@@ -17,6 +17,7 @@ const common = {
     network: '网络与节点',
     nodes: '节点管理',
     lines: '线路管理',
+    upstreams: '上游订阅',
     certificates: '证书管理',
     templates: '订阅模板',
     binaries: '资源管理',

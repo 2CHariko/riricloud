@@ -68,6 +68,8 @@
 | **`UI-39`** | 共享组件 | 在线设备管理弹窗（用户/管理员） | `UI-11` / `UI-21` 操作入口 | `apps/web/src/components/shared/device-management-dialog.tsx` | 管理员侧显示配置上限、设备上限及策略来源；用户侧仅显示在线设备数与设备上限，隐藏配置上限、策略来源及在线汇总说明；设备 IP 复制、跨节点节点名/线路名、连接数与活跃时间；管理员保留管理操作措辞，用户侧单台与全部设备操作统一称为「下线」；确认弹窗、处理中状态、空态、错误 Toast；Light/Dark 与桌面/移动弹窗布局 |
 | **`UI-40`** | 业务运营 | 管理端公告管理与分屏编辑器 | `/admin/announcements` | `apps/web/src/pages/admin/announcements/**` | 公告管理数据表格（标题、摘要、分类、展示策略徽标、行内启用 Switch、更新时间）、分类/状态/搜索组合筛选、新建/编辑公告全屏分屏弹窗（CodeMirror 源码高亮 + 语法快捷插入工具条 + 实时渲染预览 + 4 维展示策略开关）、删除确认弹窗、明暗主题与移动端局部滚动 |
 | **`UI-41`** | 节点运维 | 批量 Agent 升级确认与逐节点结果 | `/admin/nodes`（选择节点并点击批量升级） | `apps/web/src/pages/admin/nodes/components/batch-upgrade-nodes-dialog.tsx` | 展示所选节点及混合 OS/架构、仅显示覆盖全部目标平台的 ACTIVE Agent 资源、默认主控资源提示、HTTP/离线排队说明；确认后逐节点展示 DISPATCHED/QUEUED/FAILED 与错误信息、部分成功汇总；下发期间防重复提交；Light/Dark、1440x900、375x812 与 768x1024 下检查 Dialog/Sheet 滚动、资源选择器和结果列表不溢出 |
+| **`UI-42`** | 网络与节点 | 上游订阅列表、导入预览与线路生成 | `/admin/upstreams` | `apps/web/src/pages/admin/upstreams/**` | 订阅列表仅展示 host（不含完整订阅 URL）、识别格式、可用/总条目数、已生成线路数、最近同步时间与状态 Badge、脱敏错误与行内同步/编辑/删除操作；新建与编辑表单（编辑时地址留空表示保留原地址）、删除确认弹窗；核心「导入预览」对话框：地址/粘贴双来源切换、`proxy-providers` 递归开关、可导入节点表格（默认勾选未导入项）与分组跳过原因、入口节点（排除 NAT）与入口协议选择、名称前缀与立即公开开关、「生成 N 条线路」规模提示；底部「上游节点不会直接下发给用户」说明块；确认预览、条目表格与线路出口下拉三处均不出现上游凭据；Light/Dark、1440x900、375x812 与 768x1024 下检查预览表格局部滚动、对话框流程与移动端 Sheet 不溢出 |
+| **`UI-43`** | 网络与节点 | 线路表单「上游出口」选择器 | `/admin/lines`（新建/编辑线路弹窗「入站配置」页签） | `apps/web/src/pages/admin/lines/components/line-network-fields.tsx` | 出口下拉仅列出上游出口线路（含协议与「上游节点已下线」标注）、「不使用上游出口（直连出网）」空选项、选中后出现的健康门开关、本地代理入站搭配纯 UDP 上游时的字段级错误提示；编辑自身时不出现自引用选项；Light/Dark 与移动端表单不溢出 |
 
 认证页面的会话验证以 Cookie 为浏览器实现细节：视觉走查只需确认登录/注册成功后正确进入已认证路由、刷新页面仍保持登录态、注销后返回登录页；不得在页面 DOM、localStorage 或 sessionStorage 中出现 JWT 文本。
 
@@ -141,10 +143,11 @@ flowchart TD
 | `apps/web/src/pages/admin/nodes/components/upgrade-node-dialog.tsx` | `UI-22` | **增量** |
 | `apps/web/src/pages/admin/nodes/components/batch-upgrade-nodes-dialog.tsx` | `UI-05`, `UI-41` | **增量** |
 | `apps/web/src/pages/admin/binaries/**` | `UI-31` | **增量** |
-| `apps/web/src/pages/admin/lines/**` | `UI-23`, `UI-24` | **增量** |
+| `apps/web/src/pages/admin/lines/**` | `UI-23`, `UI-24`, `UI-43` | **增量** |
 | `apps/web/src/pages/admin/certificates/**` | `UI-26` | **增量** |
 | `apps/web/src/pages/admin/logs/**` | `UI-32` | **增量** |
 | `apps/web/src/pages/admin/mirrors/**` | `UI-34` | **增量** |
+| `apps/web/src/pages/admin/upstreams/**` | `UI-42` | **增量** |
 | `apps/web/src/pages/user/proxy-pool/**` | `UI-35` | **增量** |
 | `apps/web/src/pages/user/help/**` | `UI-36` | **增量** |
 | `apps/web/src/pages/admin/docs/**` | `UI-37` | **增量** |

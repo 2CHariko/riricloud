@@ -143,6 +143,9 @@ export const lineFormSchema = z.object({
   serverPort: optionalPort,
   serverName: z.string(),
   host: z.string(),
+  // 上游出口：非空时该线路的用户流量经由上游出网
+  egressLineId: z.string().default(''),
+  upstreamHealthGate: z.boolean().default(true),
   landingEndpointOverrideEnabled: z.boolean().default(false),
   landingServerHost: z.string().default(''),
   landingServerPort: optionalPort,
@@ -300,6 +303,7 @@ export function defaultLineFormValues(protocolType: ProtocolType = 'VLESS'): Lin
     stHandshakeDest: 'gateway.icloud.com:443', stInnerMethod: '2022-blake3-aes-128-gcm', stInnerPassword: '', stStrictMode: true,
     localAllowLan: false, localUsersEnabled: false, directOverrideAddress: '', directOverridePort: undefined,
     endpointOverrideEnabled: false, serverHost: '', serverPort: undefined, serverName: '', host: '',
+    egressLineId: '', upstreamHealthGate: true,
     landingEndpointOverrideEnabled: false, landingServerHost: '', landingServerPort: undefined,
     trafficRate: 1, tags: '', level: 0, sortOrder: 0, isPublic: true, status: 'ACTIVE',
     allowLanAccess: false, tunnelType: 'TCP_MUX', tunnelPort: undefined, tunnelSecret: ''
@@ -431,6 +435,8 @@ export function lineToFormValues(line: ApiLine): LineFormValues {
     serverPort: line.endpointOverrides.serverPort ?? undefined,
     serverName: line.endpointOverrides.serverName ?? '',
     host: line.endpointOverrides.host ?? '',
+    egressLineId: line.egressLineId ?? '',
+    upstreamHealthGate: line.upstreamHealthGate !== false,
     landingEndpointOverrideEnabled: line.landingEndpointOverrideEnabled === true,
     landingServerHost: line.endpointOverrides.landingServerHost ?? '',
     landingServerPort: line.endpointOverrides.landingServerPort ?? undefined,
@@ -620,6 +626,9 @@ export function toLinePayload(values: LineFormValues) {
     serverPort: values.serverPort ?? null,
     serverName: values.serverName.trim() || null,
     host: values.host.trim() || null,
+    // 上游出口与中继机制互斥（服务端会再次校验），仅在非中继时提交
+    egressLineId: values.type === 'DIRECT' || values.relayMode !== 'TARGET_LINE' ? (values.egressLineId || null) : null,
+    upstreamHealthGate: values.upstreamHealthGate,
     landingEndpointOverrideEnabled: values.type === 'RELAY' ? values.landingEndpointOverrideEnabled : false,
     landingServerHost: values.type === 'RELAY' ? (values.landingServerHost.trim() || null) : null,
     landingServerPort: values.type === 'RELAY' ? (values.landingServerPort ?? null) : null,

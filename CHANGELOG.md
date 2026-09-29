@@ -28,6 +28,12 @@
   - 新增上游出口健康门：仅当出口线路探测成功且快照新鲜时下发引用方线路，判定只影响下发、不修改线路自身状态，并受全局 `upstreamHealthGateEnabled` 与 `upstreamHealthMaxAgeSecs` 约束；
   - 新增系统设置 `upstreamSubscriptionEnabled` / `upstreamHealthGateEnabled` / `upstreamHealthMaxAgeSecs`；
   - 出站组装收敛为单一实现 `buildUpstreamOutbound()`，复用订阅输出链路的 `buildSingboxOutbound()`，保证用户实际出口与主控测速口径永不分离。
+- **上游订阅管理前端（P4）**：
+  - 新增 `/admin/upstreams` 管理页面：订阅源列表（只展示 host）、新建/编辑表单、删除确认、立即同步，以及「导入并生成线路」预览与物化流程；
+  - 导入预览支持订阅地址与粘贴内容双来源、`proxy-providers` 递归开关、可导入节点表格（默认勾选未导入项）与分组跳过原因，预览本身不写入任何数据；
+  - 物化表单支持入口节点（自动排除 NAT 节点）、入口协议、名称前缀与「生成后立即公开」开关，默认不公开；
+  - 线路表单「入站配置」新增「上游出口」选择器与健康门开关，仅列出上游出口线路并标注已下线节点，本地代理入站搭配纯 UDP 上游时给出字段级错误提示；
+  - 侧边栏「网络与节点」新增「上游订阅」入口，全部文案录入 zh-CN 并通过 `t(...)` 引用。
 
 ### Security
 - **上游凭据落库加密与响应脱敏**：上游条目的 `uuid`/`password`/`username` 以应用层 AES-GCM 密文保存（`protectEntryParams` 幂等，重复写入不产生新密文），线路管理接口只返回上游服务器与端口等非敏感字段，凭据不进入任何管理端响应。

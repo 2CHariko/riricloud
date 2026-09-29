@@ -1,6 +1,6 @@
 import { Link, NavLink } from 'react-router-dom';
 import { useCurrentUser } from '@/lib/current-user';
-import { Activity, BookOpen, Cloud, FileText, GitBranch, Headphones, KeyRound, LayoutTemplate, Megaphone, Network, Package, Server, Settings, ShoppingBag, Users, WalletCards, Wallet, Ticket, Binary, ScrollText, Waypoints } from 'lucide-react';
+import { Activity, BookOpen, Cloud, CloudDownload, FileText, GitBranch, Headphones, KeyRound, LayoutTemplate, Megaphone, Network, Package, Server, Settings, ShoppingBag, Users, WalletCards, Wallet, Ticket, Binary, ScrollText, Waypoints } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth';
 import { usePublicSettings } from '@/lib/public-settings';
 import { SupportDialog } from '@/components/shared/support-dialog';
@@ -60,6 +60,7 @@ export function AppSidebar() {
             items: [
               { to: '/admin/nodes', label: t('nav.nodes'), icon: Server, end: false },
               { to: '/admin/lines', label: t('nav.lines'), icon: GitBranch, end: false },
+              { to: '/admin/upstreams', label: t('nav.upstreams', { defaultValue: '上游订阅' }), icon: CloudDownload, end: false },
               { to: '/admin/certificates', label: t('nav.certificates'), icon: KeyRound, end: false },
               { to: '/admin/templates', label: t('nav.templates'), icon: LayoutTemplate, end: false },
               { to: '/admin/binaries', label: t('nav.binaries'), icon: Binary, end: false },

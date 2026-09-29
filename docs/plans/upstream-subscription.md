@@ -52,10 +52,10 @@ author: "Antigravity & Maintainers"
 - [x] 任务 3.7: 全部 `/admin/upstreams/*` REST API 与 Swagger 注解
 
 ### 里程碑 4：前端与文档（P4）
-- [ ] 任务 4.1: `/admin/upstreams` 页面（列表、创建/编辑、导入预览与物化、条目页签）
-- [ ] 任务 4.2: 线路表单新增出口选择器与健康门开关
-- [ ] 任务 4.3: 路由、侧边栏与 zh-CN i18n 词条
-- [ ] 任务 4.4: 同步更新 DATA_MODELS / API_AND_PROTOCOLS / ARCHITECTURE / FRONTEND_UI_GUIDELINES / VISUAL_VERIFICATION
+- [x] 任务 4.1: `/admin/upstreams` 页面（列表、创建/编辑、导入预览与物化、条目页签）
+- [x] 任务 4.2: 线路表单新增出口选择器与健康门开关
+- [x] 任务 4.3: 路由、侧边栏与 zh-CN i18n 词条
+- [x] 任务 4.4: 同步更新 DATA_MODELS / API_AND_PROTOCOLS / ARCHITECTURE / FRONTEND_UI_GUIDELINES / VISUAL_VERIFICATION
 - [ ] 任务 4.5: `pnpm gate` 六门禁全绿并归档本规划
 
 ---

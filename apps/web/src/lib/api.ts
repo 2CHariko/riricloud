@@ -105,6 +105,28 @@ export interface ApiLine {
   landingEndpointOverrideEnabled?: boolean;
   landingServerHost?: string | null;
   landingServerPort?: number | null;
+  /** 上游出口编排（v0.9.10）：非空表示本线路非空表示用户流量经由该上游出口线路出网 */
+  egressLineId?: string | null;
+  upstreamHealthGate?: boolean;
+  upstreamHealthMaxAgeSecs?: number | null;
+  /** 仅上游出口线路返回：绑定到本线路的上游条目（不含凭据） */
+  upstreamEntry?: {
+    id: string;
+    name: string;
+    protocolType: ProtocolType;
+    server: string;
+    port: number;
+    available: boolean;
+    isEgressLine?: true;
+  } | null;
+  /** 本线路引用的上游出口摘要 */
+  egress?: {
+    lineId: string;
+    name: string;
+    status: LineStatus;
+    protocolType: ProtocolType;
+    entry: { id: string; name: string; protocolType: ProtocolType; server: string; port: number; available: boolean } | null;
+  } | null;
   endpointOverrides: {
     serverHost: string | null;
     serverPort: number | null;

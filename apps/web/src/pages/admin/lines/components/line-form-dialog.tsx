@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormResetOnKey } from '@/hooks/use-form-reset';
 import { useForm } from 'react-hook-form';
@@ -36,6 +36,19 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
     defaultValues: defaultLineFormValues()
   });
   const realityKeypair = useRealityKeypair();
+
+  // 上游出口候选：仅"上游出口线路"（绑定了上游条目）可以作为出口，排除自身避免自引用
+  const egressOptions = useMemo(
+    () => lines
+      .filter((item) => item.upstreamEntry && item.id !== line?.id)
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        protocolType: item.upstreamEntry?.protocolType ?? item.protocolType,
+        available: item.upstreamEntry?.available !== false
+      })),
+    [line?.id, lines]
+  );
 
   useFormResetOnKey({
     open,
@@ -124,7 +137,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
                 <TabsTrigger value="inbound">{t('admin:lineForm.tabInbound')}</TabsTrigger>
                 <TabsTrigger value="advanced">{t('admin:lineForm.tabAdvanced')}</TabsTrigger>
               </TabsList>
-              <TabsContent value="inbound" className="mt-4"><LineInboundFields form={form} nodes={nodes} certificates={certificates} onProtocolChange={changeProtocol} onGenerateKeys={generateKeys} keyPending={realityKeypair.isPending} /></TabsContent>
+              <TabsContent value="inbound" className="mt-4"><LineInboundFields form={form} nodes={nodes} certificates={certificates} egressOptions={egressOptions} onProtocolChange={changeProtocol} onGenerateKeys={generateKeys} keyPending={realityKeypair.isPending} /></TabsContent>
               <TabsContent value="advanced" className="mt-4"><LineAdvancedFields form={form} nodes={nodes} lines={lines} currentLineId={line?.id} onTypeChange={changeType} /></TabsContent>
             </Tabs>
             <DialogFooter>

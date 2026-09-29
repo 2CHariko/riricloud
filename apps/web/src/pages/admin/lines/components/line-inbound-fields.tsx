@@ -2,7 +2,7 @@ import type { UseFormReturn } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { Separator } from '@/components/ui/separator';
 import { FieldGrid, SelectField, TextField } from './line-form-controls';
-import { LineNetworkFields } from './line-network-fields';
+import { LineNetworkFields, type EgressOption } from './line-network-fields';
 import { LineProtocolFields } from './line-protocol-fields';
 import { hasProtocolSpecificFields } from './line-protocol-capabilities';
 import { LineSecurityFields } from './line-security-fields';
@@ -11,13 +11,14 @@ import { PROTOCOL_LABELS, PROTOCOL_TYPES, type LineFormValues } from './line-for
 import type { ApiCertificate, ProtocolType } from '@/lib/api';
 import type { AdminNode } from '../../nodes/use-nodes';
 
-export function LineInboundFields({ form, nodes, certificates, onProtocolChange, onGenerateKeys, keyPending }: {
+export function LineInboundFields({ form, nodes, certificates, egressOptions = [], onProtocolChange, onGenerateKeys, keyPending }: {
   form: UseFormReturn<LineFormValues>;
   nodes: AdminNode[];
   onProtocolChange: (protocol: ProtocolType) => void;
   onGenerateKeys: () => void;
   keyPending: boolean;
   certificates: ApiCertificate[];
+  egressOptions?: EgressOption[];
 }) {
   const { t } = useTranslation(['admin']);
   const protocol = form.watch('protocolType');
@@ -47,7 +48,7 @@ export function LineInboundFields({ form, nodes, certificates, onProtocolChange,
       <section className="space-y-3">
         <h3 className="text-sm font-medium">{t('admin:lineForm.sectionNetworkAndSpeedLimit')}</h3>
         <Separator />
-        <LineNetworkFields form={form} />
+        <LineNetworkFields form={form} egressOptions={egressOptions} />
       </section>
 
       {supportsTransport && <>

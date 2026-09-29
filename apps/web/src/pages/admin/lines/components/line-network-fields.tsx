@@ -3,7 +3,20 @@ import { useTranslation } from 'react-i18next';
 import { FieldGrid, NumberField, SelectField, SwitchField, TextField } from './line-form-controls';
 import type { LineFormValues } from './line-form-schema';
 
-export function LineNetworkFields({ form }: { form: UseFormReturn<LineFormValues> }) {
+export interface EgressOption {
+  id: string;
+  name: string;
+  protocolType: string;
+  available: boolean;
+}
+
+export function LineNetworkFields({
+  form,
+  egressOptions = []
+}: {
+  form: UseFormReturn<LineFormValues>;
+  egressOptions?: EgressOption[];
+}) {
   const { t } = useTranslation(['admin']);
   const protocol = form.watch('protocolType');
   const proxyProtocol = form.watch('proxyProtocol');
@@ -12,9 +25,47 @@ export function LineNetworkFields({ form }: { form: UseFormReturn<LineFormValues
   const supportsMultiplex = ['VLESS', 'VMESS', 'TROJAN', 'SHADOWSOCKS'].includes(protocol);
   const multiplexEnabled = form.watch('multiplexEnabled');
   const brutalEnabled = form.watch('multiplexBrutalEnabled');
+  const egressLineId = form.watch('egressLineId');
+
+  // 本地代理入站（mixed/socks/http）无法承载 UDP，禁止直连纯 UDP 上游协议
+  const selectedEgress = egressOptions.find((option) => option.id === egressLineId);
+  const udpMismatch = Boolean(
+    selectedEgress &&
+    ['HYSTERIA2', 'TUIC'].includes(selectedEgress.protocolType) &&
+    ['MIXED', 'SOCKS', 'HTTP'].includes(protocol)
+  );
 
   return (
     <div className="space-y-4">
+      <SelectField
+        form={form}
+        name="egressLineId"
+        label={t('admin:lineForm.egress')}
+        description={t('admin:lineForm.egressDesc')}
+        options={[
+          { value: '', label: t('admin:lineForm.egressNone') },
+          ...egressOptions.map((option) => ({
+            value: option.id,
+            label: option.available
+              ? `${option.name} · ${option.protocolType}`
+              : `${option.name} · ${option.protocolType} · ${t('admin:lineForm.egressUnavailable')}`
+          }))
+        ]}
+      />
+
+      {egressLineId && (
+        <SwitchField
+          form={form}
+          name="upstreamHealthGate"
+          label={t('admin:lineForm.upstreamHealthGate')}
+          description={t('admin:lineForm.upstreamHealthGateDesc')}
+        />
+      )}
+
+      {udpMismatch && (
+        <p className="text-destructive text-xs">{t('admin:lineForm.egressUdpMismatch')}</p>
+      )}
+
       <FieldGrid>
         <NumberField
           form={form}
