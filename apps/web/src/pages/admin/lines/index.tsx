@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useLocation } from 'react-router-dom';
 import type { ApiUpstreamNode } from '@/lib/api';
+import { ServerPagination } from '@/components/shared/server-pagination';
+import { LineTopology } from './components/line-topology';
 import { Activity, ArrowDown, ArrowUp, Copy, GitBranch, HelpCircle, Pencil, Plus, Search, Trash2, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PageContainer, PageHeader } from '@/components/shared/page-container';
@@ -29,6 +31,8 @@ import { useAdminLines, useLineMutations, type AdminLine } from './use-lines';
 export default function AdminLinesPage() {
   const { t } = useTranslation(['admin', 'common']);
   const [search, setSearch] = React.useState('');
+  const [page, setPage] = React.useState(1);
+  const [createExternal, setCreateExternal] = React.useState(false);
   const [type, setType] = React.useState<'ALL' | LineType>('ALL');
   const [status, setStatus] = React.useState<'ALL' | LineStatus>('ALL');
   const [tag, setTag] = React.useState('');
@@ -40,10 +44,11 @@ export default function AdminLinesPage() {
   const [initialUpstreamNode, setInitialUpstreamNode] = React.useState<ApiUpstreamNode | null>(null);
   const location = useLocation();
   React.useEffect(() => {
-    const state = location.state as { createUpstreamNode?: ApiUpstreamNode } | undefined;
+    const state = location.state as { createUpstreamNode?: ApiUpstreamNode; createExternal?: boolean } | undefined;
     if (state?.createUpstreamNode) {
       setEditing(null);
       setInitialUpstreamNode(state.createUpstreamNode);
+      setCreateExternal(state.createExternal === true);
       setFormOpen(true);
       window.history.replaceState({}, document.title);
     }
@@ -51,6 +56,7 @@ export default function AdminLinesPage() {
 
   const typeLabels: Record<LineType, string> = {
     DIRECT: t('admin:lines.typeDirect'),
+    EXTERNAL: t('admin:upstream.externalType'),
     RELAY: t('admin:lines.typeRelay')
   };
   const relayLabels: Record<RelayMode, string> = {
@@ -72,11 +78,12 @@ export default function AdminLinesPage() {
   }
 
   const query = React.useMemo(() => ({
+    page, pageSize: 20,
     ...(search.trim() ? { search: search.trim() } : {}),
     ...(type !== 'ALL' ? { type } : {}),
     ...(status !== 'ALL' ? { status } : {}),
     ...(tag.trim() ? { tag: tag.trim() } : {})
-  }), [search, status, tag, type]);
+  }), [search, status, tag, type, page]);
   const { data, isPending, isError } = useAdminLines(query);
   const { data: nodes } = useAdminNodes();
   const { data: certificates } = useAdminCertificates();
@@ -104,18 +111,15 @@ export default function AdminLinesPage() {
     const targetIndex = index + direction;
     if (targetIndex < 0 || targetIndex >= lines.length) return;
 
-    const reordered = [...lines];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved);
-
-    const payload = reordered
-      .map((item, idx) => ({ id: item.id, sortOrder: (idx + 1) * 10 }))
-      .filter((item, idx) => lines[idx]?.id !== item.id || lines[idx]?.sortOrder !== item.sortOrder);
-
-    reorder.mutate(payload);
+    const target = lines[targetIndex];
+    const offset = (page - 1) * 20;
+    reorder.mutate([
+      { id: line.id, sortOrder: (offset + targetIndex + 1) * 10 },
+      { id: target.id, sortOrder: (offset + index + 1) * 10 }
+    ]);
   };
 
-  const openCreate = () => { setEditing(null); setFormOpen(true); };
+  const openCreate = () => { setEditing(null); setCreateExternal(false); setInitialUpstreamNode(null); setFormOpen(true); };
   const openEdit = (line: AdminLine) => { setEditing(line); setFormOpen(true); };
 
   if (isPending) return <PageContainer><PageHeader title={t('admin:lines.title')} description={t('admin:lines.subtitle')} /><p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p></PageContainer>;
@@ -128,18 +132,19 @@ export default function AdminLinesPage() {
         <div className="flex flex-1 flex-wrap items-center gap-2">
           <div className="relative w-full min-w-0 flex-1 sm:min-w-52 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('admin:nodes.searchPlaceholder')} className="pl-9" />
+            <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={t('admin:nodes.searchPlaceholder')} className="pl-9" />
           </div>
-          <Input value={tag} onChange={(event) => setTag(event.target.value)} placeholder={t('admin:lines.filterTag')} className="w-full sm:w-32" />
-          <Select value={type} onValueChange={(value) => setType(value as 'ALL' | LineType)}>
+          <Input value={tag} onChange={(event) => { setTag(event.target.value); setPage(1); }} placeholder={t('admin:lines.filterTag')} className="w-full sm:w-32" />
+          <Select value={type} onValueChange={(value) => { setType(value as 'ALL' | LineType); setPage(1); }}>
             <SelectTrigger className="w-full sm:w-32"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">{t('admin:lines.typeAll')}</SelectItem>
               <SelectItem value="DIRECT">{t('admin:lines.typeDirect')}</SelectItem>
               <SelectItem value="RELAY">{t('admin:lines.typeRelay')}</SelectItem>
+              <SelectItem value="EXTERNAL">{t('admin:upstream.externalType')}</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={status} onValueChange={(value) => setStatus(value as 'ALL' | LineStatus)}>
+          <Select value={status} onValueChange={(value) => { setStatus(value as 'ALL' | LineStatus); setPage(1); }}>
             <SelectTrigger className="w-full sm:w-32"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">{t('admin:lines.statusAll')}</SelectItem>
@@ -213,34 +218,7 @@ export default function AdminLinesPage() {
                     <TableCell><Badge variant="outline" title={line.relayMode === 'TARGET_LINE' ? relayDescription(line) : undefined}>{typeLabels[line.type]}{line.relayMode ? ` · ${relayDescription(line)}` : ''}</Badge></TableCell>
                     <TableCell className="min-w-36"><div className="font-mono text-xs">{line.serverHost}:{line.serverPort}</div><div className="text-xs text-muted-foreground">{line.endpointOverrideEnabled ? t('admin:lines.overrideEnabled') : t('admin:lines.reuseUnderlying')}</div>{line.serverName && <div className="text-xs text-muted-foreground">SNI {line.serverName}</div>}{line.host && <div className="text-xs text-muted-foreground">Host {line.host}</div>}</TableCell>
                     <TableCell>
-                      {line.type === 'DIRECT' ? (
-                        <>
-                          <div>{line.entryNode.name}</div>
-                          <div className="text-xs text-muted-foreground">{line.protocolType} · {t('admin:lines.portListen', { port: line.entryPort })}</div>
-                        </>
-                      ) : line.relayMode === 'TARGET_LINE' ? (
-                        <>
-                          <div className="flex items-center gap-1">
-                            <span>{line.entryNode.name}</span>
-                            <span className="text-muted-foreground">➔</span>
-                            <span>{line.targetLine?.entryNode.name ?? t('admin:lines.unbound')}</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {line.protocolType} ➔ {line.targetLine?.protocolType ?? t('common:status.unknown')} · {t('admin:lines.portLanding', { port: line.topology.landing?.port ?? line.targetLine?.entryPort ?? '—' })}
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex items-center gap-1">
-                            <span>{line.entryNode.name}</span>
-                            <span className="text-muted-foreground">➔</span>
-                            <span>{line.landingNode?.name ?? t('admin:lines.unbound')}</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {line.protocolType} · {t('admin:lines.portLanding', { port: line.topology.landing?.port ?? line.landingPort ?? '—' })}
-                          </div>
-                        </>
-                      )}
+                      <LineTopology line={line} />
                     </TableCell>
                     <TableCell><div className="flex max-w-40 flex-wrap gap-1">{Boolean(line.speedLimitMbps) && <Badge variant="outline" className={cn('gap-1', getSpeedTierBadgeClass(line.speedLimitMbps, publicSettings?.speedLimitColorTiers))}><Zap className="size-3" />{formatSpeedLimit(line.speedLimitMbps, unitConversion)}</Badge>}{line.tags.map((item) => <Badge key={item} variant="secondary">#{item}</Badge>)}<Badge variant="outline">{line.trafficRate}x</Badge></div></TableCell>
                     <TableCell>
@@ -273,7 +251,8 @@ export default function AdminLinesPage() {
           )}
         </CardContent>
       </Card>
-      <LineFormDialog open={formOpen} onOpenChange={(open) => { setFormOpen(open); if (!open) setInitialUpstreamNode(null); }} line={editing} initialUpstreamNode={initialUpstreamNode} nodes={nodes ?? []} lines={lines} certificates={certificates?.data ?? []} pending={busy} onSubmit={(payload) => editing ? update.mutate({ id: editing.id, ...payload }, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } }) : create.mutate(payload, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } })} />
+      <ServerPagination page={page} pageSize={20} total={data?.total ?? 0} onPageChange={setPage} />
+      <LineFormDialog open={formOpen} createExternal={createExternal} onOpenChange={(open) => { setFormOpen(open); if (!open) setInitialUpstreamNode(null); }} line={editing} initialUpstreamNode={initialUpstreamNode} nodes={nodes ?? []} lines={lines} certificates={certificates?.data ?? []} pending={busy} onSubmit={(payload) => editing ? update.mutate({ id: editing.id, ...payload }, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } }) : create.mutate(payload, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } })} />
       <LineSpeedtestDialog open={!!speedtestingLine} onOpenChange={(open) => !open && setSpeedtestingLine(null)} line={speedtestingLine} />
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>

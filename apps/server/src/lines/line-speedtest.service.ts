@@ -1,3 +1,6 @@
+import { BadRequestException } from '@nestjs/common';
+import { getUpstreamUnavailableReason, readUpstreamConnection } from '../common/upstream-availability';
+import { buildUpstreamOutbound } from '../common/upstream-connection';
 import { Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
@@ -45,7 +48,7 @@ export interface SpeedTestExecutionResult {
     isRelay: boolean;
     relayMode?: string | null;
     masterHost: string;
-    entryNode: { id: string; name: string; host: string; port: number };
+    entryNode: { id: string; name: string; host: string; port: number } | null;
     landingNode?: { id: string; name: string; host: string; port?: number | null } | null;
   };
   stages: SpeedTestStage[];
@@ -110,7 +113,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
       include: {
         entryNode: true,
         landingNode: true,
-        upstreamNode: true,
+        upstreamNode: { include: { subscription: true } },
         targetLine: {
           include: {
             entryNode: true,
@@ -127,6 +130,37 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     const settings = await this.settingsService.getSettings();
     const targetUrl = settings.lineSpeedtestTargetUrl || 'http://cp.cloudflare.com/generate_204';
     const timeoutMs = Math.min(Math.max(settings.lineSpeedtestTimeoutMs || 3000, 500), 30000);
+
+    if (line.type === 'EXTERNAL') {
+      if (!line.upstreamNode) throw new BadRequestException('必须指定上游节点');
+      const reason = getUpstreamUnavailableReason(line.upstreamNode);
+      if (reason) throw new BadRequestException(reason);
+      const stages: SpeedTestStage[] = [];
+      let latencyMs: number | null = null;
+      let status: 'SUCCESS' | 'ERROR' | 'TIMEOUT' = 'ERROR';
+      let message = '未检测到 Sing-box 探针内核';
+      const binary = await this.resolveSingboxBinary();
+      stages.push({ id: 'master_ready', name: '主控探测引擎', target: 'Master', status: binary ? 'SUCCESS' : 'FAILED', message: binary ? 'Sing-box 探针引擎就绪' : message });
+      stages.push({ id: 'entry_handshake', name: '外部协议连接', target: `${line.upstreamNode.serverHost}:${line.upstreamNode.serverPort}`, status: 'SKIPPED', message: '使用真实外部凭据执行协议握手，不以 TCP 探针作为前置条件' });
+      if (binary) {
+        try {
+          const result = await this.runSingboxProbe(binary, line, targetUrl, timeoutMs);
+          latencyMs = result.latencyMs; status = 'SUCCESS'; message = `HTTP ${result.statusCode} OK`;
+        } catch {
+          message = '外部连接端到端协议探测失败';
+        }
+      }
+      stages.push({ id: 'target_http', name: '端到端请求', target: targetUrl, status: status === 'SUCCESS' ? 'SUCCESS' : 'FAILED', latencyMs, message });
+      const testedAt = new Date();
+      await this.prisma.line.update({ where: { id: line.id }, data: { lastLatencyMs: latencyMs, lastTestStatus: status, lastTestMessage: message, lastTestedAt: testedAt } });
+      return { lineId: line.id, lineName: line.name, latencyMs, status, message, testedAt, mode: 'END_TO_END', targetUrl, protocolType: line.upstreamNode.protocolType, topology: { isRelay: false, masterHost: 'Master', entryNode: null, landingNode: null }, stages };
+    }
+    if (!line.entryNode || !line.entryPort) throw new BadRequestException('普通线路必须具有真实入口');
+    if (line.relayMode === 'UPSTREAM_NODE') {
+      if (!line.upstreamNode) throw new BadRequestException('必须指定上游节点');
+      const reason = getUpstreamUnavailableReason(line.upstreamNode);
+      if (reason) throw new BadRequestException(reason);
+    }
 
     const serverHost = (line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode.serverHost).trim();
     const serverPort = line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort;
@@ -157,7 +191,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
       } else if (line.relayMode === 'TARGET_LINE' && line.targetLine) {
         landingHost = (line.targetLine.endpointOverrideEnabled && line.targetLine.serverHost)
           ? line.targetLine.serverHost.trim()
-          : line.targetLine.entryNode.serverHost;
+          : line.targetLine.entryNode?.serverHost ?? '';
         landingPort = (line.targetLine.endpointOverrideEnabled && line.targetLine.serverPort)
           ? line.targetLine.serverPort
           : line.targetLine.entryPort;
@@ -187,9 +221,9 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
               }
             : line.relayMode === 'TARGET_LINE' && line.targetLine
               ? {
-                  id: line.targetLine.entryNode.id,
-                  name: line.targetLine.entryNode.name,
-                  host: landingHost ?? line.targetLine.entryNode.serverHost,
+                  id: line.targetLine.entryNode?.id ?? '',
+                  name: line.targetLine.entryNode?.name ?? '',
+                  host: landingHost ?? line.targetLine.entryNode?.serverHost ?? '',
                   port: landingPort ?? line.targetLine.entryPort
                 }
               : line.landingNode
@@ -316,7 +350,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           stages.push({
             id: 'relay_transit',
             name: '中继桥接目标',
-            target: `${line.targetLine.entryNode.name} (${landingHost}:${landingPort})`,
+            target: `${line.targetLine.entryNode?.name ?? ''} (${landingHost}:${landingPort})`,
             status: 'FAILED',
             message: relayErrMessage
           });
@@ -334,9 +368,9 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
           stages.push({
             id: 'relay_transit',
             name: '中继桥接目标',
-            target: `${line.targetLine.entryNode.name} (${landingHost}:${landingPort})`,
+            target: `${line.targetLine.entryNode?.name ?? ''} (${landingHost}:${landingPort})`,
             status: 'SUCCESS',
-            message: `桥接目标就绪: [${line.targetLine.entryNode.name}] ${line.targetLine.name}`
+            message: `桥接目标就绪: [${line.targetLine.entryNode?.name ?? ''}] ${line.targetLine.name}`
           });
         }
       } else if (line.landingNode) {
@@ -567,60 +601,42 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
       paramsJson: string;
       serverHost: string | null;
       serverPort: number | null;
-      entryPort: number;
+      entryPort: number | null;
       endpointOverrideEnabled: boolean;
       serverName: string | null;
       host: string | null;
       trafficRate: number;
-      entryNode: { name: string; serverHost: string };
+      entryNode: { name: string; serverHost: string } | null;
+      type?: string;
+      upstreamNode?: { protocolType: string; serverHost: string; serverPort: number; paramsJson: string } | null;
       landingNode?: { name: string; serverHost: string } | null;
     },
     targetUrl: string,
     timeoutMs: number
   ): Promise<{ latencyMs: number; statusCode: number }> {
-    const subLine: SubLine = {
-      id: line.id,
-      name: line.name,
-      protocolType: line.protocolType as ProtocolType,
-      params: sanitizeInboundParams(this.parseJson(line.paramsJson)),
-      serverHost: line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode.serverHost,
-      serverPort: line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort,
-      serverName: line.endpointOverrideEnabled ? line.serverName : null,
-      host: line.endpointOverrideEnabled ? line.host : null,
-      trafficRate: line.trafficRate
-    };
-
-    const subEntry: SubEntry = {
-      label: 'probe-out',
-      node: {
-        name: line.landingNode?.name ?? line.entryNode.name,
-        serverHost: line.landingNode?.serverHost ?? line.entryNode.serverHost,
-        inbounds: []
-      },
-      inbound: {
-        type: line.protocolType as ProtocolType,
-        tag: 'probe-out',
-        port: subLine.serverPort,
-        params: subLine.params ?? {}
-      },
-      line: subLine
-    };
-
-    const probeUser: SubUser = {
-      uuid: INTERNAL_SPEEDTEST_UUID,
-      email: INTERNAL_SPEEDTEST_EMAIL,
-      credential: INTERNAL_SPEEDTEST_SECRET
-    };
-
-    const outboundConfig = buildSingboxOutbound(probeUser, subEntry);
-    if (!outboundConfig || Object.keys(outboundConfig).length === 0) {
-      throw new Error(`暂不支持对协议 ${line.protocolType} 执行端到端代理拨测`);
-    }
-    outboundConfig.tag = 'probe-out';
-
+    let outboundConfig: Record<string, unknown>;
     const extraOutbounds: Record<string, unknown>[] = [];
-    if (line.protocolType === 'SHADOWTLS') {
-      extraOutbounds.push(buildShadowtlsTransportOutbound(subEntry, probeUser));
+    if (line.type === 'EXTERNAL' && line.upstreamNode) {
+      outboundConfig = buildUpstreamOutbound(readUpstreamConnection(line.upstreamNode), 'probe-out');
+    } else {
+      if (!line.entryNode || !line.entryPort) throw new Error('Invalid local line entry');
+      const subLine: SubLine = {
+        id: line.id, name: line.name, protocolType: line.protocolType as ProtocolType,
+        params: sanitizeInboundParams(this.parseJson(line.paramsJson)),
+        serverHost: line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode.serverHost,
+        serverPort: line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort,
+        serverName: line.endpointOverrideEnabled ? line.serverName : null,
+        host: line.endpointOverrideEnabled ? line.host : null, trafficRate: line.trafficRate
+      };
+      const subEntry: SubEntry = {
+        label: 'probe-out', node: { name: line.name, serverHost: subLine.serverHost, inbounds: [] },
+        inbound: { type: line.protocolType as ProtocolType, tag: 'probe-out', port: subLine.serverPort, params: subLine.params ?? {} }, line: subLine
+      };
+      const probeUser: SubUser = { uuid: INTERNAL_SPEEDTEST_UUID, email: INTERNAL_SPEEDTEST_EMAIL, credential: INTERNAL_SPEEDTEST_SECRET };
+      outboundConfig = buildSingboxOutbound(probeUser, subEntry);
+      if (!Object.keys(outboundConfig).length) throw new Error('Unsupported speedtest protocol');
+      outboundConfig.tag = 'probe-out';
+      if (line.protocolType === 'SHADOWTLS') extraOutbounds.push(buildShadowtlsTransportOutbound(subEntry, probeUser));
     }
 
     const localPort = await this.getAvailableLocalPort();
@@ -641,7 +657,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
 
     const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir();
     const tmpConfigFile = path.join(tmpDir, `riri-probe-${line.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
-    await fs.writeFile(tmpConfigFile, JSON.stringify(configObj), 'utf8');
+    await fs.writeFile(tmpConfigFile, JSON.stringify(configObj), { encoding: 'utf8', mode: 0o600 });
 
     let childProc: ReturnType<typeof spawn> | null = null;
     let stderrOutput = '';

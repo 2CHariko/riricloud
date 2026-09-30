@@ -28,7 +28,8 @@ describe('PlansService', () => {
     const linesService = {
       getAvailableForPlan: jest.fn().mockResolvedValue([
         { id: 'l1', name: 'VIP 线路', tags: ['vip', 'hk'] }
-      ])
+      ]),
+      toUserSummary: jest.fn((line: { id: string; name: string; tags: string[] }) => ({ id: line.id, name: line.name, tags: line.tags }))
     };
     service = new PlansService(prisma as never, linesService as never);
     await expect(service.getAvailableNodes('p1')).resolves.toEqual([

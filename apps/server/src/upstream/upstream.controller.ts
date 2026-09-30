@@ -8,7 +8,8 @@ import {
   Param,
   Query,
   ParseUUIDPipe,
-  Res
+  Res,
+  Header
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -18,9 +19,9 @@ import { CreateUpstreamDto } from './dto/create-upstream.dto';
 import { UpdateUpstreamDto } from './dto/update-upstream.dto';
 import { QueryUpstreamDto } from './dto/query-upstream.dto';
 import { QueryUpstreamNodeDto } from './dto/query-upstream-node.dto';
-import { SetNodeDirectSubDto } from './dto/set-node-direct-sub.dto';
+import { SetNodeStatusDto } from './dto/set-node-status.dto';
 import { ExportUpstreamNodesDto } from './dto/export-upstream-nodes.dto';
-import { UpstreamNodeStatus } from '../common/constants';
+import { ProbeUpstreamDto } from './dto/probe-upstream.dto';
 
 @ApiTags('Admin Upstream Subscriptions')
 @ApiBearerAuth()
@@ -42,7 +43,8 @@ export class UpstreamController {
   }
 
   @Get('nodes/export')
-  @ApiOperation({ summary: '导出上游节点为 URI 文本或 JSON' })
+  @ApiOperation({ summary: '导出上游连接为 URI、Sing-box JSON 或 Clash YAML' })
+  @Header('Cache-Control', 'no-store')
   async exportNodes(@Query() query: ExportUpstreamNodesDto, @Res() res: Response) {
     const result = await this.upstreamService.exportNodes(query);
     res.setHeader('Content-Type', result.contentType);
@@ -52,11 +54,12 @@ export class UpstreamController {
 
   @Post('probe-all')
   @ApiOperation({ summary: '对所有或指定订阅的在线节点执行并发连通性测速' })
-  probeAll(@Query('subscriptionId') subscriptionId?: string) {
-    return this.upstreamService.probeAll(subscriptionId);
+  probeAll(@Query() query: ProbeUpstreamDto) {
+    return this.upstreamService.probeAll(query.subscriptionId);
   }
 
   @Get(':id')
+  @Header('Cache-Control', 'no-store')
   @ApiOperation({ summary: '获取上游订阅详情' })
   detail(@Param('id', ParseUUIDPipe) id: string) {
     return this.upstreamService.detail(id);
@@ -86,22 +89,19 @@ export class UpstreamController {
     return this.upstreamService.sync(id);
   }
 
-  @Put('nodes/:nodeId/direct-sub')
-  @ApiOperation({ summary: '切换是否直接合并入用户客户端订阅' })
-  setDirectSub(
-    @Param('nodeId', ParseUUIDPipe) nodeId: string,
-    @Body() dto: SetNodeDirectSubDto
-  ) {
-    return this.upstreamService.setNodeDirectSub(nodeId, dto.isDirectSub);
+  @Get(':id/sync-status')
+  @ApiOperation({ summary: '查询上游同步阶段和最后成功时间' })
+  syncStatus(@Param('id', ParseUUIDPipe) id: string) {
+    return this.upstreamService.syncStatus(id);
   }
 
   @Put('nodes/:nodeId/status')
   @ApiOperation({ summary: '启用或禁用指定上游节点' })
   setStatus(
     @Param('nodeId', ParseUUIDPipe) nodeId: string,
-    @Body('status') status: UpstreamNodeStatus
+    @Body() dto: SetNodeStatusDto
   ) {
-    return this.upstreamService.setNodeStatus(nodeId, status);
+    return this.upstreamService.setNodeStatus(nodeId, dto.status);
   }
 
   @Post('nodes/:nodeId/probe')

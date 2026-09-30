@@ -1,6 +1,5 @@
 import type { UseFormReturn } from 'react-hook-form';
-import { useQuery } from '@tanstack/react-query';
-import { upstreamApi } from '@/lib/api';
+import { UpstreamNodePicker } from './upstream-node-picker';
 import { useTranslation } from 'react-i18next';
 import { FormField, FormItem, FormLabel, FormControl, FormDescription } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
@@ -43,19 +42,11 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
   const targetLine = lines.find((line) => line.id === targetLineId);
   const targetLineOptions = targetLines.map((line) => ({
     value: line.id,
-    label: `${line.name} · ${line.entryNode.name} · ${line.protocolType} · ${line.entryPort}${line.status === 'ACTIVE' ? '' : t('admin:lineForm.lineDisabledTag')}`
-  }));
-  const upstreamNodesQuery = useQuery({
-    queryKey: ['admin-upstream-nodes-selector'],
-    queryFn: async () => (await upstreamApi.listNodes({ status: 'ACTIVE', pageSize: 200 })).data,
-    enabled: type === 'RELAY' && relayMode === 'UPSTREAM_NODE'
-  });
-  const upstreamNodeOptions = (upstreamNodesQuery.data?.data ?? []).map((node) => ({
-    value: node.id,
-    label: `${node.subscription?.name ? `[${node.subscription.name}] ` : ''}${node.name} · ${node.protocolType} · ${node.serverHost}:${node.serverPort}`
+    label: `${line.name} · ${line.entryNode?.name ?? ''} · ${line.protocolType} · ${line.entryPort}${line.status === 'ACTIVE' ? '' : t('admin:lineForm.lineDisabledTag')}`
   }));
   const changeRelayMode = (value: string) => {
-    form.setValue('relayMode', value as LineFormValues['relayMode'], { shouldDirty: true });
+    if (value !== 'BLIND_FORWARD' && value !== 'PROTOCOL_PROXY' && value !== 'TARGET_LINE' && value !== 'UPSTREAM_NODE') return;
+    form.setValue('relayMode', value, { shouldDirty: true });
     if (value !== 'TARGET_LINE') form.setValue('targetLineId', '', { shouldDirty: true });
   };
   const changeTargetLine = (value: string) => {
@@ -73,8 +64,9 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
             form={form}
             name="type"
             label={t('admin:lineForm.lineMode')}
-            options={[{ value: 'DIRECT', label: t('admin:lineForm.modeDirect') }, { value: 'RELAY', label: t('admin:lineForm.modeRelay') }]}
-            onValueChange={(value) => onTypeChange(value as LineFormValues['type'])}
+            disabled={!!currentLineId}
+            options={[{ value: 'DIRECT', label: t('admin:lineForm.modeDirect') }, { value: 'RELAY', label: t('admin:lineForm.modeRelay') }, { value: 'EXTERNAL', label: t('admin:upstream.createExternalLine') }]}
+            onValueChange={(value) => { if (value === 'DIRECT' || value === 'RELAY' || value === 'EXTERNAL') onTypeChange(value); }}
           />
           {type === 'RELAY' && relayMode !== 'TARGET_LINE' && relayMode !== 'UPSTREAM_NODE' && <SelectField form={form} name="landingNodeId" label={t('admin:lineForm.landingNode')} options={nodeOptions} />}
           {type === 'RELAY' && relayMode !== 'TARGET_LINE' && relayMode !== 'UPSTREAM_NODE' && <TextField form={form} name="landingPort" label={t('admin:lineForm.landingPort')} type="number" placeholder={t('admin:lineForm.landingPortPlaceholder')} />}
@@ -148,24 +140,13 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
           {targetLine && <div className="rounded-md border bg-muted/30 p-3 text-sm">
             <p className="font-medium">{t('admin:lineForm.boundLandingTitle')}</p>
             <p className="mt-1 text-muted-foreground">
-              {targetLine.entryNode.name} · {targetLine.endpointOverrideEnabled && targetLine.serverHost ? targetLine.serverHost : targetLine.entryNode.serverHost}:{targetLine.endpointOverrideEnabled && targetLine.serverPort ? targetLine.serverPort : targetLine.entryPort}
+              {targetLine.entryNode?.name} · {targetLine.serverHost}:{targetLine.serverPort}
               {targetLine.endpointOverrideEnabled && Boolean(targetLine.serverHost || targetLine.serverPort) ? t('admin:lineForm.targetLineEndpointInherited') : ''}
             </p>
             <p className="text-muted-foreground">{t('admin:lineForm.targetProtocol')}{targetLine.protocolType} · {targetLine.status === 'ACTIVE' ? t('admin:lineForm.lineActive') : t('admin:lineForm.lineDisabled')}</p>
           </div>}
         </div>}
-        {type === 'RELAY' && relayMode === 'UPSTREAM_NODE' && (
-          <div className="space-y-3">
-            <SelectField
-              form={form}
-              name="upstreamNodeId"
-              label={t('admin:lineForm.upstreamNodeLabel')}
-              options={upstreamNodeOptions.length ? upstreamNodeOptions : [{ value: '__no_upstream_node__', label: t('admin:lineForm.noUpstreamNode') }]}
-              disabled={upstreamNodeOptions.length === 0}
-              description={t('admin:lineForm.upstreamNodeDesc')}
-            />
-          </div>
-        )}
+        {type === 'RELAY' && relayMode === 'UPSTREAM_NODE' && <UpstreamNodePicker form={form} />}
       </section>
 
       <Separator />
@@ -236,7 +217,7 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
   );
 }
 
-function StatusSwitch({ form }: { form: UseFormReturn<LineFormValues> }) {
+export function StatusSwitch({ form }: { form: UseFormReturn<LineFormValues> }) {
   const { t } = useTranslation(['admin']);
   return <FormField control={form.control} name="status" render={({ field }) => (
     <FormItem className="flex items-center justify-between gap-4">

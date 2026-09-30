@@ -30,7 +30,7 @@ type TrafficLine = {
 };
 
 type FallbackTrafficLine = TrafficLine & {
-  entryNodeId: string;
+  entryNodeId: string | null;
   landingNodeId: string | null;
   relayMode: string | null;
 };
@@ -417,7 +417,7 @@ export class TrafficService {
 
   private async findFallbackLines(): Promise<FallbackTrafficLine[]> {
     return this.prisma.line.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', type: { not: 'EXTERNAL' }, entryNodeId: { not: null } },
       select: {
         id: true,
         name: true,
@@ -441,6 +441,7 @@ export class TrafficService {
     const fallbackByEntryNode = new Map<string, TrafficLine>();
     const fallbackByBlindLandingNode = new Map<string, TrafficLine>();
     for (const line of fallbackLines) {
+      if (line.type === 'EXTERNAL' || !line.entryNodeId) continue;
       if (!fallbackByEntryNode.has(line.entryNodeId)) fallbackByEntryNode.set(line.entryNodeId, line);
       if (line.type === 'RELAY' && line.relayMode === 'BLIND_FORWARD' && line.landingNodeId && !fallbackByBlindLandingNode.has(line.landingNodeId)) {
         fallbackByBlindLandingNode.set(line.landingNodeId, line);

@@ -26,7 +26,7 @@ import {
 import { IconButton } from '@/components/ui/icon-button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAdminPlans } from '../plans/use-plans';
-import { useAdminLines } from '../lines/use-lines';
+import { useLineOptions } from '../lines/use-lines';
 import { useAdminUsers, useAdminUserDevices, useUserMutations, type AdminUser, type AdminUserSubscription } from './use-users';
 import { UserFormDialog } from './components/user-form-dialog';
 import { UserTrafficDialog } from './components/user-traffic-dialog';
@@ -93,7 +93,7 @@ export default function AdminUsersPage() {
     planId: planFilter === 'ALL' ? undefined : planFilter
   });
   const { data: plans } = useAdminPlans();
-  const { data: lineData } = useAdminLines();
+  const { data: lineData } = useLineOptions(formOpen);
   const { deleteUser, bulkActive, resetSubscriptionToken } = useUserMutations();
   const deviceManagement = useAdminUserDevices(devicesUser?.id, Boolean(devicesUser));
   const users = data?.data ?? [];

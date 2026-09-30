@@ -13,18 +13,15 @@
 ## [Unreleased]
 
 ### Added
-- **上游订阅导入与多模式融合功能 (Upstream Subscriptions & Proxy Relay)**：
-  - 核心解析引擎：支持导入任意 Mihomo (Clash Meta) YAML、Sing-box JSON 及标准 URI 格式订阅，智能探测并归一化为统一的外部落地代理节点模型；
-  - 多模式落地支持：
-    1. 自建中转线路（`RELAY` + `UPSTREAM_NODE`）：指定自建公网 VPS 入口纳管外部上游节点，入口 Sing-box 原生构建对应 Outbound 与路由转发，100% 纳入入口物理流量监控与用户计费；
-    2. 客户端直连合并（`isDirectSub`）：允许管理员将候选池中的优质外部节点一键公开，自动合并入用户客户端订阅（免计系统配额）；
-    3. 直连代理池双模式：支持在直连代理池（ProxyKey）中挂载受控 MIXED 自动化代理，亦支持一键快捷导出/复制原始协议 URI 链接；
-  - 节点差异比对与失效联动治理：定时与手动同步时根据节点特征指纹（Fingerprint）稳定识别存量与新增节点，若上游删除已绑定的中转节点，系统自动将关联线路置为停用（DISABLED）并记录系统告警日志；
-  - 连通性测速与管理控制台：提供后台全自动定时更新、单节点/批量并发 TCP 握手测速、节点抽屉式管理与一键转自建中转向导。
+- **上游来源导入与统一线路交付**：支持 Clash YAML/JSON、Sing-box JSON 与 URI/Base64 严格提取代理资源；通过自建 `RELAY + UPSTREAM_NODE` 或授权 `EXTERNAL` 线路交付，外部直发默认禁用/非公开，用户详情与实际订阅使用同一套餐及额外授权集合。
+- **可靠同步与诊断**：源内串行、有限跨源并发、短事务差异提交；独立完整连接特征/配置哈希、唯一身份轮换、歧义拒绝、重复去重、缺失保留引用；参数变化同步 WS/HTTP 配置，网络或部分解析失败保持最后成功快照。管理界面提供分页、缺失状态、源启停、分钟更新周期、秘密按需编辑和直发风险确认。
 
 ### Changed
+- **BREAKING CHANGE — 上游无旧兼容重构**：删除 `isDirectSub`、旧 fingerprint 与 direct-sub API，不提供别名、转换或旧数据回填；新增 EXTERNAL 线路和可空入口契约、上游用量 API 改十进制字符串。旧上游域必须由维护者先备份并明确处理后重新导入，部署前置检查及 SQL 保护拒绝未处理的旧数据，程序不自动清库。外部直发不计本地流量、不执行本地速率/设备限制，也不能撤回已获得的共享凭据。
 
 ### Fixed
+- 修复 E2E 预检与迁移相对 SQLite URL 解析不一致：统一以正式 schema 目录规范化为绝对 URL，覆盖主库/遥测库、预检、种子、服务启动与本地 AgentToken helper；补路径回归，迁移失败文案不再将 P3018/CHECK 误判为写锁。
+- 修复上游 IPv6 URI、SS 含冒号密码/plugin、Clash JSON 和 Trojan TLS 默认解析，拒绝无效端口/不支持代理；导出统一保留 TLS/Reality/Transport。修复 BigInt 同步响应、文本编辑误清空、AUTO 被固定、上游中继复制及客户端用户名不一致。
 - **修复本地 E2E 启动失败与 Shadowsocks 密码派生回退**：
   - 修复 `apps/server/src/app.module.ts` 模块导入逗号缺失与模块内类型声明；
   - 补齐 `apps/server/prisma/migrations/20260930120000_upstream_subscriptions_and_nodes` 数据库迁移脚本，解决联调库 `dev-e2e.db` 执行 `prisma migrate deploy` 时的表结构同步阻断；
@@ -39,8 +36,11 @@
   - 调高前端单条线路测速（`45s`）与全量批量测速（`120s`）的客户端 HTTP 超时预算，防止高延迟或慢速回退链路在服务端返回完整阶段诊断报告前被前端提前中断。
 - **修复上游节点中继（`UPSTREAM_NODE`）下发 Sing-box 配置时因 `alterId` 等驼峰字段触发 `sing-box check` 致命校验失败**：
   - 重构 `AgentGatewayService` 的 `UPSTREAM_NODE` 中继出站构建器（`buildUpstreamRelayOutbound`），不再将 `UpstreamNode.paramsJson` 内部驼峰结构直接浅拷贝至 Sing-box `outbounds`，而是按协议严格映射为 Sing-box 标准下划线出站结构（VMess `alter_id`、Hysteria2 `up_mbps`/`down_mbps`/`obfs`、TUIC `congestion_control`/`zero_rtt_handshake`、Reality `public_key`/`short_id`、uTLS `utls.fingerprint`、gRPC `service_name` 等），彻底消除 `json: unknown field "alterId"` 报错；
-  - 统一 `UpstreamParserService` 对 Sing-box JSON、Clash YAML 与 URI 订阅的节点参数归一化输出，并在 `inbound.ts` 与订阅编译器 `builders.ts` 中兼容驼峰与下划线双格式字段回退，存量已导入上游节点无需重新导入即可正常工作；
+  - 统一新导入的 Sing-box JSON、Clash YAML 与 URI 连接模型，由共享编译器映射为 Sing-box 标准字段；本轮破坏性重构不再承诺存量上游数据兼容，需按部署指南备份、处理并重新导入。
   - 补齐 `LineSpeedtestService` 对 `UPSTREAM_NODE` 中继线路的落地拓扑解析与第三阶段（`relay_transit`）上游节点可用性校验。
+
+### Security
+- 上游 URL、Header、源快照、归一化参数和原始配置整段 AES-GCM 加密；用户线路摘要采用白名单，不透传中继出口秘密。拉取限制公共地址/生产 HTTPS、绑定 DNS 拨号、防重定向泄密及响应超限；源禁用、节点缺失、已知到期/耗尽统一阻断交付与中继，受控中继拒绝不可用户计费的入口。
 
 
 ## [0.9.9] - 2026-09-29

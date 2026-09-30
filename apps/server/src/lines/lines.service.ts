@@ -1,3 +1,5 @@
+import { getUpstreamUnavailableReason, readUpstreamConnection, isMeteredUpstreamEntry } from '../common/upstream-availability';
+import type { SubLine } from '../subscription/builders';
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { AgentService } from '../agent-gateway/agent.service';
@@ -58,7 +60,9 @@ const upstreamNodeSummary = {
     latencyMs: true,
     lastTestStatus: true,
     subscriptionId: true,
-    subscription: { select: { id: true, name: true } }
+    paramsJson: true,
+    presenceStatus: true,
+    subscription: { select: { id: true, name: true, status: true, userInfoUsedBytes: true, userInfoTotalBytes: true, userInfoExpireAt: true } }
   }
 } as const;
 const lineInclude = { entryNode: nodeSummary, landingNode: nodeSummary, targetLine: targetLineSummary, certificate: certificateSummary, upstreamNode: upstreamNodeSummary } as const;
@@ -179,13 +183,14 @@ export class LinesService {
     const prepared = await this.prepare({
       name: `${current.name} 副本`,
       type: current.type as LineType,
-      protocolType: current.protocolType as ProtocolType,
+      ...(current.type === 'EXTERNAL' ? {} : { protocolType: current.protocolType as ProtocolType }),
       params: this.parseObject(current.paramsJson),
       certificateId: current.certificateId,
       relayMode: current.relayMode as RelayMode | null,
       entryNodeId: current.entryNodeId,
       landingNodeId: current.landingNodeId,
       targetLineId: current.targetLineId,
+      upstreamNodeId: current.upstreamNodeId,
       endpointOverrideEnabled: current.endpointOverrideEnabled,
       serverHost: current.serverHost,
       serverPort: current.serverPort,
@@ -207,6 +212,13 @@ export class LinesService {
   }
 
   async batchStatus(dto: BatchLineStatusDto) {
+    if (dto.status === 'ACTIVE') {
+      for (const id of dto.ids) {
+        const line = await this.findRaw(id);
+        if (line.type === 'EXTERNAL' || line.relayMode === 'UPSTREAM_NODE') await this.assertUpstreamAvailable(line.upstreamNodeId);
+        if (line.relayMode === 'UPSTREAM_NODE' && !isMeteredUpstreamEntry(line.protocolType, this.parseObject(line.paramsJson))) throw new BadRequestException('上游中继入口必须支持用户鉴权与流量归属');
+      }
+    }
     const result = await this.prisma.line.updateMany({ where: { id: { in: dto.ids } }, data: { status: dto.status } });
     void this.agentGateway.pushConfigToAll();
     return { updated: result.count, status: dto.status };
@@ -226,8 +238,8 @@ export class LinesService {
     return {
       line: view,
       endpoint: { serverHost: view.serverHost, serverPort: view.serverPort, serverName: view.serverName, host: view.host },
-      entry: { nodeId: line.entryNodeId, nodeName: line.entryNode.name, port: line.entryPort },
-      landing: view.topology.landing
+      entry: line.entryNode ? { nodeId: line.entryNodeId, nodeName: line.entryNode.name, port: line.entryPort } : null,
+      landing: view.topology.landing?.node
         ? {
             nodeId: view.topology.landing.node.id,
             nodeName: view.topology.landing.node.name,
@@ -260,7 +272,68 @@ export class LinesService {
       .filter((line) => line.status === undefined || line.status === 'ACTIVE')
       .filter((line) => line.relayMode !== 'TARGET_LINE' || line.targetLine?.status === 'ACTIVE')
       .filter((line) => isLineAuthorized(plan, line, extraIds))
-      .map((line) => this.toView(line));
+      .filter((line) => (line.type !== 'EXTERNAL' && line.relayMode !== 'UPSTREAM_NODE') || (line.upstreamNode && !getUpstreamUnavailableReason(line.upstreamNode)))
+      .filter((line) => line.relayMode !== 'UPSTREAM_NODE' || isMeteredUpstreamEntry(line.protocolType, this.parseObject(line.paramsJson)))
+      .map((line) => {
+        const view = this.toView(line);
+        return {
+          id: view.id, name: view.name, type: view.type, status: view.status, isPublic: view.isPublic,
+          protocolType: view.protocolType, relayMode: view.relayMode, params: view.params,
+          serverHost: view.serverHost, serverPort: view.serverPort, serverName: view.serverName, host: view.host,
+          endpointOverrideEnabled: view.endpointOverrideEnabled, endpointOverrides: view.endpointOverrides,
+          trafficRate: view.trafficRate, speedLimitMbps: view.speedLimitMbps, tags: view.tags, level: view.level,
+          ...(line.type === 'EXTERNAL' && line.upstreamNode ? { externalConnection: readUpstreamConnection(line.upstreamNode) } : {})
+        };
+      });
+  }
+
+  toUserSummary(line: Pick<SubLine, 'id' | 'name' | 'type' | 'protocolType' | 'serverHost' | 'serverPort' | 'tags' | 'level' | 'trafficRate' | 'speedLimitMbps'> & { status?: string }) {
+    const external = line.type === 'EXTERNAL';
+    return {
+      id: line.id, name: line.name, type: line.type, protocolType: line.protocolType,
+      serverHost: line.serverHost, serverPort: line.serverPort, status: line.status,
+      tags: line.tags ?? [], level: line.level,
+      trafficRate: external ? 0 : line.trafficRate,
+      speedLimitMbps: external ? null : line.speedLimitMbps,
+      capabilities: { trafficMetered: !external, localLimitsSupported: !external, credentialRevocable: !external },
+      topology: { entry: null, landing: null }
+    };
+  }
+
+  private async assertUpstreamAvailable(id: string | null | undefined) {
+    if (!id) throw new BadRequestException('必须指定上游节点');
+    const node = await this.prisma.upstreamNode.findUnique({ where: { id }, include: { subscription: true } });
+    if (!node) throw new NotFoundException('上游节点不存在');
+    const reason = getUpstreamUnavailableReason(node);
+    if (reason) throw new BadRequestException(reason);
+    return node;
+  }
+
+  private async prepareExternal(input: LineInput, current?: LineWithRelations): Promise<Prisma.LineUncheckedCreateInput> {
+    const nullable = ['entryNodeId', 'entryPort', 'landingNodeId', 'landingPort', 'targetLineId', 'relayMode', 'certificateId', 'serverHost', 'serverPort', 'serverName', 'host', 'landingServerHost', 'landingServerPort', 'tunnelType', 'tunnelPort', 'tunnelSecret', 'udpTimeout'] as const;
+    for (const key of nullable) if (input[key] !== undefined && input[key] !== null && input[key] !== '') throw new BadRequestException(`EXTERNAL 不支持 ${key}`);
+    const toggles = ['endpointOverrideEnabled', 'landingEndpointOverrideEnabled', 'allowLanAccess', 'tcpFastOpen', 'tcpMultiPath', 'udpFragment', 'proxyProtocol', 'proxyProtocolAcceptNoHeader'] as const;
+    for (const key of toggles) if (input[key] === true) throw new BadRequestException(`EXTERNAL 不支持 ${key}`);
+    if ((input.params && Object.keys(input.params).length) || (input.listen && input.listen !== DEFAULT_INBOUND_LISTEN) || (input.speedLimitMbps && input.speedLimitMbps !== 0) || (input.trafficRate !== undefined && input.trafficRate !== 1)) throw new BadRequestException('EXTERNAL 不支持本地协议、监听或限速参数');
+    const upstreamNodeId = input.upstreamNodeId !== undefined ? input.upstreamNodeId : current?.upstreamNodeId;
+    const node = await this.assertUpstreamAvailable(upstreamNodeId);
+    if (current && current.type !== 'EXTERNAL') throw new BadRequestException('请新建 EXTERNAL 线路，不允许隐式转换本地入口');
+    if (input.protocolType && input.protocolType !== node.protocolType) throw new BadRequestException('EXTERNAL 协议由上游节点决定');
+    const name = (input.name ?? current?.name)?.trim();
+    if (!name) throw new BadRequestException('线路名称不能为空');
+    return {
+      name, type: 'EXTERNAL', upstreamNodeId: node.id, protocolType: node.protocolType,
+      paramsJson: '{}', entryNodeId: null, entryPort: null, landingNodeId: null, landingPort: null,
+      targetLineId: null, relayMode: null, certificateId: null, listen: DEFAULT_INBOUND_LISTEN,
+      tag: input.tag !== undefined ? input.tag?.trim() || null : current?.tag ?? null,
+      tagsJson: input.tags ? JSON.stringify(input.tags.map((tag) => tag.trim()).filter(Boolean)) : current?.tagsJson ?? '[]',
+      sortOrder: input.sortOrder ?? current?.sortOrder ?? 0, level: input.level ?? current?.level ?? 0,
+      isPublic: input.isPublic ?? current?.isPublic ?? false, status: input.status ?? current?.status ?? 'DISABLED',
+      trafficRate: 1, speedLimitMbps: 0, endpointOverrideEnabled: false, landingEndpointOverrideEnabled: false,
+      serverHost: null, serverPort: null, serverName: null, host: null, landingServerHost: null, landingServerPort: null,
+      allowLanAccess: false, tunnelType: null, tunnelPort: null, tunnelSecret: null,
+      tcpFastOpen: false, tcpMultiPath: false, udpFragment: null, udpTimeout: null, proxyProtocol: false, proxyProtocolAcceptNoHeader: false
+    };
   }
 
   private async findRaw(id: string): Promise<LineWithRelations> {
@@ -272,6 +345,8 @@ export class LinesService {
   private async prepare(input: LineInput, current?: LineWithRelations): Promise<Prisma.LineUncheckedCreateInput | Prisma.LineUncheckedUpdateInput> {
     const type = input.type ?? (current?.type as LineType | undefined) ?? 'DIRECT';
     if (!LINE_TYPES.includes(type)) throw new BadRequestException('线路类型无效');
+    if (type === 'EXTERNAL') return this.prepareExternal(input, current);
+    if (current?.type === 'EXTERNAL') throw new BadRequestException('请新建本地线路，不允许隐式转换 EXTERNAL');
 
     const protocolType = input.protocolType ?? (current?.protocolType as ProtocolType | undefined) ?? 'VLESS';
     if (!PROTOCOL_TYPES.includes(protocolType)) throw new BadRequestException('线路协议无效');
@@ -312,7 +387,7 @@ export class LinesService {
     let landingNodeId: string | null = null;
     let landingPort: number | null = null;
     let targetLineId: string | null = null;
-    let targetLine: { id: string; type: string; protocolType: string; entryNodeId: string; entryPort: number } | null = null;
+    let targetLine: { id: string; type: string; protocolType: string; entryNodeId: string | null; entryPort: number | null } | null = null;
     let upstreamNodeId: string | null = null;
 
     if (type === 'DIRECT') {
@@ -324,11 +399,8 @@ export class LinesService {
       if (relayMode === 'UPSTREAM_NODE') {
         upstreamNodeId = input.upstreamNodeId !== undefined ? input.upstreamNodeId : current?.upstreamNodeId ?? null;
         if (!upstreamNodeId) throw new BadRequestException('上游节点中继线路必须指定上游节点');
-        const upstreamNode = await this.prisma.upstreamNode.findUnique({
-          where: { id: upstreamNodeId },
-          select: { id: true, status: true, protocolType: true, name: true }
-        });
-        if (!upstreamNode) throw new NotFoundException('引用的上游节点不存在');
+        await this.assertUpstreamAvailable(upstreamNodeId);
+        if (!isMeteredUpstreamEntry(protocolType, params)) throw new BadRequestException('上游中继入口必须支持用户鉴权与流量归属');
         landingNodeId = null;
         landingPort = null;
         targetLineId = null;
@@ -633,8 +705,8 @@ export class LinesService {
     for (const line of existing) {
       const tags = resolveLineTags(line);
       const existingTags = new Map<string, string>();
-      if (tags.direct) existingTags.set(line.entryNodeId, tags.direct);
-      if (tags.entry) existingTags.set(line.entryNodeId, tags.entry);
+      if (tags.direct && line.entryNodeId) existingTags.set(line.entryNodeId, tags.direct);
+      if (tags.entry && line.entryNodeId) existingTags.set(line.entryNodeId, tags.entry);
       if (tags.landing && line.landingNodeId) existingTags.set(line.landingNodeId, tags.landing);
       for (const [nodeId, tag] of candidateTags) {
         if (existingTags.get(nodeId) === tag) {
@@ -727,9 +799,11 @@ export class LinesService {
   }
 
   private toView(line: LineWithRelations) {
-    const serverHost = line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode.serverHost;
-    const serverPort = line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort;
-    const params = sanitizeInboundParams(this.sanitizeCorruptParams(this.parseObject(line.paramsJson)));
+    const external = line.type === 'EXTERNAL';
+    const serverHost = external ? line.upstreamNode?.serverHost ?? '' : line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode?.serverHost ?? '';
+    const serverPort = external ? line.upstreamNode?.serverPort ?? 0 : line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort ?? 0;
+    const params = external ? {} : sanitizeInboundParams(this.sanitizeCorruptParams(this.parseObject(line.paramsJson)));
+    const upstreamNode = line.upstreamNode ? { id: line.upstreamNode.id, name: line.upstreamNode.name, protocolType: line.upstreamNode.protocolType, serverHost: line.upstreamNode.serverHost, serverPort: line.upstreamNode.serverPort, status: line.upstreamNode.status, presenceStatus: line.upstreamNode.presenceStatus, subscription: { id: line.upstreamNode.subscription.id, name: line.upstreamNode.subscription.name } } : null;
     const isNatLanding = line.landingNode?.reachability === 'NAT';
     const hasLandingOverride = line.type === 'RELAY' && !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
     const landing = line.type === 'RELAY'
@@ -740,7 +814,7 @@ export class LinesService {
                 ? line.landingServerHost!
                 : (line.targetLine.endpointOverrideEnabled && line.targetLine.serverHost
                     ? line.targetLine.serverHost
-                    : line.targetLine.entryNode.serverHost),
+                    : line.targetLine.entryNode?.serverHost ?? ''),
               port: hasLandingOverride && line.landingServerPort
                 ? line.landingServerPort
                 : (line.targetLine.endpointOverrideEnabled && line.targetLine.serverPort
@@ -759,7 +833,7 @@ export class LinesService {
                 },
                 host: line.upstreamNode.serverHost,
                 port: line.upstreamNode.serverPort,
-                upstreamNode: line.upstreamNode
+                upstreamSummary: upstreamNode
               }
             : line.landingNode && line.landingPort
             ? {
@@ -769,11 +843,12 @@ export class LinesService {
               }
             : null)
       : null;
+    const { upstreamNode: _upstreamNode, ...safeLine } = line;
     return {
-      ...line,
+      ...safeLine,
       upstreamNodeId: line.upstreamNodeId ?? null,
-      upstreamNode: line.upstreamNode ?? null,
-      protocolType: line.protocolType as ProtocolType,
+      upstreamSummary: upstreamNode,
+      protocolType: (external ? line.upstreamNode?.protocolType ?? line.protocolType : line.protocolType) as ProtocolType,
       params,
       serverHost,
       serverPort,
@@ -792,10 +867,10 @@ export class LinesService {
       },
       tags: this.parseTags(line.tagsJson),
       topology: {
-        entry: { node: line.entryNode, port: line.entryPort },
+        entry: line.entryNode ? { node: line.entryNode, port: line.entryPort } : null,
         landing
       },
-      targetInbound: landing ? {
+      targetInbound: landing?.node ? {
         id: line.id,
         nodeId: landing.node.id,
         type: line.targetLine?.protocolType ?? line.protocolType,

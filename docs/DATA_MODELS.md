@@ -302,12 +302,12 @@ model Line {
   name            String
   tag             String?
   listen          String   @default("0.0.0.0")
-  type            String   @default("DIRECT") // DIRECT | RELAY
+  type            String   @default("DIRECT") // DIRECT | RELAY | EXTERNAL
   relayMode       String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE | UPSTREAM_NODE
   protocolType    String   @default("VLESS") // ProtocolType
   paramsJson      String   @default("{}") // 协议专属参数 JSON；Reality 私钥按应用层 AES-GCM 加密保存
-  entryNodeId     String
-  entryPort       Int
+  entryNodeId     String? // DIRECT/RELAY 必填，EXTERNAL 必须为空
+  entryPort       Int?    // EXTERNAL 不分配端口
   landingNodeId   String?  // 普通中继落地节点；直连与 TARGET_LINE 为 null
   landingPort     Int?     // 普通中继落地监听端口；直连与 TARGET_LINE 为 null
   targetLineId    String? // TARGET_LINE 模式引用的其他节点直连线路
@@ -344,13 +344,13 @@ model Line {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  entryNode     Node @relation("LineEntryNode", fields: [entryNodeId], references: [id], onDelete: Cascade)
+  entryNode     Node? @relation("LineEntryNode", fields: [entryNodeId], references: [id], onDelete: Cascade)
   landingNode   Node? @relation("LineLandingNode", fields: [landingNodeId], references: [id], onDelete: Cascade)
   targetLine    Line? @relation("LineRelayTarget", fields: [targetLineId], references: [id], onDelete: Restrict)
   relaySources  Line[] @relation("LineRelayTarget")
   certificate   Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
-  upstreamNodeId String?  // UPSTREAM_NODE 模式引用的外部上游节点
-  upstreamNode  UpstreamNode? @relation(\"LineUpstreamNode\", fields: [upstreamNodeId], references: [id], onDelete: SetNull)
+  upstreamNodeId String?  // UPSTREAM_NODE 中继与 EXTERNAL 必填
+  upstreamNode  UpstreamNode? @relation("LineUpstreamNode", fields: [upstreamNodeId], references: [id], onDelete: SetNull)
 
   @@index([entryNodeId])
   @@index([landingNodeId])
@@ -1135,50 +1135,51 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 - 管理端提供 `POST /api/v1/admin/help/articles/reset-defaults` 安全重置机制，支持在文档损毁或配置错乱时一键恢复官方标准预设文档，可选择覆写冲突项或全量刷新。
 
 ---\n
-## 11. 上游订阅与代理节点模型（UpstreamSubscription / UpstreamNode）\n
-上游订阅机制允许管理员导入外部任意 Mihomo (Clash Meta) YAML、Sing-box JSON 或标准 URI 订阅，解析提取外部落地代理节点，并支持三种核心落地形态：直接合并入用户客户端订阅、作为自建 VPS 中转线路的落地目标，或提取挂载为直连代理池。\n
-### 11.1 UpstreamSubscription 字段字典\n
-| 字段 | 类型 | 默认值 | 约束与说明 |
-| :--- | :--- | :--- | :--- |
-| `id` | String (UUID) | uuid() | 上游订阅记录唯一主键 |
-| `name` | String | 必填 | 订阅源名称标识（如「XX 机场主力」） |
-| `sourceType` | String | `\"URL\"` | 来源类型：`URL`（远程链接） / `TEXT`（手动粘贴快照） |
-| `format` | String | `\"AUTO\"` | 解析格式：`AUTO`（智能探测）/ `CLASH_META` / `SINGBOX` / `URI_LIST` |
-| `url` | String? | `null` | 远程拉取链接（HTTPS / HTTP） |
-| `content` | String? | `null` | 文本配置快照或最近一次拉取成功的缓存内容 |
-| `customHeadersJson` | String | `\"{}\"` | 远程拉取时的自定义 HTTP Header（如 User-Agent 等） |
-| `autoUpdate` | Boolean | `true` | 是否开启后台定时自动更新同步 |
-| `updateIntervalMins` | Int | `720` | 自动刷新间隔周期（分钟，默认 12 小时） |
-| `lastSyncAt` | DateTime? | `null` | 最近一次同步尝试时间戳 |
-| `lastSyncStatus` | String | `\"PENDING\"` | 最近同步状态：`PENDING` / `SUCCESS` / `FAILED` |
-| `lastSyncMessage` | String? | `null` | 最近同步状态详情或错误诊断信息 |
-| `userInfoUsedBytes` | BigInt? | `null` | 从 `subscription-userinfo` 响应头解析出的已用流量 |
-| `userInfoTotalBytes`| BigInt? | `null` | 从 `subscription-userinfo` 响应头解析出的总配额 |
-| `userInfoExpireAt` | DateTime? | `null` | 从 `subscription-userinfo` 响应头解析出的到期时间 |
-| `nodeCount` | Int | `0` | 当前解析包含的有效节点总数 |
-| `status` | String | `\"ACTIVE\"` | 订阅源启用状态：`ACTIVE` / `DISABLED` |
-| `createdAt` / `updatedAt` | DateTime | 自动 | 创建与更新时间戳 |\n
-### 11.2 UpstreamNode 字段字典\n
-| 字段 | 类型 | 默认值 | 约束与说明 |
-| :--- | :--- | :--- | :--- |
-| `id` | String (UUID) | uuid() | 外部节点唯一主键 |
-| `subscriptionId` | String | 必填 | 归属上游订阅源 ID，级联删除 `onDelete: Cascade` |
-| `name` | String | 必填 | 节点展示名称（如「🇭🇰 香港 01 [IEPL]」） |
-| `protocolType` | String | 必填 | 协议类型（`VLESS`, `VMESS`, `TROJAN`, `HYSTERIA2`, `TUIC`, `SHADOWSOCKS`, `SOCKS`, `HTTP` 等） |
-| `serverHost` | String | 必填 | 目标主机地址（域名或 IP） |
-| `serverPort` | Int | 必填 | 目标端口 (1~65535) |
-| `paramsJson` | String | 必填 | 归一化 Sing-box 客户端 Outbound 与连接参数 JSON |
-| `rawConfigJson` | String | 必填 | 导入时的单节点原始配置快照 |
-| `fingerprint` | String | 必填 | 节点指纹哈希（基于协议、地址、端口与鉴权计算，更新时精准 Diff Match） |
-| `tagsJson` | String | `\"[]\"` | 自动提取的地区代码标签（如 `[\"HK\"]`, `[\"US\"]`） |
-| `latencyMs` | Int? | `null` | 最近一次连通性测速握手延迟（毫秒） |
-| `lastTestedAt` | DateTime? | `null` | 最近一次测速时间 |
-| `lastTestStatus` | String? | `null` | 测速状态：`SUCCESS` / `TIMEOUT` / `ERROR` |
-| `lastTestMessage` | String? | `null` | 测速诊断详细信息 |
-| `status` | String | `\"ACTIVE\"` | 节点可用状态：`ACTIVE` / `DISABLED` |
-| `isDirectSub` | Boolean | `false` | 是否直接合并进用户客户端订阅（默认 `false`，仅作为候选节点池） |
-| `createdAt` / `updatedAt` | DateTime | 自动 | 创建与更新时间戳 |\n
-### 11.3 联动与生命周期规则\n
-1. **指纹比对与平滑更新**：定时或手动同步时，依据 `fingerprint` 识别存量节点与新节点。存量节点更新连接配置但保留原有 UUID，保障已有中转线路不中断。
-2. **失效自动停用机制**：若上游删除了某个节点，系统自动将其关联的 `Line.status` 置为 `DISABLED`，记录系统警告日志并下发 `config_sync` 安全剔除失效出站。
-3. **中继链路与出站注入**：当 `Line.relayMode === 'UPSTREAM_NODE'` 时，入口节点 Agent 会直接根据 `upstreamNode.paramsJson` 组装对应协议的 Sing-box Outbound，所有入口连接均完整通过 Agent 进行流量统计与配额计费。
+## 11. 上游订阅与外部线路
+
+### 11.1 来源与资源职责
+
+`UpstreamSubscription` 只负责 URL/文本来源及同步，`UpstreamNode` 是外部连接资源。面向用户的授权统一在 `Line`：自建中继为 `RELAY + UPSTREAM_NODE`，直接分发为 `EXTERNAL`。不再提供 `isDirectSub` 或全局合并授权。
+
+| UpstreamSubscription 字段 | 说明 |
+| :--- | :--- |
+| `id` / `name` | UUID 与管理名称 |
+| `sourceType` | `URL` / `TEXT` |
+| `format` / `detectedFormat` | 管理员配置与实际检测结果分离；AUTO 每次重新检测 |
+| `url` / `content` / `customHeadersJson` | 整段 AES-GCM 密文；内容为文本源或 last-good 拉取快照；管理员详情按需解密，列表掩码 |
+| `autoUpdate` / `updateIntervalMins` | 默认 720 分钟，允许 10~43200 分钟 |
+| `lastSyncAt` / `lastSuccessAt` | 最近尝试和最近成功快照的时间分离 |
+| `lastSyncStatus` / `lastSyncMessage` | PENDING / SUCCESS / FAILED 与脱敏诊断 |
+| `userInfoUsedBytes` / `userInfoTotalBytes` / `userInfoExpireAt` | 上游账户元信息快照，未知为 null；API 字节值用十进制字符串，不计作本地用户流量 |
+| `nodeCount` | 当前成功快照去重后的 PRESENT 节点数，不含缺失保留记录 |
+| `status` | ACTIVE / DISABLED；源禁用立即停止直接分发与中继，不覆盖独立线路启停状态 |
+
+| UpstreamNode 字段 | 说明 |
+| :--- | :--- |
+| `id` / `subscriptionId` | 稳定资源 UUID 与所属源；显式删除源才级联删除 |
+| `name` / `protocolType` / `serverHost` / `serverPort` | 展示名、归一化协议、地址和 1~65535 端口 |
+| `paramsJson` / `rawConfigJson` | 归一化连接及原始配置的整段 AES-GCM 密文，不通过用户摘要返回 |
+| `sourceKey` | 可选可靠的源内标识，不使用数组顺序猜测 |
+| `connectionHash` / `configHash` | 全长 SHA-256 规范化完整连接特征和配置变化哈希；不是业务 ID，也不使用随机密文计算 |
+| `presenceStatus` / `missingSince` | PRESENT / MISSING 与缺失时间；独立于管理员启用状态 |
+| `tagsJson` | 地区标签数组，用于资源筛选；Line 自身标签用于套餐授权 |
+| `latencyMs` / `lastTestedAt` / `lastTestStatus` / `lastTestMessage` | Master TCP 可达性快照，UDP-only 返回 NOT_APPLICABLE，不等于代理协议认证成功 |
+| `status` | 管理员 ACTIVE / DISABLED；同步不覆盖 |
+
+### 11.2 业务不变量与授权
+
+- DIRECT/RELAY 必须有真实入口节点与端口。EXTERNAL 只绑定上游节点，不挂假节点、不分配监听、不生成 Agent 入站；协议/端点/参数从资源动态解析，不复制到 Line 参数中。
+- EXTERNAL 默认非公开且禁用；沿用 ALL/TAGS/EXPLICIT 和 UserLineGrant。公开启用后 ALL 套餐可包含它，新增/发布时必须提示影响范围。
+- EXTERNAL 不计本地流量、不执行本地限速或设备限制；管理员停止分发不能追回用户已获得的共享上游凭据。
+- 中继只允许可归属用户、可撤除用户的入口鉴权配置，拒绝共享 SS 或关闭用户鉴权的入口；客户端只获取本地入口凭据。
+- 上游有效性共用源启用、节点启用、PRESENT、有效连接及已知到期/耗尽规则。未知元信息不视为无限，网络失败保留 last-good；成功响应缺元信息时清除旧值。
+
+### 11.3 原子同步与生命周期
+
+同源首次/手动/定时同步、修改和删除串行化；网络/解析在事务外，节点变更、缺失线路停用、统计和 last-good 快照在短事务内提交，提交后才清缓存并通知 Agent。
+
+一对一匹配顺序为可靠 sourceKey → 完整 connectionHash → 源内唯一名称加协议；多候选拒绝提交，不按顺序猜测。完整重复去重，不同 WS 路径等连接特征不合并。缺失资源保留 UUID 和引用，停用关联线路；重新出现不自动启用线路。无效或不支持的代理条目阻止快照替换，不能用部分解析结果执行删除。
+
+### 11.4 破坏性结构升级
+
+删除 `fingerprint`、`isDirectSub`，不保留兼容接口或旧数据回填。新增迁移 `20260930190000_upstream_breaking_refactor` 保留非上游业务记录，但要求旧上游域为空；部署脚本在任何双库迁移前只读检查，SQL 本身也在持久结构变化前拒绝旧上游记录。维护者先备份并明确处理旧源、节点及关联线路，再重新导入；程序不自动清理。回退必须配套恢复数据库备份，详见部署指南。

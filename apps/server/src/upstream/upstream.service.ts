@@ -1,722 +1,426 @@
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-  OnModuleInit,
-  OnModuleDestroy,
-  Optional
-} from '@nestjs/common';
-import * as net from 'net';
+import { Injectable, Logger, NotFoundException, BadRequestException, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
+import * as net from 'node:net';
 import type { Prisma, UpstreamSubscription, UpstreamNode } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentGatewayService } from '../agent-gateway/agent-gateway.service';
+import { encryptSecret, decryptSecret, isEncryptedSecret } from '../common/secret-crypto';
+import { buildUpstreamOutbound, buildUpstreamUri, buildUpstreamClashProxy, type UpstreamConnection } from '../common/upstream-connection';
+import { getUpstreamUnavailableReason } from '../common/upstream-availability';
+import { stringify as stringifyYaml } from 'yaml';
 import { UpstreamParserService } from './upstream-parser.service';
+import { fetchUpstream, validateUpstreamUrl, validateUpstreamHeaders, UPSTREAM_FETCH_LIMITS } from './upstream-fetch';
 import { CreateUpstreamDto } from './dto/create-upstream.dto';
 import { UpdateUpstreamDto } from './dto/update-upstream.dto';
 import { QueryUpstreamDto } from './dto/query-upstream.dto';
 import { QueryUpstreamNodeDto } from './dto/query-upstream-node.dto';
 import { ExportUpstreamNodesDto } from './dto/export-upstream-nodes.dto';
-import { UpstreamNodeStatus } from '../common/constants';
-import type { ParsedUpstreamNode, UpstreamUserInfo } from './upstream.types';
+import type { UpstreamNodeStatus } from '../common/constants';
+import type { ParseResult, ParsedUpstreamNode, UpstreamUserInfo } from './upstream.types';
 
 type NodeWithRelations = UpstreamNode & {
-  subscription?: { id: string; name: string } | null;
+  subscription?: { id: string; name: string; status: string } | null;
   relayLines?: Array<{ id: string; name: string; status: string }>;
 };
+type SyncSummary = { success: true; created: number; updated: number; missing: number; nodeCount: number; format: string; diagnostics: ParseResult['diagnostics']; userInfo: { uploadBytes: string | null; downloadBytes: string | null; usedBytes: string | null; totalBytes: string | null; expireAt: string | null } | null };
+type SyncPhase = 'QUEUED' | 'FETCHING' | 'PARSING' | 'COMMITTING' | 'IDLE';
+const PAGE_BATCH = 100;
+const MAX_CONCURRENT_SYNCS = 4;
+
+function seal(value: string): string {
+  if (!value || isEncryptedSecret(value)) throw new BadRequestException('秘密字段必须提供非空明文');
+  return encryptSecret(value);
+}
+function unseal(value: string): string {
+  if (!isEncryptedSecret(value)) throw new BadRequestException('上游秘密未加密；需要重新导入');
+  try { return decryptSecret(value); } catch { throw new BadRequestException('上游秘密解密失败'); }
+}
+function tagsOf(value: string): string[] {
+  try { const parsed: unknown = JSON.parse(value); return Array.isArray(parsed) ? parsed.filter((tag): tag is string => typeof tag === 'string') : []; } catch { return []; }
+}
 
 @Injectable()
 export class UpstreamService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(UpstreamService.name);
   private syncTimer?: NodeJS.Timeout;
+  private stopping = false;
+  private sweeping = false;
+  private readonly locks = new Map<string, Promise<unknown>>();
+  private readonly syncs = new Map<string, Promise<SyncSummary>>();
+  private readonly phases = new Map<string, SyncPhase>();
+  private readonly controllers = new Set<AbortController>();
+  private activeSyncs = 0;
+  private readonly slots: Array<() => void> = [];
+  private readonly expired = new Set<string>();
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly parser: UpstreamParserService,
-    @Optional() private readonly agentGateway?: AgentGatewayService
-  ) {}
+  constructor(private readonly prisma: PrismaService, private readonly parser: UpstreamParserService, @Optional() private readonly agentGateway?: AgentGatewayService) {}
 
   onModuleInit() {
-    // 启动后台定时同步检查（每 60 秒巡检一次）
-    this.syncTimer = setInterval(() => {
-      void this.checkScheduledSync();
-    }, 60 * 1000);
+    void this.checkScheduledSync();
+    this.syncTimer = setInterval(() => { void this.checkScheduledSync(); }, 60_000);
+  }
+  async onModuleDestroy() {
+    this.stopping = true;
+    if (this.syncTimer) clearInterval(this.syncTimer);
+    for (const controller of this.controllers) controller.abort();
+    while (this.slots.length) this.slots.shift()!();
+    await Promise.allSettled([...this.locks.values()]);
   }
 
-  onModuleDestroy() {
-    if (this.syncTimer) {
-      clearInterval(this.syncTimer);
-      this.syncTimer = undefined;
-    }
+  private serial<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(id) ?? Promise.resolve();
+    const task = previous.catch(() => undefined).then(() => {
+      if (this.stopping) throw new BadRequestException('上游服务正在关闭');
+      return operation();
+    });
+    this.locks.set(id, task);
+    void task.finally(() => { if (this.locks.get(id) === task) this.locks.delete(id); }).catch(() => undefined);
+    return task;
   }
-
-  // ==============================
-  // 订阅源管理 (CRUD)
-  // ==============================
+  private async acquireSlot() {
+    if (this.activeSyncs >= MAX_CONCURRENT_SYNCS) await new Promise<void>((resolve) => this.slots.push(resolve));
+    else this.activeSyncs++;
+    if (this.stopping) { this.releaseSlot(); throw new BadRequestException('上游服务正在关闭'); }
+  }
+  private releaseSlot() {
+    const next = this.slots.shift();
+    if (next) next(); else this.activeSyncs = Math.max(0, this.activeSyncs - 1);
+  }
+  private notify() {
+    try { void this.agentGateway?.pushConfigToAll()?.catch(() => this.logger.error('Upstream configuration notification failed after commit')); } catch { this.logger.error('Upstream configuration notification failed after commit'); }
+  }
 
   async list(query: QueryUpstreamDto) {
-    const page = query.page ?? 1;
-    const pageSize = query.pageSize ?? 20;
-    const where: Prisma.UpstreamSubscriptionWhereInput = {};
-    if (query.search) {
-      where.name = { contains: query.search };
-    }
-    if (query.status) {
-      where.status = query.status;
-    }
-
+    const page = query.page ?? 1, pageSize = query.pageSize ?? 20;
+    const where: Prisma.UpstreamSubscriptionWhereInput = { ...(query.search ? { name: { contains: query.search } } : {}), ...(query.status ? { status: query.status } : {}) };
     const [rows, total] = await Promise.all([
-      this.prisma.upstreamSubscription.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize
-      }),
+      this.prisma.upstreamSubscription.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
       this.prisma.upstreamSubscription.count({ where })
     ]);
-
-    return {
-      data: rows.map((row) => this.toSubscriptionView(row)),
-      total,
-      page,
-      pageSize
-    };
+    return { data: rows.map((row) => this.toSubscriptionView(row)), total, page, pageSize };
+  }
+  async detail(id: string) { return { subscription: this.toSubscriptionView(await this.findSubOrThrow(id), true) }; }
+  async syncStatus(id: string) {
+    const sub = await this.findSubOrThrow(id);
+    return { phase: this.phases.get(id) ?? 'IDLE', lastSyncAt: sub.lastSyncAt, lastSuccessAt: sub.lastSuccessAt, lastSyncStatus: sub.lastSyncStatus, lastSyncMessage: sub.lastSyncMessage };
   }
 
-  async detail(id: string) {
-    const sub = await this.prisma.upstreamSubscription.findUnique({
-      where: { id },
-      include: {
-        _count: { select: { nodes: true } }
-      }
-    });
-    if (!sub) throw new NotFoundException('上游订阅不存在');
-    return { subscription: this.toSubscriptionView(sub) };
+  private validateSource(sourceType: string, url: string | null, content: string | null, headers: Record<string, string>) {
+    try {
+      if (sourceType === 'URL') { if (!url) throw new Error('URL 来源必须提供 URL'); validateUpstreamUrl(url); }
+      else if (sourceType === 'TEXT') { if (!content?.trim()) throw new Error('文本来源必须提供非空内容'); }
+      else throw new Error('来源类型无效');
+      if (content && Buffer.byteLength(content) > UPSTREAM_FETCH_LIMITS.maxBytes) throw new Error('源内容超限');
+      validateUpstreamHeaders(headers);
+    } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : '来源配置无效'); }
   }
-
   async create(dto: CreateUpstreamDto) {
-    if (dto.sourceType === 'URL' && !dto.url) {
-      throw new BadRequestException('URL 来源的订阅必须提供有效 URL');
-    }
-    if (dto.sourceType === 'TEXT' && !dto.content) {
-      throw new BadRequestException('文本来源的订阅必须提供配置内容');
-    }
-
-    const created = await this.prisma.upstreamSubscription.create({
-      data: {
-        name: dto.name.trim(),
-        sourceType: dto.sourceType ?? 'URL',
-        format: dto.format ?? 'AUTO',
-        url: dto.url?.trim() || null,
-        content: dto.content || null,
-        customHeadersJson: JSON.stringify(dto.customHeaders || {}),
-        autoUpdate: dto.autoUpdate ?? true,
-        updateIntervalMins: dto.updateIntervalMins ?? 720,
-        status: 'ACTIVE'
-      }
-    });
-
-    // 异步执行一次首次同步
-    void this.sync(created.id).catch((err: Error) => {
-      this.logger.warn(`Initial sync failed for upstream ${created.id}: ${err.message}`);
-    });
-
+    const sourceType = dto.sourceType ?? 'URL';
+    const url = dto.url?.trim() || null, content = dto.content || null, customHeaders = dto.customHeaders ?? {};
+    if (!dto.name.trim()) throw new BadRequestException('订阅名称不能为空');
+    this.validateSource(sourceType, url, content, customHeaders);
+    const created = await this.prisma.upstreamSubscription.create({ data: {
+      name: dto.name.trim(), sourceType, format: dto.format ?? 'AUTO',
+      url: sourceType === 'URL' ? seal(url!) : null, content: sourceType === 'TEXT' ? seal(content!) : null,
+      customHeadersJson: seal(JSON.stringify(customHeaders)), autoUpdate: dto.autoUpdate ?? true,
+      updateIntervalMins: dto.updateIntervalMins ?? 720, status: dto.status ?? 'ACTIVE'
+    } });
+    if (created.status === 'ACTIVE') void this.sync(created.id).catch(() => this.logger.warn(`Initial upstream sync failed: ${created.id}`));
     return { subscription: this.toSubscriptionView(created) };
   }
-
-  async update(id: string, dto: UpdateUpstreamDto) {
-    await this.findSubOrThrow(id);
-    const data: Prisma.UpstreamSubscriptionUpdateInput = {};
-    if (dto.name !== undefined) data.name = dto.name.trim();
-    if (dto.sourceType !== undefined) data.sourceType = dto.sourceType;
-    if (dto.format !== undefined) data.format = dto.format;
-    if (dto.url !== undefined) data.url = dto.url.trim() || null;
-    if (dto.content !== undefined) data.content = dto.content || null;
-    if (dto.customHeaders !== undefined) data.customHeadersJson = JSON.stringify(dto.customHeaders);
-    if (dto.autoUpdate !== undefined) data.autoUpdate = dto.autoUpdate;
-    if (dto.updateIntervalMins !== undefined) data.updateIntervalMins = dto.updateIntervalMins;
-    if (dto.status !== undefined) data.status = dto.status;
-
-    const updated = await this.prisma.upstreamSubscription.update({
-      where: { id },
-      data
-    });
-    return { subscription: this.toSubscriptionView(updated) };
-  }
-
-  async remove(id: string) {
-    await this.findSubOrThrow(id);
-    // 查找该订阅下的所有节点
-    const nodes = await this.prisma.upstreamNode.findMany({
-      where: { subscriptionId: id },
-      select: { id: true, name: true }
-    });
-    const nodeIds = nodes.map((n) => n.id);
-
-    // 联动治理：若有中继线路使用了这些节点，自动将其置为 DISABLED 并清空 upstreamNodeId
-    if (nodeIds.length > 0) {
-      const impactedLines = await this.prisma.line.findMany({
-        where: { upstreamNodeId: { in: nodeIds } },
-        select: { id: true, name: true }
-      });
-      if (impactedLines.length > 0) {
-        await this.prisma.line.updateMany({
-          where: { upstreamNodeId: { in: nodeIds } },
-          data: { status: 'DISABLED', upstreamNodeId: null }
-        });
-        this.logger.warn(
-          `Upstream ${id} deleted. Automatically disabled ${impactedLines.length} linked relay line(s).`
-        );
-        this.agentGateway?.pushConfigToAll();
+  update(id: string, dto: UpdateUpstreamDto) {
+    return this.serial(id, async () => {
+      const current = await this.findSubOrThrow(id);
+      const sourceType = dto.sourceType ?? current.sourceType;
+      const url = dto.url !== undefined ? dto.url.trim() || null : current.url ? unseal(current.url) : null;
+      const content = dto.content !== undefined ? dto.content : current.content ? unseal(current.content) : null;
+      const headers = dto.customHeaders ?? JSON.parse(unseal(current.customHeadersJson)) as Record<string, string>;
+      this.validateSource(sourceType, url, content, headers);
+      if (dto.content !== undefined && !dto.content.trim()) throw new BadRequestException('替换内容不能为空；请省略以保留原内容');
+      const data: Prisma.UpstreamSubscriptionUpdateInput = {};
+      if (dto.name !== undefined) { if (!dto.name.trim()) throw new BadRequestException('订阅名称不能为空'); data.name = dto.name.trim(); }
+      if (dto.sourceType !== undefined) { data.sourceType = sourceType; if (sourceType === 'TEXT') data.url = null; }
+      if (sourceType !== current.sourceType) {
+        data.userInfoUsedBytes = null; data.userInfoTotalBytes = null; data.userInfoExpireAt = null;
       }
-    }
-
-    await this.prisma.upstreamSubscription.delete({ where: { id } });
-    return { deleted: true, id };
+      if (dto.format !== undefined) data.format = dto.format;
+      if (dto.url !== undefined) data.url = sourceType === 'URL' ? seal(url!) : null;
+      if (dto.content !== undefined) data.content = content ? seal(content) : null;
+      if (dto.customHeaders !== undefined) data.customHeadersJson = seal(JSON.stringify(headers));
+      if (dto.autoUpdate !== undefined) data.autoUpdate = dto.autoUpdate;
+      if (dto.updateIntervalMins !== undefined) data.updateIntervalMins = dto.updateIntervalMins;
+      if (dto.status !== undefined) data.status = dto.status;
+      const updated = await this.prisma.upstreamSubscription.update({ where: { id }, data });
+      if ((dto.status !== undefined && dto.status !== current.status) || sourceType !== current.sourceType) this.notify();
+      return { subscription: this.toSubscriptionView(updated) };
+    });
+  }
+  remove(id: string) {
+    return this.serial(id, async () => {
+      await this.findSubOrThrow(id);
+      await this.prisma.$transaction(async (tx) => {
+        await tx.line.updateMany({ where: { upstreamNode: { subscriptionId: id } }, data: { status: 'DISABLED', upstreamNodeId: null } });
+        await tx.upstreamSubscription.delete({ where: { id } });
+      });
+      this.notify(); this.phases.delete(id); this.expired.delete(id);
+      return { deleted: true, id };
+    });
   }
 
-  // ==============================
-  // 同步与解析核心
-  // ==============================
-
-  async sync(id: string) {
+  sync(id: string): Promise<SyncSummary> {
+    const active = this.syncs.get(id);
+    if (active) return active;
+    this.phases.set(id, 'QUEUED');
+    const task = this.serial(id, async () => {
+      await this.acquireSlot();
+      try { return await this.performSync(id); } finally { this.releaseSlot(); }
+    });
+    this.syncs.set(id, task);
+    void task.finally(() => { if (this.syncs.get(id) === task) this.syncs.delete(id); this.phases.set(id, 'IDLE'); }).catch(() => undefined);
+    return task;
+  }
+  private async performSync(id: string): Promise<SyncSummary> {
     const sub = await this.findSubOrThrow(id);
-    let rawContent = sub.content || '';
-    let userInfo: UpstreamUserInfo | null = null;
-
+    const controller = new AbortController();
+    this.controllers.add(controller);
     try {
+      if (sub.status !== 'ACTIVE') throw new BadRequestException('禁用的上游源不能同步');
+      let raw = sub.content ? unseal(sub.content) : '';
+      let userInfo: UpstreamUserInfo | null = null;
       if (sub.sourceType === 'URL') {
-        if (!sub.url) throw new BadRequestException('该订阅未配置 URL，无法在线拉取');
-        const headers: Record<string, string> = {
-          'User-Agent': 'ClashMeta/v1.18.0 (Sing-box Compatible; RiriCloud)',
-          Accept: '*/*'
-        };
-        try {
-          const custom = JSON.parse(sub.customHeadersJson || '{}') as Record<string, string>;
-          Object.assign(headers, custom);
-        } catch {
-          // ignore
-        }
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 20000); // 20s 超时
-        try {
-          const resp = await fetch(sub.url, {
-            headers,
-            signal: controller.signal
-          });
-          if (!resp.ok) {
-            throw new Error(`上游 HTTP 错误: 状态码 ${resp.status} ${resp.statusText}`);
-          }
-          const userinfoHeader = resp.headers.get('subscription-userinfo');
-          if (userinfoHeader) {
-            userInfo = this.parser.parseUserInfoHeader(userinfoHeader);
-          }
-          rawContent = await resp.text();
-        } finally {
-          clearTimeout(timeout);
-        }
+        this.phases.set(id, 'FETCHING');
+        if (!sub.url) throw new BadRequestException('上游源未配置 URL');
+        const response = await fetchUpstream(unseal(sub.url), JSON.parse(unseal(sub.customHeadersJson)) as Record<string, string>, controller.signal);
+        raw = response.content;
+        userInfo = this.parser.parseUserInfoHeader(response.userInfo);
       }
-
-      // 解析内容
-      const parseResult = this.parser.parse(rawContent, sub.format);
-      const parsedNodes = parseResult.nodes;
-
-      // 差异比对与持久化 (Diff Engine)
-      await this.applyNodesDiff(sub, parsedNodes, rawContent, userInfo, parseResult.format);
-
-      this.logger.log(`Upstream ${sub.name} synced successfully. Parsed ${parsedNodes.length} node(s).`);
-      return {
-        success: true,
-        nodeCount: parsedNodes.length,
-        format: parseResult.format,
-        userInfo
-      };
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : '同步失败';
-      this.logger.error(`Upstream sync error for ${sub.name}: ${errMsg}`);
-      await this.prisma.upstreamSubscription.update({
-        where: { id },
-        data: {
-          lastSyncAt: new Date(),
-          lastSyncStatus: 'FAILED',
-          lastSyncMessage: errMsg
-        }
-      });
-      throw new BadRequestException(`上游同步失败: ${errMsg}`);
-    }
+      if (this.stopping) throw new BadRequestException('上游服务正在关闭');
+      this.phases.set(id, 'PARSING');
+      const parsed = this.parser.parse(raw, sub.format);
+      this.phases.set(id, 'COMMITTING');
+      const result = await this.commitSnapshot(sub, parsed, raw, userInfo);
+      if (result.notify) this.notify();
+      this.expired.delete(id);
+      return { success: true, ...result.counts, nodeCount: parsed.nodes.length, format: parsed.format, diagnostics: parsed.diagnostics,
+        userInfo: userInfo ? { uploadBytes: userInfo.uploadBytes?.toString() ?? null, downloadBytes: userInfo.downloadBytes?.toString() ?? null, usedBytes: userInfo.usedBytes?.toString() ?? null, totalBytes: userInfo.totalBytes?.toString() ?? null, expireAt: userInfo.expireAt?.toISOString() ?? null } : null };
+    } catch (error) {
+      // 只允许本域已脱敏的解析诊断进入 API；底层异常（含 URL/数据库参数）统一隐藏。
+      const message = error instanceof BadRequestException ? error.message : '上游拉取或快照提交失败';
+      await this.prisma.upstreamSubscription.update({ where: { id }, data: { lastSyncAt: new Date(), lastSyncStatus: 'FAILED', lastSyncMessage: message } });
+      this.logger.warn(`Upstream sync failed: ${id}`);
+      throw new BadRequestException(message);
+    } finally { this.controllers.delete(controller); }
   }
 
-  private async applyNodesDiff(
-    sub: UpstreamSubscription,
-    newNodes: ParsedUpstreamNode[],
-    rawContent: string,
-    userInfo: UpstreamUserInfo | null,
-    detectedFormat: string
-  ) {
-    const existingNodes = await this.prisma.upstreamNode.findMany({
-      where: { subscriptionId: sub.id }
-    });
-
-    const existingByFp = new Map<string, UpstreamNode>();
-    for (const en of existingNodes) {
-      existingByFp.set(en.fingerprint, en);
-    }
-
-    const matchedExistingIds = new Set<string>();
-    let linesNeedSync = false;
-
-    // 1. 处理新增和更新
-    for (const pn of newNodes) {
-      const matched = existingByFp.get(pn.fingerprint);
-      if (matched) {
-        matchedExistingIds.add(matched.id);
-        // 更新参数
-        await this.prisma.upstreamNode.update({
-          where: { id: matched.id },
-          data: {
-            name: pn.name,
-            protocolType: pn.protocolType,
-            serverHost: pn.serverHost,
-            serverPort: pn.serverPort,
-            paramsJson: JSON.stringify(pn.params),
-            rawConfigJson: typeof pn.rawConfig === 'string' ? pn.rawConfig : JSON.stringify(pn.rawConfig),
-            tagsJson: JSON.stringify(pn.tags)
-          }
-        });
-      } else {
-        // 创建新节点（默认不直接合并进用户客户端订阅）
-        await this.prisma.upstreamNode.create({
-          data: {
-            subscriptionId: sub.id,
-            name: pn.name,
-            protocolType: pn.protocolType,
-            serverHost: pn.serverHost,
-            serverPort: pn.serverPort,
-            paramsJson: JSON.stringify(pn.params),
-            rawConfigJson: typeof pn.rawConfig === 'string' ? pn.rawConfig : JSON.stringify(pn.rawConfig),
-            fingerprint: pn.fingerprint,
-            tagsJson: JSON.stringify(pn.tags),
-            status: 'ACTIVE',
-            isDirectSub: false
-          }
-        });
+  private matchSnapshot(existing: UpstreamNode[], incoming: ParsedUpstreamNode[]) {
+    const matches = new Map<ParsedUpstreamNode, UpstreamNode>();
+    const used = new Set<string>();
+    const stages: Array<(node: ParsedUpstreamNode | UpstreamNode) => string | null> = [
+      (node) => node.sourceKey || null,
+      (node) => node.connectionHash,
+      (node) => `${node.protocolType}\0${node.name}`
+    ];
+    for (const [stage, keyOf] of stages.entries()) {
+      const oldGroups = new Map<string, UpstreamNode[]>(), newGroups = new Map<string, ParsedUpstreamNode[]>();
+      for (const node of existing) { const key = keyOf(node); if (key && !used.has(node.id)) oldGroups.set(key, [...(oldGroups.get(key) ?? []), node]); }
+      for (const node of incoming) { const key = keyOf(node); if (key && !matches.has(node)) newGroups.set(key, [...(newGroups.get(key) ?? []), node]); }
+      for (const [key, nodes] of newGroups) {
+        const candidates = oldGroups.get(key) ?? [];
+        if (stage === 2 && candidates.length && (incoming.filter((node) => keyOf(node) === key).length !== 1 || existing.filter((node) => keyOf(node) === key).length !== 1)) throw new BadRequestException('节点名称匹配存在歧义；快照未提交');
+        if (candidates.length && (nodes.length !== 1 || candidates.length !== 1)) throw new BadRequestException('节点身份匹配存在歧义；快照未提交');
+        if (candidates.length === 1) { matches.set(nodes[0], candidates[0]); used.add(candidates[0].id); }
       }
     }
-
-    // 2. 检查被删除的节点（现有节点在本次抓取中不复存在）
-    const removedNodes = existingNodes.filter((en) => !matchedExistingIds.has(en.id));
-    if (removedNodes.length > 0) {
-      const removedIds = removedNodes.map((n) => n.id);
-      // 联动治理：根据审批通过的决策规则，自动停用所有关联的中转线路
-      const affectedLines = await this.prisma.line.findMany({
-        where: { upstreamNodeId: { in: removedIds } },
-        select: { id: true, name: true, upstreamNodeId: true }
-      });
-
-      if (affectedLines.length > 0) {
-        await this.prisma.line.updateMany({
-          where: { id: { in: affectedLines.map((l) => l.id) } },
-          data: { status: 'DISABLED' }
-        });
-        linesNeedSync = true;
-        for (const line of affectedLines) {
-          this.logger.warn(`中转线路 [${line.name}] 关联的上游节点已被上游删除，线路已被自动停用`);
+    const sourceKeys = incoming.map((node) => node.sourceKey).filter(Boolean);
+    if (new Set(sourceKeys).size !== sourceKeys.length) throw new BadRequestException('源内节点 ID 存在歧义；快照未提交');
+    return { matches, missing: existing.filter((node) => !used.has(node.id) && node.presenceStatus !== 'MISSING') };
+  }
+  private commitSnapshot(sub: UpstreamSubscription, parsed: ParseResult, raw: string, userInfo: UpstreamUserInfo | null) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.upstreamNode.findMany({ where: { subscriptionId: sub.id } });
+      const { matches, missing } = this.matchSnapshot(existing, parsed.nodes);
+      const counts = { created: 0, updated: 0, missing: missing.length };
+      let notify = missing.length > 0;
+      for (const node of parsed.nodes) {
+        const old = matches.get(node);
+        const data = { name: node.name, protocolType: node.protocolType, serverHost: node.serverHost, serverPort: node.serverPort,
+          sourceKey: node.sourceKey ?? null, connectionHash: node.connectionHash, configHash: node.configHash,
+          paramsJson: seal(JSON.stringify(node.params)), rawConfigJson: seal(JSON.stringify(node.rawConfig)), tagsJson: JSON.stringify(node.tags), presenceStatus: 'PRESENT', missingSince: null };
+        if (old) {
+          if (old.configHash !== node.configHash || old.presenceStatus !== 'PRESENT' || old.sourceKey !== data.sourceKey) {
+            await tx.upstreamNode.update({ where: { id: old.id }, data }); counts.updated++;
+          }
+          if (old.connectionHash !== node.connectionHash || old.presenceStatus !== 'PRESENT') notify = true;
+        } else { await tx.upstreamNode.create({ data: { subscriptionId: sub.id, ...data, status: 'ACTIVE' } }); counts.created++; notify = true; }
+      }
+      if (missing.length) {
+        for (let offset = 0; offset < missing.length; offset += PAGE_BATCH) {
+          const ids = missing.slice(offset, offset + PAGE_BATCH).map((node) => node.id);
+          await tx.upstreamNode.updateMany({ where: { id: { in: ids } }, data: { presenceStatus: 'MISSING', missingSince: new Date() } });
+          await tx.line.updateMany({ where: { upstreamNodeId: { in: ids } }, data: { status: 'DISABLED' } });
         }
       }
-
-      // 删除已失效节点
-      await this.prisma.upstreamNode.deleteMany({
-        where: { id: { in: removedIds } }
-      });
-    }
-
-    // 3. 更新上游主表统计
-    const updateData: Prisma.UpstreamSubscriptionUpdateInput = {
-      lastSyncAt: new Date(),
-      lastSyncStatus: 'SUCCESS',
-      lastSyncMessage: null,
-      nodeCount: newNodes.length,
-      content: rawContent
-    };
-    if (sub.format === 'AUTO' && detectedFormat) {
-      updateData.format = detectedFormat;
-    }
-    if (userInfo) {
-      if (userInfo.usedBytes !== undefined) updateData.userInfoUsedBytes = userInfo.usedBytes;
-      if (userInfo.totalBytes !== undefined) updateData.userInfoTotalBytes = userInfo.totalBytes;
-      if (userInfo.expireAt !== undefined) updateData.userInfoExpireAt = userInfo.expireAt;
-    }
-
-    await this.prisma.upstreamSubscription.update({
-      where: { id: sub.id },
-      data: updateData
-    });
-
-    if (linesNeedSync) {
-      this.agentGateway?.pushConfigToAll();
-    }
+      const used = userInfo?.usedBytes ?? null, total = userInfo?.totalBytes ?? null, expire = userInfo?.expireAt ?? null;
+      if (sub.userInfoUsedBytes !== used || sub.userInfoTotalBytes !== total || sub.userInfoExpireAt?.getTime() !== expire?.getTime()) notify = true;
+      const now = new Date();
+      await tx.upstreamSubscription.update({ where: { id: sub.id }, data: { content: seal(raw), detectedFormat: parsed.format, lastSyncAt: now, lastSuccessAt: now,
+        lastSyncStatus: 'SUCCESS', lastSyncMessage: null, nodeCount: parsed.nodes.length, userInfoUsedBytes: used, userInfoTotalBytes: total, userInfoExpireAt: expire } });
+      return { counts, notify };
+    }, { isolationLevel: 'Serializable', timeout: 10_000 });
   }
-
-  // ==============================
-  // 节点管理
-  // ==============================
 
   async listNodes(query: QueryUpstreamNodeDto) {
-    const page = query.page ?? 1;
-    const pageSize = query.pageSize ?? 50;
+    const page = query.page ?? 1, pageSize = query.pageSize ?? 50;
     const where: Prisma.UpstreamNodeWhereInput = {};
-
     if (query.subscriptionId) where.subscriptionId = query.subscriptionId;
     if (query.search) where.name = { contains: query.search };
     if (query.protocolType) where.protocolType = query.protocolType.toUpperCase();
     if (query.status) where.status = query.status;
-    if (query.isDirectSub !== undefined) where.isDirectSub = query.isDirectSub;
-
-    const [rows, total] = await Promise.all([
-      this.prisma.upstreamNode.findMany({
-        where,
-        include: {
-          subscription: { select: { id: true, name: true, status: true } },
-          relayLines: { select: { id: true, name: true, status: true } }
-        },
-        orderBy: [{ isDirectSub: 'desc' }, { createdAt: 'desc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize
-      }),
-      this.prisma.upstreamNode.count({ where })
-    ]);
-
-    let data = rows.map((node) => this.toNodeView(node));
+    if (query.presenceStatus) where.presenceStatus = query.presenceStatus;
+    let filteredTotal: number | undefined;
     if (query.tag) {
-      const tagLower = query.tag.toLowerCase();
-      data = data.filter((node) =>
-        node.tags.some((t: string) => t.toLowerCase() === tagLower)
-      );
-    }
-
-    return { data, total, page, pageSize };
-  }
-
-  async setNodeDirectSub(id: string, isDirectSub: boolean) {
-    const current = await this.findNodeOrThrow(id);
-    const updated = await this.prisma.upstreamNode.update({
-      where: { id: current.id },
-      data: { isDirectSub }
-    });
-    return { node: this.toNodeView(updated) };
-  }
-
-  async setNodeStatus(id: string, status: UpstreamNodeStatus) {
-    const current = await this.findNodeOrThrow(id);
-    const updated = await this.prisma.upstreamNode.update({
-      where: { id: current.id },
-      data: { status }
-    });
-    // 若禁用节点，联动检查是否有中转线路引用
-    if (status === 'DISABLED') {
-      const affectedLines = await this.prisma.line.findMany({
-        where: { upstreamNodeId: current.id, status: 'ACTIVE' },
-        select: { id: true, name: true }
-      });
-      if (affectedLines.length > 0) {
-        await this.prisma.line.updateMany({
-          where: { id: { in: affectedLines.map((l) => l.id) } },
-          data: { status: 'DISABLED' }
-        });
-        this.agentGateway?.pushConfigToAll();
+      // 精确扫描标签后仅用本页 ID 查询，避免大型 IN 超过 SQLite 参数上限。
+      const ids: string[] = [];
+      let cursor: string | undefined;
+      filteredTotal = 0;
+      const start = (page - 1) * pageSize;
+      while (true) {
+        const batch = await this.prisma.upstreamNode.findMany({ where, select: { id: true, tagsJson: true }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: PAGE_BATCH, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+        for (const node of batch) {
+          if (!tagsOf(node.tagsJson).some((tag) => tag.toLowerCase() === query.tag!.toLowerCase())) continue;
+          if (filteredTotal >= start && ids.length < pageSize) ids.push(node.id);
+          filteredTotal++;
+        }
+        if (batch.length < PAGE_BATCH) break;
+        cursor = batch[batch.length - 1].id;
       }
+      where.id = { in: ids };
     }
-    return { node: this.toNodeView(updated) };
+    const [rows, total] = await Promise.all([
+      this.prisma.upstreamNode.findMany({ where, include: { subscription: { select: { id: true, name: true, status: true } }, relayLines: { select: { id: true, name: true, status: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: filteredTotal === undefined ? (page - 1) * pageSize : 0, take: pageSize }),
+      filteredTotal ?? this.prisma.upstreamNode.count({ where })
+    ]);
+    return { data: rows.map((node) => this.toNodeView(node)), total, page, pageSize };
   }
-
-  // ==============================
-  // 连通性测速 (Probe)
-  // ==============================
+  async setNodeStatus(id: string, status: UpstreamNodeStatus) {
+    if (!['ACTIVE', 'DISABLED'].includes(status)) throw new BadRequestException('节点状态无效');
+    const node = await this.findNodeOrThrow(id);
+    return this.serial(node.subscriptionId, async () => {
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const current = await tx.upstreamNode.findUnique({ where: { id } });
+        if (!current) throw new NotFoundException('上游节点不存在');
+        const result = await tx.upstreamNode.update({ where: { id }, data: { status } });
+        if (status === 'DISABLED') await tx.line.updateMany({ where: { upstreamNodeId: id }, data: { status: 'DISABLED' } });
+        return result;
+      });
+      this.notify(); return { node: this.toNodeView(updated) };
+    });
+  }
 
   async probeNode(id: string) {
     const node = await this.findNodeOrThrow(id);
-    const result = await this.measureTcpLatency(node.serverHost, node.serverPort, 3000);
-
-    const updated = await this.prisma.upstreamNode.update({
-      where: { id },
-      data: {
-        latencyMs: result.latencyMs,
-        lastTestedAt: new Date(),
-        lastTestStatus: result.status,
-        lastTestMessage: result.message
-      }
+    return this.serial(node.subscriptionId, async () => {
+      const current = await this.prisma.upstreamNode.findUnique({ where: { id }, include: { subscription: true } });
+      if (!current) throw new NotFoundException('上游节点不存在');
+      const unavailable = getUpstreamUnavailableReason(current);
+      const result = unavailable ? { latencyMs: null, status: 'NOT_APPLICABLE', message: '上游资源不可用' } : ['TUIC', 'HYSTERIA2'].includes(current.protocolType) ? { latencyMs: null, status: 'NOT_APPLICABLE', message: 'UDP-only 协议不适用 TCP 探针' } : await this.measureTcpLatency(current.serverHost, current.serverPort);
+      const updated = await this.prisma.upstreamNode.update({ where: { id }, data: { latencyMs: result.latencyMs, lastTestedAt: new Date(), lastTestStatus: result.status, lastTestMessage: result.message } });
+      return { probe: { ...result, perspective: 'MASTER_TCP' }, node: this.toNodeView(updated) };
     });
-
-    return { probe: result, node: this.toNodeView(updated) };
   }
-
   async probeAll(subscriptionId?: string) {
-    const where: Prisma.UpstreamNodeWhereInput = { status: 'ACTIVE' };
-    if (subscriptionId) where.subscriptionId = subscriptionId;
-
-    const nodes = await this.prisma.upstreamNode.findMany({
-      where,
-      select: { id: true, serverHost: true, serverPort: true },
-      take: 200 // 每次最多测速 200 个节点
-    });
-
-    // 并发控制为 10
-    const concurrency = 10;
+    const where: Prisma.UpstreamNodeWhereInput = { status: 'ACTIVE', ...(subscriptionId ? { subscriptionId } : {}) };
     const results: Array<{ id: string; latencyMs: number | null; status: string }> = [];
-
-    for (let i = 0; i < nodes.length; i += concurrency) {
-      const chunk = nodes.slice(i, i + concurrency);
-      await Promise.all(
-        chunk.map(async (n) => {
-          const res = await this.measureTcpLatency(n.serverHost, n.serverPort, 3000);
-          await this.prisma.upstreamNode.update({
-            where: { id: n.id },
-            data: {
-              latencyMs: res.latencyMs,
-              lastTestedAt: new Date(),
-              lastTestStatus: res.status,
-              lastTestMessage: res.message
-            }
-          });
-          results.push({ id: n.id, latencyMs: res.latencyMs, status: res.status });
-        })
-      );
+    let cursor: string | undefined;
+    while (!this.stopping) {
+      const nodes = await this.prisma.upstreamNode.findMany({ where, select: { id: true }, orderBy: { id: 'asc' }, take: PAGE_BATCH, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+      for (let i = 0; i < nodes.length; i += 10) await Promise.all(nodes.slice(i, i + 10).map(async (node) => {
+        try { const { probe } = await this.probeNode(node.id); results.push({ id: node.id, latencyMs: probe.latencyMs, status: probe.status }); }
+        catch { results.push({ id: node.id, latencyMs: null, status: 'ERROR' }); }
+      }));
+      if (nodes.length < PAGE_BATCH) break;
+      cursor = nodes[nodes.length - 1].id;
     }
-
-    return { total: nodes.length, tested: results.length, results };
+    return { total: results.length, tested: results.filter((result) => result.status !== 'NOT_APPLICABLE').length, results, perspective: 'MASTER_TCP' };
   }
-
-  private measureTcpLatency(
-    host: string,
-    port: number,
-    timeoutMs: number
-  ): Promise<{ latencyMs: number | null; status: 'SUCCESS' | 'TIMEOUT' | 'ERROR'; message: string | null }> {
-    return new Promise((resolve) => {
-      const startTime = Date.now();
-      const socket = new net.Socket();
-      let resolved = false;
-
-      const finish = (status: 'SUCCESS' | 'TIMEOUT' | 'ERROR', message: string | null = null) => {
-        if (resolved) return;
-        resolved = true;
-        socket.destroy();
-        const latencyMs = status === 'SUCCESS' ? Date.now() - startTime : null;
-        resolve({ latencyMs, status, message });
-      };
-
-      socket.setTimeout(timeoutMs);
-      socket.once('connect', () => finish('SUCCESS'));
-      socket.once('timeout', () => finish('TIMEOUT', '连接超时'));
-      socket.once('error', (err: Error) => finish('ERROR', err.message || '握手失败'));
-
-      try {
-        socket.connect(port, host);
-      } catch (err: unknown) {
-        finish('ERROR', err instanceof Error ? err.message : '连接异常');
-      }
-    });
+  private async measureTcpLatency(host: string, port: number): Promise<{ latencyMs: number | null; status: string; message: string | null }> {
+    // 与拉取相同的地址门禁，避免管理员导入节点借 TCP 探针访问私网。
+    const { lookup } = await import('node:dns/promises');
+    const { isPublicUpstreamAddress } = await import('./upstream-fetch');
+    const controller = new AbortController(); this.controllers.add(controller);
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const addresses = await Promise.race([
+        net.isIP(host) ? Promise.resolve([{ address: host }]) : lookup(host, { all: true }),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error()), 3000); })
+      ]);
+      if (timeout) clearTimeout(timeout);
+      if (!addresses.length || addresses.some(({ address }) => !isPublicUpstreamAddress(address))) return { latencyMs: null, status: 'ERROR', message: '端点不属于公共网络' };
+      return await new Promise((resolve) => {
+        const start = Date.now(), socket = new net.Socket();
+        const abort = () => finish('ERROR');
+        const finish = (status: string) => { socket.removeAllListeners(); socket.destroy(); controller.signal.removeEventListener('abort', abort); resolve({ latencyMs: status === 'SUCCESS' ? Date.now() - start : null, status, message: status === 'SUCCESS' ? null : 'TCP 连接失败或超时' }); };
+        controller.signal.addEventListener('abort', abort, { once: true });
+        socket.setTimeout(3000); socket.once('connect', () => finish('SUCCESS')); socket.once('timeout', () => finish('TIMEOUT')); socket.once('error', () => finish('ERROR'));
+        if (controller.signal.aborted) abort(); else socket.connect(port, addresses[0].address);
+      });
+    } catch { return { latencyMs: null, status: 'ERROR', message: '端点解析失败或超时' }; }
+    finally { if (timeout) clearTimeout(timeout); this.controllers.delete(controller); }
   }
-
-  // ==============================
-  // 节点导出 (URI / JSON)
-  // ==============================
 
   async exportNodes(dto: ExportUpstreamNodesDto): Promise<{ contentType: string; body: string; count: number }> {
-    const where: Prisma.UpstreamNodeWhereInput = { status: 'ACTIVE' };
-    if (dto.nodeIds) {
-      const ids = dto.nodeIds.split(',').map((id) => id.trim()).filter(Boolean);
-      where.id = { in: ids };
-    } else if (dto.subscriptionId) {
-      where.subscriptionId = dto.subscriptionId;
-    }
-
-    const nodes = await this.prisma.upstreamNode.findMany({
-      where,
-      orderBy: { createdAt: 'desc' }
-    });
-
-    if (dto.format === 'json') {
-      const jsonList = nodes.map((node) => {
-        let raw: Record<string, unknown> = {};
-        try {
-          raw = JSON.parse(node.rawConfigJson) as Record<string, unknown>;
-        } catch {
-          raw = { name: node.name, server: node.serverHost, port: node.serverPort };
-        }
-        return raw;
-      });
-      return {
-        contentType: 'application/json; charset=utf-8',
-        body: JSON.stringify(jsonList, null, 2),
-        count: nodes.length
-      };
-    }
-
-    // URI 格式导出
-    const uriList: string[] = [];
-    for (const node of nodes) {
-      if (typeof node.rawConfigJson === 'string' && node.rawConfigJson.includes('://')) {
-        uriList.push(node.rawConfigJson);
-      } else {
-        // 尝试根据 params 构建
-        const uri = this.rebuildNodeUri(node);
-        if (uri) uriList.push(uri);
-      }
-    }
-
-    return {
-      contentType: 'text/plain; charset=utf-8',
-      body: uriList.join('\n'),
-      count: uriList.length
-    };
-  }
-
-  private rebuildNodeUri(node: UpstreamNode): string | null {
-    let params: Record<string, unknown> = {};
+    const where: Prisma.UpstreamNodeWhereInput = { status: 'ACTIVE', presenceStatus: 'PRESENT' };
+    if (dto.nodeIds) where.id = { in: dto.nodeIds.split(',').map((id) => id.trim()) };
+    if (dto.subscriptionId) where.subscriptionId = dto.subscriptionId;
+    const nodes = await this.prisma.upstreamNode.findMany({ where, include: { subscription: true }, orderBy: { createdAt: 'desc' } });
+    const connections = nodes.filter((node) => !getUpstreamUnavailableReason(node)).map((node) => ({ node, connection: { protocolType: node.protocolType, serverHost: node.serverHost, serverPort: node.serverPort, params: JSON.parse(unseal(node.paramsJson)) as Record<string, unknown> } satisfies UpstreamConnection }));
+    if (dto.nodeIds && connections.length !== new Set(dto.nodeIds.split(',').map((id) => id.trim())).size) throw new BadRequestException('选定节点不存在或不可用');
     try {
-      params = JSON.parse(node.paramsJson) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-    const nameEnc = encodeURIComponent(node.name);
-    const host = node.serverHost;
-    const port = node.serverPort;
-
-    switch (node.protocolType) {
-      case 'VLESS': {
-        const uuid = typeof params.uuid === 'string' ? params.uuid : '';
-        return `vless://${uuid}@${host}:${port}?security=none#${nameEnc}`;
-      }
-      case 'TROJAN': {
-        const pass = typeof params.password === 'string' ? params.password : '';
-        return `trojan://${pass}@${host}:${port}#${nameEnc}`;
-      }
-      case 'HYSTERIA2': {
-        const pass = typeof params.password === 'string' ? params.password : '';
-        return `hy2://${pass}@${host}:${port}#${nameEnc}`;
-      }
-      case 'SHADOWSOCKS': {
-        const cred = `${String(params.method || '')}:${String(params.password || '')}`;
-        const b64 = Buffer.from(cred).toString('base64');
-        return `ss://${b64}@${host}:${port}#${nameEnc}`;
-      }
-      default:
-        return null;
-    }
+      if (dto.format === 'json') return { contentType: 'application/json; charset=utf-8', body: JSON.stringify({ outbounds: connections.map(({ node, connection }) => buildUpstreamOutbound(connection, node.name)) }, null, 2), count: connections.length };
+      if (dto.format === 'clash') return { contentType: 'application/yaml; charset=utf-8', body: stringifyYaml({ proxies: connections.map(({ node, connection }) => buildUpstreamClashProxy(connection, node.name)) }), count: connections.length };
+      return { contentType: 'text/plain; charset=utf-8', body: connections.map(({ node, connection }) => buildUpstreamUri(connection, node.name)).join('\n'), count: connections.length };
+    } catch { throw new BadRequestException('选定节点不支持所请求导出格式'); }
   }
-
-  // ==============================
-  // 巡检调度
-  // ==============================
 
   private async checkScheduledSync() {
+    if (this.sweeping || this.stopping) return;
+    this.sweeping = true;
     try {
-      const activeSubs = await this.prisma.upstreamSubscription.findMany({
-        where: {
-          status: 'ACTIVE',
-          autoUpdate: true,
-          sourceType: 'URL'
-        }
-      });
-
+      const active = await this.prisma.upstreamSubscription.findMany({ where: { status: 'ACTIVE' } });
       const now = Date.now();
-      for (const sub of activeSubs) {
-        const intervalMs = (sub.updateIntervalMins || 720) * 60 * 1000;
-        const lastSync = sub.lastSyncAt ? new Date(sub.lastSyncAt).getTime() : 0;
-        if (now - lastSync >= intervalMs) {
-          this.logger.log(`Scheduled sync starting for upstream [${sub.name}] (${sub.id})...`);
-          await this.sync(sub.id).catch((err: Error) => {
-            this.logger.warn(`Scheduled sync failed for ${sub.name}: ${err.message}`);
-          });
-        }
+      for (const sub of active) {
+        if (sub.userInfoExpireAt && sub.userInfoExpireAt.getTime() <= now && !this.expired.has(sub.id)) { this.expired.add(sub.id); this.notify(); }
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '未知异常';
-      this.logger.error(`Error during upstream checkScheduledSync: ${msg}`);
-    }
+      const due = active.filter((sub) => sub.sourceType === 'URL' && sub.autoUpdate && !this.syncs.has(sub.id) && now - (sub.lastSyncAt?.getTime() ?? 0) >= sub.updateIntervalMins * 60_000);
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_SYNCS, due.length) }, async () => {
+        while (next < due.length && !this.stopping) { const sub = due[next++]; await this.sync(sub.id).catch(() => undefined); }
+      }));
+    } catch { this.logger.error('Upstream scheduled sweep failed'); } finally { this.sweeping = false; }
   }
 
-  // ==============================
-  // 序列化视图
-  // ==============================
-
-  private toSubscriptionView(sub: UpstreamSubscription & { _count?: { nodes?: number } }) {
-    let customHeaders: Record<string, string> = {};
-    try {
-      customHeaders = JSON.parse(sub.customHeadersJson || '{}') as Record<string, string>;
-    } catch {
-      // ignore
-    }
-
+  private toSubscriptionView(sub: UpstreamSubscription, reveal = false) {
+    const headers = JSON.parse(unseal(sub.customHeadersJson)) as Record<string, string>;
     return {
-      id: sub.id,
-      name: sub.name,
-      sourceType: sub.sourceType,
-      format: sub.format,
-      url: sub.url,
-      hasContent: Boolean(sub.content),
-      customHeaders,
-      autoUpdate: sub.autoUpdate,
-      updateIntervalMins: sub.updateIntervalMins,
-      lastSyncAt: sub.lastSyncAt ? new Date(sub.lastSyncAt).toISOString() : null,
-      lastSyncStatus: sub.lastSyncStatus,
-      lastSyncMessage: sub.lastSyncMessage,
-      userInfoUsedBytes: sub.userInfoUsedBytes !== null ? Number(sub.userInfoUsedBytes) : null,
-      userInfoTotalBytes: sub.userInfoTotalBytes !== null ? Number(sub.userInfoTotalBytes) : null,
-      userInfoExpireAt: sub.userInfoExpireAt ? new Date(sub.userInfoExpireAt).toISOString() : null,
-      nodeCount: sub.nodeCount ?? sub._count?.nodes ?? 0,
-      status: sub.status,
-      createdAt: new Date(sub.createdAt).toISOString(),
-      updatedAt: new Date(sub.updatedAt).toISOString()
+      id: sub.id, name: sub.name, sourceType: sub.sourceType, format: sub.format, detectedFormat: sub.detectedFormat,
+      url: sub.url ? reveal ? unseal(sub.url) : '***' : null, hasContent: Boolean(sub.content),
+      ...(reveal ? { content: sub.content ? unseal(sub.content) : null } : {}),
+      customHeaders: reveal ? headers : Object.fromEntries(Object.keys(headers).map((key) => [key, '***'])),
+      autoUpdate: sub.autoUpdate, updateIntervalMins: sub.updateIntervalMins,
+      lastSyncAt: sub.lastSyncAt?.toISOString() ?? null, lastSuccessAt: sub.lastSuccessAt?.toISOString() ?? null,
+      lastSyncStatus: sub.lastSyncStatus, lastSyncMessage: sub.lastSyncMessage,
+      userInfoUsedBytes: sub.userInfoUsedBytes?.toString() ?? null, userInfoTotalBytes: sub.userInfoTotalBytes?.toString() ?? null,
+      userInfoExpireAt: sub.userInfoExpireAt?.toISOString() ?? null, nodeCount: sub.nodeCount, status: sub.status,
+      createdAt: sub.createdAt.toISOString(), updatedAt: sub.updatedAt.toISOString()
     };
   }
-
   private toNodeView(node: NodeWithRelations) {
-    let params: Record<string, unknown> = {};
-    let tags: string[] = [];
-    try {
-      params = JSON.parse(node.paramsJson || '{}') as Record<string, unknown>;
-    } catch {
-      // ignore
-    }
-    try {
-      tags = JSON.parse(node.tagsJson || '[]') as string[];
-    } catch {
-      // ignore
-    }
-
-    return {
-      id: node.id,
-      subscriptionId: node.subscriptionId,
-      subscription: node.subscription ? { id: node.subscription.id, name: node.subscription.name } : null,
-      name: node.name,
-      protocolType: node.protocolType,
-      serverHost: node.serverHost,
-      serverPort: node.serverPort,
-      params,
-      tags,
-      latencyMs: node.latencyMs,
-      lastTestedAt: node.lastTestedAt ? new Date(node.lastTestedAt).toISOString() : null,
-      lastTestStatus: node.lastTestStatus,
-      lastTestMessage: node.lastTestMessage,
-      status: node.status,
-      isDirectSub: Boolean(node.isDirectSub),
-      relayLines: node.relayLines ? node.relayLines.map((l) => ({ id: l.id, name: l.name, status: l.status })) : [],
-      createdAt: new Date(node.createdAt).toISOString(),
-      updatedAt: new Date(node.updatedAt).toISOString()
-    };
+    return { id: node.id, subscriptionId: node.subscriptionId, subscription: node.subscription ? { id: node.subscription.id, name: node.subscription.name, status: node.subscription.status } : null,
+      name: node.name, protocolType: node.protocolType, serverHost: node.serverHost, serverPort: node.serverPort, tags: tagsOf(node.tagsJson),
+      sourceKey: node.sourceKey, presenceStatus: node.presenceStatus, missingSince: node.missingSince?.toISOString() ?? null,
+      latencyMs: node.latencyMs, lastTestedAt: node.lastTestedAt?.toISOString() ?? null, lastTestStatus: node.lastTestStatus, lastTestMessage: node.lastTestMessage,
+      status: node.status, relayLines: node.relayLines?.map((line) => ({ id: line.id, name: line.name, status: line.status })) ?? [],
+      createdAt: node.createdAt.toISOString(), updatedAt: node.updatedAt.toISOString() };
   }
-
-  private async findSubOrThrow(id: string) {
-    const sub = await this.prisma.upstreamSubscription.findUnique({ where: { id } });
-    if (!sub) throw new NotFoundException('上游订阅不存在');
-    return sub;
-  }
-
-  private async findNodeOrThrow(id: string) {
-    const node = await this.prisma.upstreamNode.findUnique({ where: { id } });
-    if (!node) throw new NotFoundException('上游节点不存在');
-    return node;
-  }
+  private async findSubOrThrow(id: string) { const sub = await this.prisma.upstreamSubscription.findUnique({ where: { id } }); if (!sub) throw new NotFoundException('上游订阅不存在'); return sub; }
+  private async findNodeOrThrow(id: string) { const node = await this.prisma.upstreamNode.findUnique({ where: { id } }); if (!node) throw new NotFoundException('上游节点不存在'); return node; }
 }

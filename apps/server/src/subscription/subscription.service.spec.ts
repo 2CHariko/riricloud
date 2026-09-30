@@ -13,6 +13,7 @@ describe('SubscriptionService', () => {
   const prisma = {
     user: { findUnique: jest.fn() },
     node: { findMany: jest.fn() },
+    subscription: { findUnique: jest.fn() },
     subscriptionTemplate: { findFirst: jest.fn(), findUnique: jest.fn() }
   };
   const settingsService = { getSettings: jest.fn() };
@@ -33,6 +34,10 @@ describe('SubscriptionService', () => {
   });
 
   beforeEach(() => {
+    prisma.subscription.findUnique.mockImplementation(async () => {
+      const user = await prisma.user.findUnique();
+      return user ? { id: 'sub', userId: user.id, status: 'ACTIVE', user, startedAt: new Date(), trafficLimitBytes: user.trafficLimitBytes, trafficUsedBytes: user.trafficUsedBytes, expireAt: user.expireAt, plan: { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' } } : null;
+    });
     linesService.getAvailableForPlan.mockImplementation(async () => {
       const nodes = await prisma.node.findMany();
       return nodes.flatMap((source: NodeFixture) => source.inbounds.map((inbound) => ({
@@ -565,6 +570,12 @@ describe('SubscriptionService', () => {
     });
   });
 
+  it('无订阅时不使用用户镜像 Token 回退分发全部线路', async () => {
+    prisma.subscription.findUnique.mockResolvedValue(null);
+    prisma.user.findUnique.mockResolvedValue(activeUser);
+    await expect(service.getSubscription('legacy-token')).rejects.toThrow(NotFoundException);
+    expect(linesService.getAvailableForPlan).not.toHaveBeenCalled();
+  });
   describe('限速与节点角标', () => {
     it('按套餐与线路取最小值计算有效速率，并注入角标与 Hy2 参数', async () => {
       settingsService.getSettings.mockResolvedValue({ appendSubscriptionSpeedBadge: true });

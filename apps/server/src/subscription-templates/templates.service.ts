@@ -197,7 +197,7 @@ export class TemplatesService {
     return this.mockPreviewSources();
   }
 
-  private toSubLine(line: Record<string, unknown>): SubLine {
+  private toSubLine(line: Awaited<ReturnType<LinesService['getAvailableForPlan']>>[number]): SubLine {
     return {
       id: typeof line.id === 'string' ? line.id : undefined,
       name: typeof line.name === 'string' ? line.name : 'Preview line',
@@ -212,7 +212,8 @@ export class TemplatesService {
       tags: Array.isArray(line.tags) ? line.tags.filter((tag): tag is string => typeof tag === 'string') : [],
       level: typeof line.level === 'number' ? line.level : 0,
       protocolType: typeof line.protocolType === 'string' ? line.protocolType as SubLine['protocolType'] : 'VLESS',
-      params: line.params && typeof line.params === 'object' && !Array.isArray(line.params) ? line.params as Record<string, unknown> : {}
+      params: line.params,
+      externalConnection: line.externalConnection
     };
   }
 

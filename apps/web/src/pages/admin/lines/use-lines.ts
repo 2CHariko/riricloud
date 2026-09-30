@@ -5,19 +5,44 @@ import { api, extractErrorMessage, type ApiLine, type LineStatus, type LineType,
 
 export type { ApiLine as AdminLine };
 
-export interface LinePayload {
+interface LineAttributes {
   name: string;
   tag?: string | null;
+  tags?: string[];
+  level?: number;
+  sortOrder?: number;
+  isPublic?: boolean;
+  status?: LineStatus;
+}
+
+export interface ExternalLinePayload extends LineAttributes {
+  type: 'EXTERNAL';
+  upstreamNodeId: string;
+}
+
+export interface ManagedLinePayload extends LineAttributes {
   listen?: string;
-  type: LineType;
+  type: 'DIRECT' | 'RELAY';
   protocolType: ProtocolType;
   params: Record<string, unknown>;
   relayMode?: RelayMode | null;
   targetLineId?: string | null;
+  upstreamNodeId?: string | null;
   entryNodeId: string;
   entryPort?: number | null;
   landingNodeId?: string | null;
   landingPort?: number | null;
+  speedLimitMbps?: number | null;
+  tcpFastOpen?: boolean;
+  tcpMultiPath?: boolean;
+  udpFragment?: boolean;
+  udpTimeout?: string | null;
+  proxyProtocol?: boolean;
+  proxyProtocolAcceptNoHeader?: boolean;
+  allowLanAccess?: boolean;
+  tunnelType?: string | null;
+  tunnelPort?: number | null;
+  tunnelSecret?: string | null;
   certificateId?: string | null;
   endpointOverrideEnabled?: boolean;
   serverHost?: string | null;
@@ -35,7 +60,11 @@ export interface LinePayload {
   status?: LineStatus;
 }
 
+export type LinePayload = ManagedLinePayload | ExternalLinePayload;
+
 export interface LineQuery {
+  page?: number;
+  pageSize?: number;
   search?: string;
   type?: LineType;
   status?: LineStatus;
@@ -74,7 +103,26 @@ export interface SpeedTestExecutionResult {
 export function useAdminLines(query: LineQuery = {}) {
   return useQuery({
     queryKey: ['admin', 'lines', query],
-    queryFn: async () => (await api.get<{ data: ApiLine[]; total: number }>('/admin/lines', { params: { ...query, page: 1, pageSize: 100 } })).data
+    queryFn: async () => (await api.get<{ data: ApiLine[]; total: number; page: number; pageSize: number }>('/admin/lines', { params: { page: 1, pageSize: 20, ...query } })).data
+  });
+}
+
+export function useLineOptions(enabled = true) {
+  return useQuery({
+    queryKey: ['admin', 'lines', 'options'], enabled,
+    queryFn: async () => {
+      const data: ApiLine[] = [];
+      let page = 1;
+      let total = 0;
+      do {
+        const response = (await api.get<{ data: ApiLine[]; total: number; page: number; pageSize: number }>('/admin/lines', { params: { page, pageSize: 100 } })).data;
+        data.push(...response.data);
+        total = response.total;
+        if (response.data.length === 0) break;
+        page++;
+      } while (data.length < total);
+      return { data, total };
+    }
   });
 }
 

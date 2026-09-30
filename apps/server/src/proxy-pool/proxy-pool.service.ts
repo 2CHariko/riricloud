@@ -36,9 +36,13 @@ type ProxyKeyRecord = {
   updatedAt: Date;
 };
 
-type ProxyPoolEndpointRecord = Prisma.LineGetPayload<{
+type ProxyPoolLineRecord = Prisma.LineGetPayload<{
   include: { entryNode: { select: { id: true; name: true; serverHost: true; status: true } } };
 }>;
+type ProxyPoolEndpointRecord = ProxyPoolLineRecord & {
+  entryNode: NonNullable<ProxyPoolLineRecord['entryNode']>;
+  entryPort: number;
+};
 
 export interface ProxyKeyView {
   id: string;
@@ -368,7 +372,7 @@ export class ProxyPoolService {
   private async loadProxyPoolLines(lineIds?: string[]): Promise<ProxyPoolEndpointRecord[]> {
     const ids = lineIds?.filter(Boolean) ?? [];
     if (lineIds && !ids.length) return [];
-    return this.prisma.line.findMany({
+    const lines = await this.prisma.line.findMany({
       where: {
         protocolType: 'MIXED',
         type: 'DIRECT',
@@ -380,6 +384,7 @@ export class ProxyPoolService {
       include: { entryNode: { select: { id: true, name: true, serverHost: true, status: true } } },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
     });
+    return lines.filter((line): line is ProxyPoolEndpointRecord => Boolean(line.entryNode) && line.entryPort !== null && line.type !== 'EXTERNAL');
   }
 
   private toEndpointView(line: ProxyPoolEndpointRecord): ProxyPoolEndpointView {

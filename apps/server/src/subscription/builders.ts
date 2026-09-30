@@ -1,3 +1,5 @@
+import { buildUpstreamOutbound, buildUpstreamUri, buildUpstreamClashProxy, type UpstreamConnection } from '../common/upstream-connection';
+import { formatAuthUserName } from '../common/inbound';
 import { parseDocument, stringify } from 'yaml';
 import type {
   HttpParams,
@@ -64,6 +66,7 @@ export interface SubLine {
   tags?: string[];
   level?: number;
   speedLimitMbps?: number | null;
+  externalConnection?: UpstreamConnection;
   // 旧版调用方兼容字段；新代码使用 protocolType + params。
   targetInbound?: SubInbound;
 }
@@ -714,7 +717,7 @@ function buildClashSmux(multiplex?: InboundMultiplexConfig): Record<string, unkn
 export function entryLabels(nodes: SubscriptionSource[]): string[] {
   return dedupeNames(
     nodes.flatMap((source) => {
-    if (isSubLine(source)) return [formatLineName(source.name, source.trafficRate)];
+    if (isSubLine(source)) return [source.externalConnection ? source.name : formatLineName(source.name, source.trafficRate)];
       return source.inbounds.map((inbound) =>
         source.inbounds.length > 1 ? `${source.name}·${inbound.tag}` : source.name
       );
@@ -932,7 +935,7 @@ function buildTuicUri(user: SubUser, entry: SubEntry): string {
 }
 
 function buildNaiveUri(user: SubUser, entry: SubEntry): string {
-  const username = user.email || user.uuid;
+  const username = formatAuthUserName(user, entry.line?.id);
   return `naive+https://${encodeURIComponent(username)}:${encodeURIComponent(user.credential)}@${endpointHost(entry)}:${endpointPort(entry)}#${encodeURIComponent(entry.label)}`;
 }
 
@@ -948,6 +951,7 @@ function buildShadowtlsUri(user: SubUser, entry: SubEntry): string {
 export function buildUriList(user: SubUser, nodes: SubscriptionSource[]): string[] {
   return entries(nodes)
     .map((entry) => {
+      if (entry.line?.externalConnection) return buildUpstreamUri(entry.line.externalConnection, entry.label);
       switch (entry.inbound.type) {
         case 'VLESS':
         case 'VLESS_REALITY' as ProtocolType:
@@ -966,6 +970,15 @@ export function buildUriList(user: SubUser, nodes: SubscriptionSource[]): string
           return buildNaiveUri(user, entry);
         case 'SHADOWTLS':
           return buildShadowtlsUri(user, entry);
+        case 'SOCKS':
+        case 'MIXED':
+        case 'HTTP': {
+          const tls = entry.inbound.params.tls as { enabled?: boolean; mode?: string } | undefined;
+          const scheme = entry.inbound.type === 'HTTP' ? (tls?.enabled ? 'https' : 'http') : 'socks5';
+          const host = endpointHost(entry).includes(':') ? `[${endpointHost(entry).replace(/^\[|\]$/g, '')}]` : endpointHost(entry);
+          const auth = entry.inbound.params.usersEnabled !== false ? `${encodeURIComponent(formatAuthUserName(user, entry.line?.id))}:${encodeURIComponent(user.credential)}@` : '';
+          return `${scheme}://${auth}${host}:${endpointPort(entry)}#${encodeURIComponent(entry.label)}`;
+        }
         default:
           return '';
       }
@@ -978,6 +991,7 @@ export function buildUriList(user: SubUser, nodes: SubscriptionSource[]): string
 // ==============================
 
 function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown> {
+  if (entry.line?.externalConnection) return buildUpstreamClashProxy(entry.line.externalConnection, entry.label);
   const serverHost = endpointHost(entry);
   const port = endpointPort(entry);
   let proxy: Record<string, unknown> = {};
@@ -1170,6 +1184,16 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
       break;
     }
 
+    case 'SOCKS':
+    case 'MIXED':
+    case 'HTTP': {
+      const tls = entry.inbound.params.tls as { enabled?: boolean; serverName?: string; insecure?: boolean } | undefined;
+      proxy = { name: entry.label, type: entry.inbound.type === 'HTTP' ? 'http' : 'socks5', server: serverHost, port, udp: true };
+      if (entry.inbound.params.usersEnabled !== false) Object.assign(proxy, { username: formatAuthUserName(user, entry.line?.id), password: user.credential });
+      if (tls?.enabled) Object.assign(proxy, { tls: true, sni: effectiveServerName(entry, tls.serverName), 'skip-cert-verify': tls.insecure ?? false });
+      break;
+    }
+
     default:
       return {};
   }
@@ -1264,6 +1288,7 @@ function buildSingboxClientMultiplex(multiplex?: InboundMultiplexConfig): Record
 }
 
 export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<string, unknown> {
+  if (entry.line?.externalConnection) return buildUpstreamOutbound(entry.line.externalConnection, entry.label);
   const serverHost = endpointHost(entry);
   const port = endpointPort(entry);
 
@@ -1422,7 +1447,7 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         tag: entry.label,
         server: serverHost,
         server_port: port,
-        username: user.email || user.uuid,
+        username: formatAuthUserName(user, entry.line?.id),
         password: user.credential
       };
       const clientTls = buildClientTls(p.tls, effectiveServerName(entry), { includeAlpn: false, includeInsecure: false });
@@ -1441,7 +1466,7 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         version: '5'
       };
       if (user.credential || user.uuid) {
-        outbound.username = user.email || user.uuid;
+        outbound.username = formatAuthUserName(user, entry.line?.id);
         outbound.password = user.credential;
       }
       const clientTls = buildClientTls(p?.tls, effectiveServerName(entry));
@@ -1458,7 +1483,7 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         server_port: port
       };
       if (user.credential || user.uuid) {
-        outbound.username = user.email || user.uuid;
+        outbound.username = formatAuthUserName(user, entry.line?.id);
         outbound.password = user.credential;
       }
       const clientTls = buildClientTls(p?.tls, effectiveServerName(entry));

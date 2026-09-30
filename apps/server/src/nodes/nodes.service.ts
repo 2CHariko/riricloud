@@ -644,6 +644,7 @@ export class NodesService {
     const servicePorts: Array<{ lineId: string; lineName: string; protocolType: string; role: 'DIRECT' | 'TRANSIT' | 'LANDING'; port: number }> = [];
 
     for (const line of entryLines) {
+      if (line.type === 'EXTERNAL' || line.entryPort === null) continue;
       if (line.type === 'DIRECT') {
         const item = toLine(line, 'DIRECT');
         linesMap.set(line.id, item);

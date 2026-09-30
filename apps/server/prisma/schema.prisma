@@ -271,12 +271,12 @@ model Line {
   name                    String
   tag                     String?
   listen                  String    @default("0.0.0.0")
-  type                    String    @default("DIRECT") // DIRECT | RELAY
-  relayMode               String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE
+  type                    String    @default("DIRECT") // DIRECT | RELAY | EXTERNAL
+  relayMode               String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE | UPSTREAM_NODE
   protocolType            String    @default("VLESS") // ProtocolType
   paramsJson              String    @default("{}") // 协议专属参数 JSON
-  entryNodeId             String
-  entryPort               Int
+  entryNodeId             String?
+  entryPort               Int?
   landingNodeId           String?
   landingPort             Int?
   targetLineId            String?
@@ -313,7 +313,7 @@ model Line {
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
-  entryNode       Node            @relation("LineEntryNode", fields: [entryNodeId], references: [id], onDelete: Cascade)
+  entryNode       Node?           @relation("LineEntryNode", fields: [entryNodeId], references: [id], onDelete: Cascade)
   landingNode     Node?           @relation("LineLandingNode", fields: [landingNodeId], references: [id], onDelete: Cascade)
   targetLine      Line?           @relation("LineRelayTarget", fields: [targetLineId], references: [id], onDelete: Restrict)
   relaySources    Line[]          @relation("LineRelayTarget")
@@ -678,12 +678,14 @@ model UpstreamSubscription {
   name               String
   sourceType         String         @default("URL") // URL | TEXT
   format             String         @default("AUTO") // AUTO | CLASH_META | SINGBOX | URI_LIST
+  detectedFormat     String?
   url                String?
   content            String?        // 文本快照或最近一次成功拉取的内容
   customHeadersJson  String         @default("{}") // 自定义 HTTP 请求头 (如 User-Agent)
   autoUpdate         Boolean        @default(true) // 是否开启定时自动刷新
   updateIntervalMins Int            @default(720)  // 自动刷新周期 (分钟，默认 12 小时)
   lastSyncAt         DateTime?
+  lastSuccessAt      DateTime?
   lastSyncStatus     String         @default("PENDING") // PENDING | SUCCESS | FAILED
   lastSyncMessage    String?
   userInfoUsedBytes  BigInt?        // 从 subscription-userinfo 响应头解析出的已用流量
@@ -709,14 +711,17 @@ model UpstreamNode {
   serverPort      Int
   paramsJson      String               // 归一化 Sing-box outbound 核心参数 (JSON)
   rawConfigJson   String               // 原始节点结构快照
-  fingerprint     String               // 节点特征哈希 (协议+服务器+端口+核心凭据哈希，比对用)
+  sourceKey       String?
+  connectionHash  String               // 完整连接特征，不作为业务 UUID
+  configHash      String               // 归一化配置变化哈希
+  presenceStatus  String               @default("PRESENT") // PRESENT | MISSING
+  missingSince    DateTime?
   tagsJson        String               @default("[]") // 自动解析标签 (HK, JP, US, IEPL 等)
   latencyMs       Int?
   lastTestedAt    DateTime?
   lastTestStatus  String?              // SUCCESS | TIMEOUT | ERROR
   lastTestMessage String?
   status          String               @default("ACTIVE") // ACTIVE | DISABLED
-  isDirectSub     Boolean              @default(false)    // 是否直接合并入用户客户端订阅 (默认 false)
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
@@ -725,5 +730,7 @@ model UpstreamNode {
 
   @@index([subscriptionId])
   @@index([protocolType])
-  @@index([status, isDirectSub])
+  @@index([status, presenceStatus])
+  @@index([subscriptionId, sourceKey])
+  @@index([subscriptionId, connectionHash])
 }

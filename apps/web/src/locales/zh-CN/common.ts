@@ -246,6 +246,11 @@ const common = {
     kicking: '处理中…',
     overLimit: '已超出上限'
   },
+  lineCapabilities: {
+    unmetered: '此线路不计入本地流量账单，上游账户用量由供应方控制。',
+    noLocalLimits: '外部直发不受本地限速、流量配额或在线设备限额控制。',
+    notRevocable: '停权或重置本地凭据不能撤回已经获取的外部连接凭据。'
+  },
   userMenu: {
     menuLabel: '用户菜单',
     roleAdmin: '超级管理员',

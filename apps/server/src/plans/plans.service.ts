@@ -134,7 +134,8 @@ export class PlansService {
     const plan = await this.prisma.plan.findUnique({ where: { id } });
     if (!plan) throw new NotFoundException('套餐不存在');
     if (!this.linesService) throw new NotFoundException('线路服务不可用');
-    return this.linesService.getAvailableForPlan(plan);
+    const resources = await this.linesService.getAvailableForPlan(plan);
+    return resources.map((line) => this.linesService!.toUserSummary(line));
   }
 
   // 兼容旧管理端路径；返回内容已切换为线路。

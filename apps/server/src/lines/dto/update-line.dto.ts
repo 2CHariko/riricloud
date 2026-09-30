@@ -66,7 +66,7 @@ export class UpdateLineDto {
   @IsUUID()
   @IsOptional()
   targetLineId?: string | null;
-  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'UPSTREAM_NODE 中继模式引用的外部上游节点' })
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'EXTERNAL 与 UPSTREAM_NODE 中继必须引用有效的上游节点' })
   @IsUUID()
   @IsOptional()
   upstreamNodeId?: string | null;

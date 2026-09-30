@@ -30,11 +30,26 @@ export function formatInboundUserName(
   return `${baseName}${TRAFFIC_CREDENTIAL_DELIMITER}${lineId}`;
 }
 
+const AUTH_USER_PREFIX = 'riri_login_';
+// HTTP Basic 按首个冒号切分 userinfo，复合统计标签不能直接作为登录用户名。
+export function formatAuthUserName(user: { email?: string; uuid?: string }, lineId?: string): string {
+  const composite = formatInboundUserName(user, lineId);
+  const base = user.email || user.uuid || '';
+  return composite === base ? base : `${AUTH_USER_PREFIX}${Buffer.from(composite).toString('base64url')}`;
+}
+
 // 解析 Agent 上报的凭证快照，分离原始用户凭证与线路 ID（若存在）
 export function parseTrafficCredential(credential: string): {
   rawCredential: string;
   lineId: string | null;
 } {
+  if (credential.startsWith(AUTH_USER_PREFIX)) {
+    const encoded = credential.slice(AUTH_USER_PREFIX.length);
+    if (/^[A-Za-z0-9_-]+$/.test(encoded)) {
+      const decoded = Buffer.from(encoded, 'base64url').toString('utf8');
+      if (Buffer.from(decoded).toString('base64url') === encoded && decoded.includes(TRAFFIC_CREDENTIAL_DELIMITER)) credential = decoded;
+    }
+  }
   const delimiterIndex = credential.indexOf(TRAFFIC_CREDENTIAL_DELIMITER);
   if (delimiterIndex <= 0) {
     return { rawCredential: credential, lineId: null };
@@ -1303,7 +1318,7 @@ export function buildServerInbound(input: {
         listen_port: port,
         ...listenFields,
         network: p.network || 'tcp',
-        users: users.map((u) => ({ username: formatInboundUserName(u, lineId), password: u.credential })),
+        users: users.map((u) => ({ username: formatAuthUserName(u, lineId), password: u.credential })),
         ...(tls ? { tls } : {})
       };
     }
@@ -1340,7 +1355,7 @@ export function buildServerInbound(input: {
       const inboundUsers: Array<Record<string, unknown>> = [];
       if (p.usersEnabled && users.length) {
         inboundUsers.push(
-          ...users.map((u) => ({ username: formatInboundUserName(u, lineId), password: u.credential }))
+          ...users.map((u) => ({ username: formatAuthUserName(u, lineId), password: u.credential }))
         );
       }
       // 直连代理池凭据：独立凭据空间，与订阅用户在同一个 mixed 单端口内并列承接 SOCKS5/HTTP

@@ -1,3 +1,4 @@
+import { encryptSecret } from '../common/secret-crypto';
 import * as net from 'node:net';
 import { Test } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
@@ -325,6 +326,7 @@ describe('LineSpeedtestService', () => {
         id: 'up-1',
         name: '机场落地节点 01',
         status: 'DISABLED',
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
         protocolType: 'VMESS',
         serverHost: 'up.example.com',
         serverPort: 443
@@ -343,18 +345,8 @@ describe('LineSpeedtestService', () => {
     const tcpPingSpy = jest.spyOn(service as unknown as MockableSpeedtest, 'tcpPing')
       .mockResolvedValue(18);
 
-    const result = await service.testLine(upstreamRelayLine.id);
-
-    expect(result.status).toBe('ERROR');
-    expect(result.latencyMs).toBeNull();
-    expect(result.stages.find((s) => s.id === 'relay_transit')?.status).toBe('FAILED');
-    expect(result.stages.find((s) => s.id === 'relay_transit')?.message).toContain('未启用');
-    expect(result.topology.landingNode).toEqual({
-      id: 'up-1',
-      name: '[上游] 机场落地节点 01',
-      host: 'up.example.com',
-      port: 443
-    });
+    await expect(service.testLine(upstreamRelayLine.id)).rejects.toThrow('上游节点已禁用');
+    expect(tcpPingSpy).not.toHaveBeenCalled();
 
     resolveSpy.mockRestore();
     tcpPingSpy.mockRestore();
@@ -371,6 +363,8 @@ describe('LineSpeedtestService', () => {
         id: 'up-2',
         name: '机场落地节点 02',
         status: 'ACTIVE',
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
+        paramsJson: encryptSecret(JSON.stringify({ uuid: '11111111-2222-3333-4444-555555555555' })),
         protocolType: 'VMESS',
         serverHost: 'up2.example.com',
         serverPort: 8443
@@ -408,6 +402,21 @@ describe('LineSpeedtestService', () => {
     resolveSpy.mockRestore();
     tcpPingSpy.mockRestore();
     runSingboxSpy.mockRestore();
+  });
+
+  it('EXTERNAL 使用真实上游探针且无入口节点、无需 TCP 前置探测', async () => {
+    const external = { ...rawLine, type: 'EXTERNAL', entryNode: null, entryNodeId: null, entryPort: null, upstreamNode: { id: 'up', name: 'HY2', status: 'ACTIVE', presenceStatus: 'PRESENT', protocolType: 'HYSTERIA2', serverHost: 'up.example.com', serverPort: 443, paramsJson: encryptSecret(JSON.stringify({ password: 'real-upstream-password' })), subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null } } };
+    prisma.line.findUnique.mockResolvedValue(external);
+    const mockable = service as unknown as { resolveSingboxBinary: () => Promise<string>; tcpPing: () => Promise<number>; runSingboxProbe: (...args: unknown[]) => Promise<{ latencyMs: number; statusCode: number }> };
+    const binary = jest.spyOn(mockable, 'resolveSingboxBinary').mockResolvedValue('sing-box');
+    const tcp = jest.spyOn(mockable, 'tcpPing');
+    const probe = jest.spyOn(mockable, 'runSingboxProbe').mockResolvedValue({ latencyMs: 30, statusCode: 204 });
+    const result = await service.testLine(external.id);
+    expect(result.status).toBe('SUCCESS');
+    expect(result.topology.entryNode).toBeNull();
+    expect(tcp).not.toHaveBeenCalled();
+    expect(probe).toHaveBeenCalledWith('sing-box', external, expect.any(String), expect.any(Number));
+    binary.mockRestore(); tcp.mockRestore(); probe.mockRestore();
   });
 
   it('当线路为 Hysteria 2 纯 UDP 且端到端探测失败时，跳过 TCP 握手直接报错', async () => {

@@ -15,9 +15,9 @@ import { useTranslation } from 'react-i18next';
 
 // 用户只需确认线路名称、协议、倍率、延迟和当前在线状态，拓扑细节由订阅客户端负责展示。
 export function LineCard({ line, className }: LineCardProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'admin']);
   const { data: publicSettings } = usePublicSettings();
-  const isOnline = line.entryNode?.status === 'ONLINE' && (!line.landingNode || line.landingNode.status === 'ONLINE');
+  const isOnline = line.status === 'ACTIVE';
   const unitConversion = publicSettings?.speedLimitUnitConversionEnabled !== false;
   const speedText = formatSpeedLimit(line.speedLimitMbps, unitConversion);
   const speedBadgeClass = getSpeedTierBadgeClass(line.speedLimitMbps, publicSettings?.speedLimitColorTiers);
@@ -30,15 +30,15 @@ export function LineCard({ line, className }: LineCardProps) {
         </p>
         <div className="flex shrink-0 items-center gap-1.5">
           <Badge variant="outline" className="text-xs">{line.protocolType}</Badge>
-          <Badge variant="outline" className="text-xs">{line.trafficRate}x</Badge>
+          {line.capabilities.trafficMetered ? <Badge variant="outline" className="text-xs">{line.trafficRate}x</Badge> : <Badge variant="outline">{t('admin:upstream.externalType')}</Badge>}
         </div>
       </div>
       <div className="flex items-center gap-2">
         <Badge variant={isOnline ? 'default' : 'secondary'} className="gap-1 text-xs">
           <Activity className="size-3" />
-          {isOnline ? t('status.online') : t('status.offline')}
+          {isOnline ? t('status.active') : t('status.offline')}
         </Badge>
-        {Boolean(line.speedLimitMbps) && (
+        {line.capabilities.localLimitsSupported && Boolean(line.speedLimitMbps) && (
           <Badge variant="outline" className={cn('gap-1 text-xs font-normal', speedBadgeClass)}>
             <Zap className="size-3" />
             {speedText}
@@ -51,6 +51,9 @@ export function LineCard({ line, className }: LineCardProps) {
           testedAt={line.lastTestedAt}
         />
       </div>
+      {!line.capabilities.trafficMetered && <p className="text-xs text-muted-foreground">{t('lineCapabilities.unmetered')}</p>}
+      {!line.capabilities.localLimitsSupported && <p className="text-xs text-muted-foreground">{t('lineCapabilities.noLocalLimits')}</p>}
+      {!line.capabilities.credentialRevocable && <p className="text-xs text-destructive">{t('lineCapabilities.notRevocable')}</p>}
     </div>
   );
 }

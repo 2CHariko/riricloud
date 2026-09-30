@@ -49,6 +49,13 @@ describe('NodesService', () => {
     expect(result).not.toHaveProperty('inbounds');
   });
 
+  it('外部线路没有节点监听端口，不加入节点承载列表', async () => {
+    prisma.node.findMany.mockResolvedValue([{ ...nodeWithLines, entryLines: [{ id: 'external', type: 'EXTERNAL', entryNodeId: null, entryPort: null }] }]);
+    const [result] = await service.list();
+    expect(result.lines).toEqual([]);
+    expect(result.servicePorts).toEqual([]);
+  });
+
   it('安装命令按目标操作系统区分并覆盖免安装模式', async () => {
     prisma.node.create.mockResolvedValue(nodeWithLines);
     const result = await service.create({ name: '新节点', serverHost: '203.0.113.10' }, 'admin', 'https://panel.example.com');

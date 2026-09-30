@@ -1,3 +1,5 @@
+import { encryptSecret } from '../common/secret-crypto';
+import { formatAuthUserName } from '../common/inbound';
 import { Test } from '@nestjs/testing';
 import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -577,13 +579,14 @@ describe('AgentGatewayService', () => {
         serverHost: 'vmess.upstream.example.com',
         serverPort: 443,
         status: 'ACTIVE',
-        paramsJson: JSON.stringify({
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
+        paramsJson: encryptSecret(JSON.stringify({
           uuid: '11111111-2222-3333-4444-555555555555',
           alterId: 0,
           security: 'auto',
           tls: { enabled: true, serverName: 'sni.upstream.example.com', insecure: true, clientFingerprint: 'firefox' },
           transport: { type: 'grpc', serviceName: 'vmess-grpc' }
-        })
+        }))
       },
       landingNode: null
     });
@@ -604,7 +607,8 @@ describe('AgentGatewayService', () => {
         serverHost: 'jp.upstream.example.com',
         serverPort: 443,
         status: 'ACTIVE',
-        paramsJson: JSON.stringify({
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
+        paramsJson: encryptSecret(JSON.stringify({
           uuid: '22222222-3333-4444-5555-666666666666',
           flow: 'xtls-rprx-vision',
           tls: {
@@ -613,7 +617,7 @@ describe('AgentGatewayService', () => {
             clientFingerprint: 'safari',
             reality: { enabled: true, publicKey: 'pbk_123', shortId: 'abcd' }
           }
-        })
+        }))
       },
       landingNode: null
     });
@@ -634,14 +638,15 @@ describe('AgentGatewayService', () => {
         serverHost: 'us.upstream.example.com',
         serverPort: 8443,
         status: 'ACTIVE',
-        paramsJson: JSON.stringify({
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
+        paramsJson: encryptSecret(JSON.stringify({
           password: 'hy2_secret',
           upMbps: 100,
           downMbps: 500,
           obfs: 'salamander',
           obfsPassword: 'obfs_secret',
           tls: { enabled: true, serverName: 'us.upstream.example.com' }
-        })
+        }))
       },
       landingNode: null
     });
@@ -716,8 +721,7 @@ describe('AgentGatewayService', () => {
       },
       tls: {
         enabled: true,
-        server_name: 'us.upstream.example.com',
-        insecure: false
+        server_name: 'us.upstream.example.com'
       }
     });
     expect(hy2Out).not.toHaveProperty('upMbps');
@@ -1411,7 +1415,7 @@ describe('AgentGatewayService', () => {
       expect(mixed).toBeDefined();
       // usersEnabled=false 也必须强制鉴权：空 users 的 mixed 入站等价于开放代理
       expect(mixed?.users).toEqual(expect.arrayContaining([
-        { username: 'user@example.com::line-mixed', password: 'secret' },
+        { username: formatAuthUserName({ email: 'user@example.com' }, 'line-mixed'), password: 'secret' },
         { username: 'pk_0123456789abcdef01234567', password: 'pwd-a' }
       ]));
       // 未具备订阅资格的用户（uuid-2）凭据必须被剔除
@@ -1444,7 +1448,7 @@ describe('AgentGatewayService', () => {
       const { singboxConfig } = await service.buildConfigSync('node-1');
       const mixed = (singboxConfig.inbounds as Array<Record<string, unknown>>).find((inbound) => inbound.type === 'mixed');
 
-      expect(mixed?.users).toEqual(expect.arrayContaining([{ username: 'user@example.com::line-mixed', password: 'secret' }]));
+      expect(mixed?.users).toEqual(expect.arrayContaining([{ username: formatAuthUserName({ email: 'user@example.com' }, 'line-mixed'), password: 'secret' }]));
       expect(singboxConfig.route).toBeUndefined();
     });
 

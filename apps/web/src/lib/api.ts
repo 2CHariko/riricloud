@@ -66,7 +66,7 @@ export function extractErrorMessage(error: unknown, fallback?: string): string {
   return getLocalizedErrorMessage(error, fallback);
 }
 
-export type LineType = 'DIRECT' | 'RELAY';
+export type LineType = 'DIRECT' | 'RELAY' | 'EXTERNAL';
 export type RelayMode = 'BLIND_FORWARD' | 'PROTOCOL_PROXY' | 'TARGET_LINE' | 'UPSTREAM_NODE';
 export type LineStatus = 'ACTIVE' | 'DISABLED';
 export type ProtocolType = 'VLESS' | 'VMESS' | 'TROJAN' | 'HYSTERIA2' | 'TUIC' | 'SHADOWSOCKS' | 'NAIVE' | 'SHADOWTLS' | 'MIXED' | 'SOCKS' | 'HTTP' | 'DIRECT';
@@ -80,11 +80,11 @@ export interface ApiLine {
   relayMode: RelayMode | null;
   targetLineId: string | null;
   upstreamNodeId?: string | null;
-  upstreamNode?: ApiUpstreamNode | null;
+  upstreamSummary?: Pick<ApiUpstreamNode, 'id' | 'name' | 'protocolType' | 'serverHost' | 'serverPort' | 'status' | 'presenceStatus'> | null;
   protocolType: ProtocolType;
   params: Record<string, unknown>;
-  entryNodeId: string;
-  entryPort: number;
+  entryNodeId: string | null;
+  entryPort: number | null;
   landingNodeId?: string | null;
   landingPort?: number | null;
   allowLanAccess?: boolean;
@@ -125,7 +125,7 @@ export interface ApiLine {
   lastTestedAt?: string | null;
   lastTestStatus?: 'SUCCESS' | 'TIMEOUT' | 'ERROR' | null;
   lastTestMessage?: string | null;
-  entryNode: { id: string; name: string; serverHost: string; status: string; isLocal: boolean; reachability?: 'PUBLIC' | 'NAT' };
+  entryNode: { id: string; name: string; serverHost: string; status: string; isLocal: boolean; reachability?: 'PUBLIC' | 'NAT' } | null;
   landingNode?: { id: string; name: string; serverHost: string; status: string; isLocal: boolean; reachability?: 'PUBLIC' | 'NAT' } | null;
   targetLine?: {
     id: string;
@@ -154,7 +154,7 @@ export interface ApiLine {
     validTo: string;
   } | null;
   topology: {
-    entry: { node: { id: string; name: string; serverHost: string; status: string; isLocal: boolean }; port: number };
+    entry: { node: { id: string; name: string; serverHost: string; status: string; isLocal: boolean }; port: number } | null;
     landing?: { node: { id: string; name: string; serverHost: string; status: string; isLocal: boolean }; port: number; host?: string } | null;
   };
 }
@@ -190,16 +190,18 @@ export interface ApiUpstreamSubscription {
   name: string;
   sourceType: UpstreamSourceType;
   format: UpstreamFormat;
+  detectedFormat: Exclude<UpstreamFormat, 'AUTO'> | null;
   url: string | null;
   hasContent: boolean;
   customHeaders: Record<string, string>;
   autoUpdate: boolean;
   updateIntervalMins: number;
   lastSyncAt: string | null;
+  lastSuccessAt: string | null;
   lastSyncStatus: UpstreamSyncStatus;
   lastSyncMessage: string | null;
-  userInfoUsedBytes: number | null;
-  userInfoTotalBytes: number | null;
+  userInfoUsedBytes: string | null;
+  userInfoTotalBytes: string | null;
   userInfoExpireAt: string | null;
   nodeCount: number;
   status: UpstreamNodeStatus;
@@ -207,22 +209,37 @@ export interface ApiUpstreamSubscription {
   updatedAt: string;
 }
 
+export interface ApiUpstreamDetail extends ApiUpstreamSubscription {
+  content: string | null;
+}
+
+export interface UpstreamSyncResult {
+  created: number;
+  updated: number;
+  missing: number;
+  nodeCount: number;
+  format: Exclude<UpstreamFormat, 'AUTO'>;
+  userInfo: { uploadBytes: string | null; downloadBytes: string | null; usedBytes: string | null; totalBytes: string | null; expireAt: string | null } | null;
+  diagnostics: { recognized: number; duplicates: number; skipped: number };
+}
+
 export interface ApiUpstreamNode {
   id: string;
   subscriptionId: string;
-  subscription?: { id: string; name: string } | null;
+  subscription?: { id: string; name: string; status: UpstreamNodeStatus } | null;
   name: string;
   protocolType: ProtocolType;
   serverHost: string;
   serverPort: number;
-  params: Record<string, unknown>;
   tags: string[];
   latencyMs: number | null;
   lastTestedAt: string | null;
-  lastTestStatus: 'SUCCESS' | 'TIMEOUT' | 'ERROR' | null;
+  lastTestStatus: 'SUCCESS' | 'TIMEOUT' | 'ERROR' | 'NOT_APPLICABLE' | null;
   lastTestMessage: string | null;
   status: UpstreamNodeStatus;
-  isDirectSub: boolean;
+  presenceStatus: 'PRESENT' | 'MISSING';
+  sourceKey?: string | null;
+  missingSince?: string | null;
   relayLines?: Array<{ id: string; name: string; status: string }>;
   createdAt: string;
   updatedAt: string;
@@ -232,7 +249,7 @@ export const upstreamApi = {
   list: (params?: { page?: number; pageSize?: number; search?: string; status?: string }) =>
     api.get<{ data: ApiUpstreamSubscription[]; total: number; page: number; pageSize: number }>('/admin/upstream', { params }),
   detail: (id: string) =>
-    api.get<{ subscription: ApiUpstreamSubscription }>(`/admin/upstream/${id}`),
+    api.get<{ subscription: ApiUpstreamDetail }>(`/admin/upstream/${id}`, { headers: { 'Cache-Control': 'no-cache' } }),
   create: (data: {
     name: string;
     sourceType?: UpstreamSourceType;
@@ -242,6 +259,7 @@ export const upstreamApi = {
     customHeaders?: Record<string, string>;
     autoUpdate?: boolean;
     updateIntervalMins?: number;
+    status?: UpstreamNodeStatus;
   }) => api.post<{ subscription: ApiUpstreamSubscription }>('/admin/upstream', data),
   update: (
     id: string,
@@ -260,7 +278,7 @@ export const upstreamApi = {
   delete: (id: string) =>
     api.delete<{ deleted: boolean; id: string }>(`/admin/upstream/${id}`),
   sync: (id: string) =>
-    api.post<{ success: boolean; nodeCount: number; format: string }>(`/admin/upstream/${id}/sync`),
+    api.post<UpstreamSyncResult>(`/admin/upstream/${id}/sync`),
   probeAll: (subscriptionId?: string) =>
     api.post<{ total: number; tested: number; results: Array<{ id: string; latencyMs: number | null; status: string }> }>(
       '/admin/upstream/probe-all',
@@ -275,11 +293,8 @@ export const upstreamApi = {
     protocolType?: string;
     tag?: string;
     status?: string;
-    isDirectSub?: boolean;
   }) =>
     api.get<{ data: ApiUpstreamNode[]; total: number; page: number; pageSize: number }>('/admin/upstream/nodes', { params }),
-  setNodeDirectSub: (nodeId: string, isDirectSub: boolean) =>
-    api.put<{ node: ApiUpstreamNode }>(`/admin/upstream/nodes/${nodeId}/direct-sub`, { isDirectSub }),
   setNodeStatus: (nodeId: string, status: UpstreamNodeStatus) =>
     api.put<{ node: ApiUpstreamNode }>(`/admin/upstream/nodes/${nodeId}/status`, { status }),
   probeNode: (nodeId: string) =>

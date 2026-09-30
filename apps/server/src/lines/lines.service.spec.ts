@@ -53,7 +53,7 @@ describe('LinesService', () => {
     const relay = { ...rawLine, id: 'line-relay', name: '跨节点盲转', type: 'RELAY', relayMode: 'BLIND_FORWARD', entryNodeId: entryNode.id, entryPort: 25001, landingNodeId: exitNode.id, landingPort: 25002, entryNode, landingNode: exitNode };
     prisma.line.create.mockResolvedValue(relay);
     const result = await service.create({ name: relay.name, type: 'RELAY', relayMode: 'BLIND_FORWARD', protocolType: 'VLESS', entryNodeId: entryNode.id, entryPort: 25001, landingNodeId: exitNode.id, landingPort: 25002 });
-    expect(result.line.topology.entry.port).toBe(25001);
+    expect(result.line.topology.entry?.port).toBe(25001);
     expect(result.line.topology.landing?.port).toBe(25002);
     expect(gateway.pushConfigToAll).toHaveBeenCalled();
   });

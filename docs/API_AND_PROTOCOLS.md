@@ -41,7 +41,7 @@
 - `GET /user/wallet/transactions?page&pageSize`：查询当前用户余额流水。⭐ 返回统一分页结构，流水包含 `amount`、`balanceBefore`、`balanceAfter`、`type`、`description`、`createdAt`。
 - `POST /user/wallet/redeem`：兑换卡密。⭐ 请求 `{ code }`；卡密核销、购买身份分类额度占用和余额入账/套餐订阅履约在同一 SQLite 事务内完成，并发兑换不得重复发奖或突破上限。卡密不区分大小写（服务端统一大写归一）；接口按用户限流（默认 5 次/分钟），超限返回 429。套餐卡遵守套餐购买限购；已有有效订阅时返回 409 且不核销，可稍后重试。软删除卡仍可兑换。
 - `GET /plans/public`：公开套餐市场列表。⭐ 返回公开套餐及其价格、流量、有效期、`trafficResetMode`、节点匹配模式、`purchaseLimitPerUser`（`null` 不限购）、`allowRenewal` 与 `deviceLimit`（`0` 不限）。
-- `GET /user/subscription`：查询当前用户唯一订阅、可用线路、套餐购买额度与在线设备策略。⭐ 无订阅时返回 `{ subscription: null, lines: [], nodes: [], planClaims: [], deviceManagement }`；有订阅时返回 `lines[]`、`planClaims[{ planId, used }]` 并保留 `nodes` 兼容镜像。订阅视图包含 `trafficResetMode`、`nextTrafficResetAt` 和 `extraLineIds`；线路为套餐匹配线路与用户额外授权线路的并集。`deviceManagement` 在设备管理服务不可用时为 `null`。
+- `GET /user/subscription`：查询当前用户唯一订阅、可用线路、套餐购买额度与在线设备策略。⭐ 无订阅时返回 `{ subscription: null, lines: [], nodes: [], planClaims: [], deviceManagement }`；无有效权益（过期、耗尽、禁用或未满足邮箱验证）仍可查看订阅状态，但连接资源为空。`lines` 与 `nodes` 使用同一安全摘要：名称、协议、端点、标签、状态与 `capabilities{trafficMetered,localLimitsSupported,credentialRevocable}`，不包含 params、原始 JSON、上游凭据或源 URL/Header。线路为套餐 ALL/TAGS/EXPLICIT 匹配与用户额外授权的并集，与实际客户端订阅使用同一资源解析；EXTERNAL 不提供本地流量/速率/设备执行或共享凭据追回能力。订阅视图包含 `trafficResetMode`、`nextTrafficResetAt` 和 `extraLineIds`；`deviceManagement` 不可用时为 null。
 - `GET /user/subscription/devices`：查询当前用户设备策略及在线设备明细。⭐ 返回 `{ onlineDeviceCount, configuredDeviceLimit, effectiveDeviceLimit, deviceLimitSource, configuredDeviceLimitSource, deviceLimitEnabled, devices }`；每台设备按客户端 IP 聚合，含连接数、首次/最近上报时间及节点/线路明细。
 - `DELETE /user/subscription/devices?ip=<IP>`：踢下线当前用户指定 IP；省略 `ip` 时踢下线所有当前在线设备。
 - `POST /user/subscription/devices/kick-all`：踢下线当前用户全部在线设备。踢设备返回 `{ taskId, requested, notifiedNodes, kickedIps }`，只向当前报告了该用户设备的在线节点发送任务；设备管理服务未注入时返回 400。
@@ -124,6 +124,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `GET /admin/lines?page&pageSize&search&type&status&tag`：分页查询线路，可按名称/地址、类型、启停状态和标签筛选；响应包含 `tag`、`listen`、`protocolType`、脱敏后的 `params`、`certificateId`/`certificate` 简要关联、`targetLineId`/`targetLine` 目标摘要、`topology`（入口/落地节点与端口）、最终生效的 `serverHost/serverPort`、原始 `endpointOverrides` 以及测速快照（`lastLatencyMs`、`lastTestedAt`、`lastTestStatus`、`lastTestMessage`）。旧客户端仍可读取只读 `targetInbound` 摘要。⭐
 - `GET /admin/lines/:id`：查询线路详情及入口/落地节点关联、协议参数、证书简要信息、端点解析结果与最新测速快照。⭐
 - `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, upstreamNodeId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`relayMode` 支持 `BLIND_FORWARD`、`PROTOCOL_PROXY`、`TARGET_LINE` 与 `UPSTREAM_NODE`；当为 `UPSTREAM_NODE` 时落地目标指向已导入的外部上游节点（`upstreamNodeId` 必填），入口 VPS 自动生成对应 Outbound 并纳管入口流量计费。同节点端口冲突校验按实际传输层（TCP/UDP）重叠判定：`SHADOWSOCKS`、`DIRECT` 与 `BLIND_FORWARD` 盲转发入口均按 TCP+UDP 双栈占用校验，禁止与同节点同端口的 TCP 或 UDP（`HYSTERIA2`/`TUIC`）线路冲突。其余参数与约束见下文。⭐
+- **EXTERNAL 外部直发线路**：创建请求 `{ name, type: 'EXTERNAL', upstreamNodeId, tags?, level?, sortOrder?, isPublic?, status? }`，默认 `DISABLED`、`isPublic=false`。没有 entryNodeId/entryPort/证书/监听/本地倍率或限速设置；协议、端点、连接从上游动态解析。返回入口与 `topology.entry` 为 null，不返回外部秘密。DIRECT/RELAY 必须保留真实入口。公开启用会被 ALL 套餐包含；用户实际获取需通过既有资格和线路授权。
 - `PATCH /admin/lines/:id`：部分更新线路，字段同创建请求。⭐ 保存后触发全量 Agent 配置推送防抖。
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
@@ -142,18 +143,19 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `DELETE /admin/certificates/:id`：删除未被线路引用的证书；仍有关联线路时返回 `409`。⭐
 
 #### 上游订阅与节点管理 (`/admin/upstream`)
-- `GET /admin/upstream?page&pageSize&search&status`：分页查询上游订阅列表，响应包含订阅名称、来源类型（URL/文本）、解析格式、自动更新周期、上次同步状态、流量用量与节点总数。⭐
-- `GET /admin/upstream/:id`：查询指定上游订阅详情。⭐
-- `POST /admin/upstream`：创建上游订阅。⭐ 请求 `{ name, sourceType?, format?, url?, content?, customHeaders?, autoUpdate?, updateIntervalMins? }`；创建成功后自动异步触发一次初始同步。
-- `PUT /admin/upstream/:id`：修改上游订阅配置。⭐
-- `DELETE /admin/upstream/:id`：删除上游订阅并级联删除所属节点。⭐ 若有中转线路正引用该订阅下的节点，自动将相关线路置为 `DISABLED` 并清空引用，同时向节点推送配置。
-- `POST /admin/upstream/:id/sync`：立即强制同步指定的上游订阅。⭐ 拉取内容并执行节点差异比对，平滑保留存量节点配置，若上游删除节点则自动停用关联的中继线路。
-- `POST /admin/upstream/probe-all?subscriptionId`：并发对全部或指定订阅的有效节点执行 TCP 连通性测速。⭐
-- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status&isDirectSub`：分页多维度筛选上游解析节点列表。⭐
-- `PUT /admin/upstream/nodes/:nodeId/direct-sub`：切换指定节点是否直接合并入用户客户端订阅。⭐ 请求 `{ isDirectSub: boolean }`。
-- `PUT /admin/upstream/nodes/:nodeId/status`：启用或停用单个外部节点。⭐ 若停用节点，自动联动停用引用它的中继线路。
-- `POST /admin/upstream/nodes/:nodeId/probe`：单节点 TCP 握手连通性测速。⭐ 响应 `{ probe: { latencyMs, status, message }, node }`。
-- `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：快捷导出外部节点为标准协议 URI 文本列表或 JSON。⭐
+- `GET /admin/upstream?page&pageSize&search&status`：真实分页来源列表；URL/Header 掩码，content 不返回，提供 hasContent。`format` 是配置，`detectedFormat` 为最近检测结果；`lastSyncAt` 与 `lastSuccessAt` 分离；用量字节值为十进制字符串或 null，未知不等于无限。
+- `GET /admin/upstream/:id`：管理员按需读取详情 `{ subscription }`，详情含解密后的 URL、自定义 Header 和 content；普通用户不能调用。
+- `POST /admin/upstream`：创建源 `{ name, sourceType?, format?, url?, content?, customHeaders?, autoUpdate?, updateIntervalMins?, status? }`；缺省 sourceType=URL 仍需有效 URL；TEXT 需非空配置；Header 值必须为字符串，更新间隔 10~43200 分钟。status 默认 ACTIVE，启用源创建后异步首次同步，DISABLED 不触发拉取。
+- `PUT /admin/upstream/:id`：按合并后来源类型验证。TEXT 未提交 content 则保持原文，不接受空文本替换；可切换 ACTIVE/DISABLED。状态变化提交后清配置缓存，源禁用立即停止其直发与中继，重新启用不复活此前自动禁用的线路。
+- `DELETE /admin/upstream/:id`：显式删除源并级联删除节点，在事务中停用关联 Line、清空引用，提交后通知 Agent。
+- `POST /admin/upstream/:id/sync`：同源串行完整同步，响应提供 `success,nodeCount,format,created,updated,missing,diagnostics{recognized,duplicates,skipped},userInfo`；元信息字节值字符串化。网络/解析失败保留 last-good，不以部分结果删除节点；歧义身份拒绝提交；节点缺失保留引用并停用关联线路，重现不自动启用。AUTO 不写成固定格式，参数变化提交后刷新 WS/HTTP 配置。
+- `POST /admin/upstream/probe-all?subscriptionId`：有限并发遍历有效资源，不静默限为前 200 个；subscriptionId 经 UUID 校验。
+- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status`：真实服务端分页与 tag 筛选，total 为筛选总数；返回 presenceStatus/sourceKey/关联线路等安全摘要，不包含 params/rawConfigJson。旧 isDirectSub 参数不支持。
+- `PUT /admin/upstream/nodes/:nodeId/status`：DTO 验证 `{ status: 'ACTIVE'|'DISABLED' }`；禁用节点停用关联线路并刷新配置。
+- `POST /admin/upstream/nodes/:nodeId/probe`：仅 Master TCP 可达性，响应 `{ probe:{latencyMs,status,message},node }`；Hysteria2/TUIC 返回 NOT_APPLICABLE，不冒充协议握手或测速成功。真实可用性通过线路端到端代理请求验证。
+- `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：管理员导出明确的规范化 URI 或 Sing-box outbound JSON；通过同一连接编译器保留 TLS/Reality/Transport/plugin，不能表示的协议组合报明确错误，不以含有 `://` 的任意 JSON 当原始 URI。
+- `GET /admin/upstream/:id/sync-status`：返回 QUEUED/FETCHING/PARSING/COMMITTING/IDLE 阶段及最近同步/成功时间、状态和脱敏诊断；不返回连接秘密。
+- **BREAKING CHANGE**：删除 `/nodes/:nodeId/direct-sub`、isDirectSub 字段和 fingerprint。直接分发通过 EXTERNAL Line 授权；不提供旧接口、转换或旧数据回填。
 
 #### 系统设置
 - `GET /admin/settings`：读取全量设置。⭐ 响应包含 `docs/DATA_MODELS.md` §SystemSetting 列出的全部强类型字段（含 SMTP、邮箱验证、CAPTCHA、统一时区 `systemTimezone`、速率色彩阶梯 `speedLimitColorTiers` 与单位换算 `speedLimitUnitConversionEnabled`、存储日志策略、结构化公告列表 `siteAnnouncementsJson`、首页配置 `landingEnabled` / `landingHero*` / `landingShow*` / `landingCustom*Json`、多设备限制 `deviceLimitEnabled`（默认 `true`）与在线活跃窗口 `deviceOnlineWindowSecs`（默认 60 秒）等）；`smtpPass` 与 `turnstileSecretKey` 有值时均返回 `********`。存储日志策略包括 `trafficHourlyRetentionDays`（默认 90）、`nodeRateRetentionDays`（默认 30）、`logsRetentionDays`（默认 7）、`logsMaxCount`（默认 100000）、`logsMinIngestLevel`（默认 `INFO`）、`agentLogMaxSizeMb`（默认 50）和 `agentLogMaxFiles`（默认 5）。
@@ -302,6 +304,7 @@ Agent 通过握手 Header `X-Agent-Token: <AGENT_TOKEN>` 鉴权；URL 不携带�
 #### 2. 配置全量同步 (`config_sync`) —— Master -> Agent
 当节点首次连接成功、或主控端发生用户/线路变动时，Master 向 Agent 实时推送最新的 Sing-box 运行配置。
 `PROTOCOL_PROXY` 与 `TARGET_LINE` 的跨节点出站统一使用系统内部中继凭证，不借用任何普通用户凭证；对应出口入站仅注入该内部凭证（`TARGET_LINE` 追加到目标直连入站）。内部凭证固定为 `email=__riricloud_relay_transit__`、`uuid=00000000-0000-4000-8000-000000000002`、密码 `riricloud-internal-relay-transit-secret`，仅允许在 Master 生成的节点配置中使用。Master 在生成各协议入站时，普通用户的 `name` 字段编码为复合标签 `<email_or_uuid>::<lineId>`，使 Sing-box 的 V2Ray stats API 原生支持按线路精准切分用户流量统计；内部中继凭证保持固定不变。Agent 上报该复合凭证后，Master 端自动拆解用户与所属线路，精准落库 `TrafficLog` 并按线路倍率折算扣除套餐配额，彻底解决单节点多入站与中转线路归属问题。`experimental.v2ray_api.stats` 的 `users` 自动注册所有生成的复合标签，并下发 `inbounds` 入站 Tag 列表。
+用户名密码协议（HTTP/SOCKS/MIXED/Naive）不能直接把含冒号的统计标签放进 Basic userinfo：本地普通用户登录名使用 `riri_login_` 加复合标签 UTF-8 的 Base64URL 编码，客户端/入站复用 `formatAuthUserName`；Master 的 `parseTrafficCredential` 可逆还原用户和 lineId 后按原账务规则入账。VLESS 等 `name` 统计标签、系统内部凭据及独立 `pk_` 代理池用户名保持不变。外部直发始终使用外部原始用户名，不套用这层本地编码。
 Agent 收到后原子落盘（临时文件 + rename），并与最近一次配置做字节比对：内容变化则优雅重启内核使配置生效（sing-box 无原生 reload，重启即热应用）；内容相同且内核存活则跳过，避免无谓重启。
 ```json
 {

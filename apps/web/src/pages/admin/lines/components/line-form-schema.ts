@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import i18n from '@/i18n/config';
 import type { ApiLine, ProtocolType } from '@/lib/api';
-import type { InboundParams, ProtocolType as NodeProtocolType } from '../../nodes/use-nodes';
+import type { InboundParams } from '../../nodes/use-nodes';
+import type { LinePayload } from '../use-lines';
 
 export const PROTOCOL_TYPES = [
   'VLESS', 'VMESS', 'TROJAN', 'HYSTERIA2', 'TUIC', 'SHADOWSOCKS',
@@ -52,7 +53,7 @@ export const lineFormSchema = z.object({
   name: z.string().trim().min(1, i18n.t('admin:lineForm.validation.nameRequired')),
   tag: z.string().trim().max(64, i18n.t('admin:lineForm.validation.tagMax')),
   listen: z.string().trim().min(1, i18n.t('admin:lineForm.validation.listenRequired')).max(64, i18n.t('admin:lineForm.validation.listenMax')),
-  type: z.enum(['DIRECT', 'RELAY']),
+  type: z.enum(['DIRECT', 'RELAY', 'EXTERNAL']),
   protocolType: z.enum(PROTOCOL_TYPES),
   relayMode: z.enum(['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE', 'UPSTREAM_NODE']).optional(),
   targetLineId: z.string().optional(),
@@ -147,7 +148,7 @@ export const lineFormSchema = z.object({
   landingEndpointOverrideEnabled: z.boolean().default(false),
   landingServerHost: z.string().default(''),
   landingServerPort: optionalPort,
-  trafficRate: z.coerce.number().min(0.01),
+  trafficRate: z.coerce.number().min(0),
   tags: z.string(),
   level: z.coerce.number().int().min(0),
   sortOrder: z.coerce.number().int().min(0),
@@ -158,6 +159,11 @@ export const lineFormSchema = z.object({
   tunnelPort: optionalPort,
   tunnelSecret: z.string().optional()
 }).superRefine((value, ctx) => {
+  if (value.type === 'EXTERNAL') {
+    if (!value.upstreamNodeId) ctx.addIssue({ code: 'custom', path: ['upstreamNodeId'], message: i18n.t('admin:lineForm.validation.upstreamNodeRequired') });
+    return;
+  }
+  if (value.trafficRate < 0.01) ctx.addIssue({ code: 'custom', path: ['trafficRate'], message: i18n.t('admin:upstream.rateRequired') });
   if (!value.entryNodeId) ctx.addIssue({ code: 'custom', path: ['entryNodeId'], message: i18n.t('admin:lineForm.validation.entryNodeRequired') });
   if (value.type === 'RELAY' && value.relayMode !== 'TARGET_LINE' && value.relayMode !== 'UPSTREAM_NODE' && !value.landingNodeId) {
     ctx.addIssue({ code: 'custom', path: ['landingNodeId'], message: i18n.t('admin:lineForm.validation.landingNodeRequired') });
@@ -337,6 +343,11 @@ export function newLineFormValues(protocolType: ProtocolType = 'VLESS', nextSort
 
 export function lineToFormValues(line: ApiLine): LineFormValues {
   const defaults = defaultLineFormValues(line.protocolType);
+  if (line.type === 'EXTERNAL') return {
+    ...defaults, type: 'EXTERNAL', name: line.name, tag: line.tag ?? '',
+    upstreamNodeId: line.upstreamNodeId ?? '', tags: line.tags.join(', '),
+    level: line.level, sortOrder: line.sortOrder, isPublic: line.isPublic, status: line.status, trafficRate: 0
+  };
   const params = asRecord(line.params) as InboundParams;
   const rawTransport = asRecord(params.transport);
   const rawTls = asRecord(params.tls);
@@ -357,8 +368,8 @@ export function lineToFormValues(line: ApiLine): LineFormValues {
     relayMode: line.relayMode ?? 'BLIND_FORWARD',
     targetLineId: line.targetLineId ?? '',
     upstreamNodeId: line.upstreamNodeId ?? '',
-    entryNodeId: line.entryNodeId,
-    entryPort: line.entryPort,
+    entryNodeId: line.entryNodeId ?? '',
+    entryPort: line.entryPort ?? undefined,
     landingNodeId: line.landingNodeId ?? '',
     landingPort: line.landingPort ?? undefined,
     certificateId: line.certificateId ?? MANUAL_CERTIFICATE_ID,
@@ -594,7 +605,12 @@ export function buildParamsFromValues(values: LineFormValues): Record<string, un
   return params;
 }
 
-export function toLinePayload(values: LineFormValues) {
+export function toLinePayload(values: LineFormValues): LinePayload {
+  if (values.type === 'EXTERNAL') return {
+    type: 'EXTERNAL', name: values.name.trim(), tag: values.tag.trim() || null,
+    upstreamNodeId: values.upstreamNodeId || '', tags: splitList(values.tags),
+    level: values.level, sortOrder: values.sortOrder, isPublic: values.isPublic, status: values.status
+  };
   const entryNodeId = values.entryNodeId || '';
   const isRelayWithLanding = values.type === 'RELAY' && values.relayMode !== 'TARGET_LINE' && values.relayMode !== 'UPSTREAM_NODE';
   const landingNodeId = isRelayWithLanding ? values.landingNodeId || null : null;
@@ -604,7 +620,7 @@ export function toLinePayload(values: LineFormValues) {
     tag: values.tag.trim() || null,
     listen: values.listen.trim(),
     type: values.type,
-    protocolType: values.protocolType as NodeProtocolType,
+    protocolType: values.protocolType,
     params: buildParamsFromValues(values),
     relayMode: values.type === 'RELAY' ? values.relayMode : null,
     targetLineId: values.type === 'RELAY' && values.relayMode === 'TARGET_LINE' ? values.targetLineId || null : null,

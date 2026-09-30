@@ -182,6 +182,12 @@ describe('ProxyPoolService', () => {
       }));
     });
 
+    it('没有入口节点或端口的外部记录不能成为代理池端点', async () => {
+      prisma.line.findMany.mockResolvedValue([lineRecord({ type: 'EXTERNAL', entryNode: null, entryPort: null })]);
+      const result = await service.listEndpoints();
+      expect(result.endpoints).toEqual([]);
+    });
+
     it('按 lineIds 过滤，空过滤结果直接返回空列表', async () => {
       prisma.line.findMany.mockResolvedValue([]);
       const result = await service.listEndpoints([]);

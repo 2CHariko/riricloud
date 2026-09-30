@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import {
   buildClientTls,
+  formatAuthUserName,
   buildClientTransport,
   buildProxyPoolWhitelistRules,
   buildShadowsocksClientPassword,
@@ -552,13 +553,13 @@ describe('直连代理池（ProxyKey）入站组装', () => {
     expect(inbound.type).toBe('mixed');
     const entries = inbound.users as Array<{ username: string; password: string }>;
     expect(entries).toEqual([
-      { username: 'a@x.com::line-1', password: 'pwd-1' },
-      { username: 'b@x.com::line-1', password: 'pwd-2' },
+      { username: formatAuthUserName(users[0], 'line-1'), password: 'pwd-1' },
+      { username: formatAuthUserName(users[1], 'line-1'), password: 'pwd-2' },
       { username: 'pk_0123456789abcdef01234567', password: 'pwd-a' },
       { username: 'pk_fedcba9876543210fedcba98', password: 'pwd-b' }
     ]);
     // HTTP CONNECT 走 net/http.parseBasicAuth（按首个冒号切分），用户名必须无冒号
-    expect(entries.filter((entry) => entry.username.startsWith('pk_')).every((entry) => !entry.username.includes(':'))).toBe(true);
+    expect(entries.every((entry) => !entry.username.includes(':'))).toBe(true);
   });
 
   it('未启用用户认证的 MIXED 入站在注入 ProxyKey 时仍只输出代理池凭据', () => {

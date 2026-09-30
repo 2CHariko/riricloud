@@ -311,6 +311,8 @@ E2E_SYNC_RESOURCES=0 bash scripts/dev-e2e.sh # 跳过本地构建产物同步
 ```
 
 - 脚本默认使用独立的 `apps/server/prisma/dev-e2e.db` 联调数据库，再检查并应用数据库迁移，数据库首次创建时执行种子播种；这样即使本地 `3000` 端口的手动开发主控正在运行，也不会与其共享 SQLite WAL 写锁。可通过 `E2E_DATABASE_URL` 显式指定要复用的 SQLite URL；若主控已经在运行则跳过迁移，复用时需由调用者确保目标主控与该数据库匹配。随后自动完成管理员登录，优先使用显式 `ADMIN_EMAIL`/`ADMIN_PASSWORD`，其次读取 `apps/server/.env` 中的正式或兼容 `SEED_ADMIN_*` 配置，最后才回退到本地演示默认值；也可通过 `SERVER_ENV_FILE` 指定凭据配置文件。使用临时权限受限 Cookie jar 调用管理 API（登录响应不再读取 `accessToken` JSON；解析器兼容 curl Netscape 格式的 `#HttpOnly_` Cookie 标记）。登录失败时会显示 HTTP 状态和对应排查提示，不再直接暴露 `curl (22)`。脚本默认复用 seed 预置的 `Master-Local` 节点，并通过本地 Prisma bootstrap helper 读取其 AgentToken（节点列表 API 已脱敏，不再返回凭证），再构建并启动 Agent。`SINGBOX_BINARY_PATH` 可显式指定内核；未指定时脚本会按当前系统与 CPU 架构自动过滤候选文件，Linux 优先查找 `.cache/sing-box-v2ray-api/<version>/linux-<arch>/sing-box`，Windows 优先查找 `.exe`，并通过 `sing-box version` 验证文件确实可执行。如需使用独立联调节点，可设置 `USE_MASTER_LOCAL=0`，脚本会按 `127.0.0.1:<NODE_PORT>` 查找或创建节点；复用既有独立节点时必须显式设置 `AGENT_TOKEN`，否则脚本会提示删除旧节点后重新创建对应端口的 VLESS Reality 线路。
+- E2E 主库与遥测库 URL 在脚本启动时分别以 `prisma/` 与 `prisma/telemetry/` 的 schema 目录规范化成绝对 `file:` URL，文件存在判断、上游预检、迁移、种子、主控和 AgentToken helper 复用相同路径。双库部署入口也进行同样规范化；不要将 scratch/custom-output 客户端的生成文件复制进默认 Prisma client，Windows 引擎占用解除后从正式 schema 正常执行 `prisma generate`。
+- 遇到 `P3018` / `backup_and_remove_legacy_upstream_before_upgrade` 应按迁移保护处理，不是写锁或 Prisma 未安装。开发者明确选择不保留专用 E2E 数据时，先确认相关服务已停止，再删除 `prisma/dev-e2e.db`、`prisma/telemetry/dev-e2e-telemetry.db` 及对应 WAL/SHM 后重新运行脚本；不要删除 `dev.db` 或生产库。脚本不会自动清库。两库重建后旧失败记录不保留，正常从空库迁移和播种。
 - 默认资源同步版本跟随 `apps/agent/VERSION`，构建二进制与上传资源使用同一 Agent 版本；可通过 `E2E_AGENT_VERSION` 同时覆盖构建和资源版本。为兼容已有脚本，单独设置 `E2E_RESOURCE_VERSION` 也会作为 Agent 构建版本覆盖；若同时设置两个变量但值不一致，脚本会在启动前报错。`E2E_APP_VERSION` 只记录资源构建来源，不再用作 Agent 版本。设置 `E2E_SYNC_RESOURCES=0` 可跳过同步；`E2E_AGENT_RESOURCE_FILE`、`E2E_AGENT_RESOURCE_TARGET`、`E2E_SINGBOX_RESOURCE_FILE`、`E2E_SINGBOX_RESOURCE_TARGET` 和 `E2E_SINGBOX_RESOURCE_VERSION` 仍可覆盖资源文件、架构或 Sing-box 版本。
 - 主控端默认尝试 `http://localhost:30800`（避开 Windows 系统保留与动态端口区间）；若未检测到可复用的服务且该端口无法绑定，脚本会自动向后探测最多 1000 个可用端口，并同步更新主控地址、Web API 代理地址和 Agent WebSocket 地址；实际使用的端口会记录在 `.cache/dev-e2e-server-port`，后续运行据此复用已在运行的主控端（不再因端口漂移而重复拉起）。若端口在探测与绑定之间被其他进程抢占（`EADDRINUSE`），脚本会顺延到下一个可用端口重试（默认 5 次，可用 `SERVER_START_ATTEMPTS` 调整）。可通过 `SERVER_PORT` 或 `PORT` 固定端口（固定后不自动顺延），或通过 `SERVER_PORT_SCAN_LIMIT` 调整探测范围。手动启动 Web 时可用 `VITE_API_PROXY_TARGET` 指定 `/api` 代理目标。应用自身的默认端口仍为 `3000`，联调端口仅作用于本脚本。
 - StatsService 默认监听 `127.0.0.1:10085`，Clash API 默认监听 `127.0.0.1:10086`；若这些端口在本地无法绑定（如落入 Windows WinNAT / Hyper-V 动态排除端口段或被占用），开发联调会自动探测可用端口并通过 `STATS_API_LISTEN` 与 `CLASH_API_LISTEN` 注入主控配置，Agent 也会在本地落盘前自动校验并重映射不可用的本地回环管理端口；Agent 会自动读取下发或重映射后的地址进行指标与设备连接轮询。也可手动设置 `STATS_API_LISTEN=127.0.0.1:xxxx` 或 `CLASH_API_LISTEN=127.0.0.1:yyyy`。
@@ -583,3 +585,21 @@ Master 下发的 Sing-box 配置默认将 `experimental.clash_api.external_contr
 首次上线应只创建 `ADMIN` 或短期 `SHARE` 镜像验证指定节点的实际出口、GitHub Raw/API/Release 响应、重定向白名单和 Range 行为，确认监控后再逐站启用 `PUBLIC`。服务端默认限制单请求 10 分钟、响应 256 MiB、单节点并发 4；公开请求还按 IP/镜像站限速。禁止把 GitHub PAT、Cookie、Authorization、响应体或完整分享 Token 写入日志，日志仅记录镜像 ID、节点 ID、最终 host、状态码、字节数、耗时和稳定错误码。
 
 发布前先备份 SQLite 主文件及对应 `-wal`、`-shm`，再部署 Master 数据库迁移，最后滚动升级并确认 Agent 心跳能力。旧 Agent 会继续运行既有功能但不会接收镜像任务。回滚时先关闭镜像站入口或全部禁用配置，进行中的流按失败处理；不要求旧版本恢复进行中的镜像会话。
+
+## 10. 上游订阅破坏性重构部署
+
+本次删除 `isDirectSub`、旧 `fingerprint` 与 `/admin/upstream/nodes/:nodeId/direct-sub`，不保留旧数据/接口兼容，不自动转换为 EXTERNAL，也不回填加密数据。**不要直接在带旧上游记录的主库上执行迁移或新版服务。**
+
+1. 停止旧 Master 的写入，使用 SQLite 在线备份或停机后完整备份主库及 WAL/SHM；保存与该备份匹配的旧二进制和加密密钥。
+2. 维护者明确选择新数据库，或在备份后显式处理旧上游源、节点与引用它们的线路。只处理上游域，不清空用户/套餐/余额/流量或其他线路；本程序不执行这一步，也没有自动清理开关。
+3. 执行正常部署命令。`prisma/deploy-databases.js`、Docker 入口与 `scripts/dev-e2e.sh` 在任何双库变更前执行 `upstream-upgrade-preflight.js`。检测到旧上游记录时以明确错误中止；SQL 新迁移也在结构变化前设置 CHECK 保护，直接调用 Prisma 同样不能悄悄转换旧数据。
+4. 迁移完成后重新导入上游，等待完整成功快照；创建 EXTERNAL 或 UPSTREAM_NODE 中继线路，确认授权与启停再发布。EXTERNAL 默认禁用/非公开，公开启用可能被 ALL 套餐包含。
+5. 回退必须同时恢复旧数据库备份与旧二进制；新版 EXTERNAL/加密连接不能由旧版安全读取。直接 Prisma 迁移被拒绝留下失败迁移记录时，确认结构未改变并完成维护者的数据处理后，按 Prisma 官方流程标记该失败迁移回滚再重试，禁止修改历史 SQL。
+
+上游 URL、Header、源内容/缓存、参数和原始快照均使用现有 `RIRICLOUD_ENCRYPTION_KEY`（或 JWT_SECRET）AES-GCM 加密；部署必须持续保留同一密钥。管理列表不展示秘密，管理员编辑按需获取详情，日志/错误不能包含完整 URL 或认证内容。
+
+远程拉取仅公共 HTTP(S)，生产必须 HTTPS，禁止私网、回环和 metadata 目标；最多 5 次重定向、20 秒总预算和 5 MiB 响应。实际连接使用已检查的 DNS 地址，跨 origin 不转发自定义秘密 Header。内网来源请使用文本导入，而不是放宽生产 SSRF 检查。
+
+自建中继只允许可归属用户的鉴权入口，用户流量按入口线路倍率计费；共享 SS/关闭用户鉴权不能作为受控上游中继入口。EXTERNAL 为共享外部凭据分发，不计本地用量、不执行本地设备/速率限制，停止分发或用户到期不能撤回已保存的凭据；需要独立停权时使用自建入口中继。
+
+裸节点测速是 **Master TCP 可达性**，Hysteria2/TUIC 等 UDP-only 返回不适用，不应据此判断协议可用或停用资源。使用线路的 Sing-box 端到端代理请求验证真实可用性。定向回归：`node --test scripts/upstream-upgrade-preflight.test.cjs scripts/upstream-migration.test.cjs`；测试在内存 SQLite 执行，不操作现有业务库。
