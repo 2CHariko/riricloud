@@ -320,6 +320,8 @@ model Line {
   certificate     Certificate?    @relation(fields: [certificateId], references: [id], onDelete: SetNull)
   trafficLogs     TrafficLog[]
   extraLineGrants UserLineGrant[]
+  upstreamNodeId  String?
+  upstreamNode    UpstreamNode?   @relation("LineUpstreamNode", fields: [upstreamNodeId], references: [id], onDelete: SetNull)
 
   @@index([entryNodeId])
   @@index([landingNodeId])
@@ -329,6 +331,7 @@ model Line {
   @@index([type, status])
   @@index([isPublic])
   @@index([sortOrder])
+  @@index([upstreamNodeId])
 }
 
 model Certificate {
@@ -665,4 +668,62 @@ model HelpArticle {
   @@index([platform, isPublished, sortOrder])
   @@index([locale, isPublished])
   @@index([sortOrder])
+}
+
+// ==============================
+// 6. 上游订阅与代理节点 (UpstreamSubscription / UpstreamNode)
+// ==============================
+model UpstreamSubscription {
+  id                 String         @id @default(uuid())
+  name               String
+  sourceType         String         @default("URL") // URL | TEXT
+  format             String         @default("AUTO") // AUTO | CLASH_META | SINGBOX | URI_LIST
+  url                String?
+  content            String?        // 文本快照或最近一次成功拉取的内容
+  customHeadersJson  String         @default("{}") // 自定义 HTTP 请求头 (如 User-Agent)
+  autoUpdate         Boolean        @default(true) // 是否开启定时自动刷新
+  updateIntervalMins Int            @default(720)  // 自动刷新周期 (分钟，默认 12 小时)
+  lastSyncAt         DateTime?
+  lastSyncStatus     String         @default("PENDING") // PENDING | SUCCESS | FAILED
+  lastSyncMessage    String?
+  userInfoUsedBytes  BigInt?        // 从 subscription-userinfo 响应头解析出的已用流量
+  userInfoTotalBytes BigInt?        // 从 subscription-userinfo 响应头解析出的总配额
+  userInfoExpireAt   DateTime?      // 从 subscription-userinfo 响应头解析出的过期时间
+  nodeCount          Int            @default(0)
+  status             String         @default("ACTIVE") // ACTIVE | DISABLED
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  nodes UpstreamNode[]
+
+  @@index([status])
+  @@index([autoUpdate, lastSyncAt])
+}
+
+model UpstreamNode {
+  id              String               @id @default(uuid())
+  subscriptionId  String
+  name            String
+  protocolType    String               // VLESS, VMESS, TROJAN, HYSTERIA2, TUIC, SHADOWSOCKS, SOCKS, HTTP, etc.
+  serverHost      String
+  serverPort      Int
+  paramsJson      String               // 归一化 Sing-box outbound 核心参数 (JSON)
+  rawConfigJson   String               // 原始节点结构快照
+  fingerprint     String               // 节点特征哈希 (协议+服务器+端口+核心凭据哈希，比对用)
+  tagsJson        String               @default("[]") // 自动解析标签 (HK, JP, US, IEPL 等)
+  latencyMs       Int?
+  lastTestedAt    DateTime?
+  lastTestStatus  String?              // SUCCESS | TIMEOUT | ERROR
+  lastTestMessage String?
+  status          String               @default("ACTIVE") // ACTIVE | DISABLED
+  isDirectSub     Boolean              @default(false)    // 是否直接合并入用户客户端订阅 (默认 false)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  subscription UpstreamSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  relayLines   Line[]               @relation("LineUpstreamNode")
+
+  @@index([subscriptionId])
+  @@index([protocolType])
+  @@index([status, isDirectSub])
 }

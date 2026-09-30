@@ -123,7 +123,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 #### 线路管理
 - `GET /admin/lines?page&pageSize&search&type&status&tag`：分页查询线路，可按名称/地址、类型、启停状态和标签筛选；响应包含 `tag`、`listen`、`protocolType`、脱敏后的 `params`、`certificateId`/`certificate` 简要关联、`targetLineId`/`targetLine` 目标摘要、`topology`（入口/落地节点与端口）、最终生效的 `serverHost/serverPort`、原始 `endpointOverrides` 以及测速快照（`lastLatencyMs`、`lastTestedAt`、`lastTestStatus`、`lastTestMessage`）。旧客户端仍可读取只读 `targetInbound` 摘要。⭐
 - `GET /admin/lines/:id`：查询线路详情及入口/落地节点关联、协议参数、证书简要信息、端点解析结果与最新测速快照。⭐
-- `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`proxyProtocol` 为布尔类型（开启时自动兼容解析 v1 与 v2 协议头），`proxyProtocolAcceptNoHeader` 控制是否允许无 PROXY 头的连接；`speedLimitMbps` 控制单端口限速；`certificateId` 只能用于标准 TLS，关联后无需在 `params.tls` 中填写本地证书/私钥路径，Master 会在配置同步时注入最新 PEM。`params` 按 `docs/DATA_MODELS.md` §3.1 归一化并在响应中脱敏，TLS `alpn` 使用字符串数组，可按协议/传输层从预设值多选。直连线路仅需指定入口节点与端口，落地字段保持为 null；普通中继线路必须指定入口、落地和机制，`TARGET_LINE` 必须指定其他节点上的 `DIRECT` 目标线路，落地节点与端口动态由目标线路解析（默认自动继承目标线路生效的 `endpointOverrideEnabled` 对外覆盖端点与 SNI）。中继线路支持开启 `landingEndpointOverrideEnabled` 显式覆盖入口连接落地时的拨号目标地址/端口（`landingServerHost`/`landingServerPort`），当配置为纯回源 IP 时自动解耦并保留目标线路或落地节点的绑定域名作为 TLS `server_name` 与传输层 `Host` 请求头；当落地为 NAT 节点时强制走 127.0.0.1 反向隧道。入口节点 `entryNodeId` 必须为公网可达节点（`reachability=PUBLIC`）；落地节点支持公网节点或 NAT 节点（`reachability=NAT`）。当落地为 NAT 节点时，系统自动编排反向 Yamux 多路复用隧道（`tunnelType=YAMUX`），复用或自动分配隧道端口（`tunnelPort`）与高熵密钥（`tunnelSecret`）；`allowLanAccess` 控制落地端是否放行家庭/私网局域网资源访问（布尔值，默认 `false` 严格拦截私网网段）。目标协议仅支持 `VLESS`、`VMESS`、`TROJAN`、`HYSTERIA2`、`TUIC`、`SHADOWSOCKS`、`NAIVE`。端口省略时由服务端在 `20000~65535` 范围随机分配五位端口。同节点同 TCP/UDP 传输层端口冲突返回 `409`，自定义 Tag 冲突返回 `409`，HYSTERIA2/TUIC 按 UDP 计算。
+- `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, upstreamNodeId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`relayMode` 支持 `BLIND_FORWARD`、`PROTOCOL_PROXY`、`TARGET_LINE` 与 `UPSTREAM_NODE`；当为 `UPSTREAM_NODE` 时落地目标指向已导入的外部上游节点（`upstreamNodeId` 必填），入口 VPS 自动生成对应 Outbound 并纳管入口流量计费。其余参数与约束见下文。⭐
 - `PATCH /admin/lines/:id`：部分更新线路，字段同创建请求。⭐ 保存后触发全量 Agent 配置推送防抖。
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
@@ -140,6 +140,20 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `POST /admin/certificates`：创建证书。请求 `{ name, certificatePem, privateKeyPem }`；仅接受包含 SAN 的 X.509 叶子证书和未加密 PEM 私钥，证书与私钥不匹配返回 `400`。⭐
 - `PATCH /admin/certificates/:id`：更新证书名称或 PEM 内容；省略 `privateKeyPem` 时保留现有私钥。保存后自动查找关联线路的入口/落地节点并推送 `config_sync`，响应附带 `affectedNodeIds` 与 `syncedNodeIds`。⭐
 - `DELETE /admin/certificates/:id`：删除未被线路引用的证书；仍有关联线路时返回 `409`。⭐
+
+#### 上游订阅与节点管理 (`/admin/upstream`)
+- `GET /admin/upstream?page&pageSize&search&status`：分页查询上游订阅列表，响应包含订阅名称、来源类型（URL/文本）、解析格式、自动更新周期、上次同步状态、流量用量与节点总数。⭐
+- `GET /admin/upstream/:id`：查询指定上游订阅详情。⭐
+- `POST /admin/upstream`：创建上游订阅。⭐ 请求 `{ name, sourceType?, format?, url?, content?, customHeaders?, autoUpdate?, updateIntervalMins? }`；创建成功后自动异步触发一次初始同步。
+- `PUT /admin/upstream/:id`：修改上游订阅配置。⭐
+- `DELETE /admin/upstream/:id`：删除上游订阅并级联删除所属节点。⭐ 若有中转线路正引用该订阅下的节点，自动将相关线路置为 `DISABLED` 并清空引用，同时向节点推送配置。
+- `POST /admin/upstream/:id/sync`：立即强制同步指定的上游订阅。⭐ 拉取内容并执行节点差异比对，平滑保留存量节点配置，若上游删除节点则自动停用关联的中继线路。
+- `POST /admin/upstream/probe-all?subscriptionId`：并发对全部或指定订阅的有效节点执行 TCP 连通性测速。⭐
+- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status&isDirectSub`：分页多维度筛选上游解析节点列表。⭐
+- `PUT /admin/upstream/nodes/:nodeId/direct-sub`：切换指定节点是否直接合并入用户客户端订阅。⭐ 请求 `{ isDirectSub: boolean }`。
+- `PUT /admin/upstream/nodes/:nodeId/status`：启用或停用单个外部节点。⭐ 若停用节点，自动联动停用引用它的中继线路。
+- `POST /admin/upstream/nodes/:nodeId/probe`：单节点 TCP 握手连通性测速。⭐ 响应 `{ probe: { latencyMs, status, message }, node }`。
+- `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：快捷导出外部节点为标准协议 URI 文本列表或 JSON。⭐
 
 #### 系统设置
 - `GET /admin/settings`：读取全量设置。⭐ 响应包含 `docs/DATA_MODELS.md` §SystemSetting 列出的全部强类型字段（含 SMTP、邮箱验证、CAPTCHA、统一时区 `systemTimezone`、速率色彩阶梯 `speedLimitColorTiers` 与单位换算 `speedLimitUnitConversionEnabled`、存储日志策略、结构化公告列表 `siteAnnouncementsJson`、首页配置 `landingEnabled` / `landingHero*` / `landingShow*` / `landingCustom*Json`、多设备限制 `deviceLimitEnabled`（默认 `true`）与在线活跃窗口 `deviceOnlineWindowSecs`（默认 60 秒）等）；`smtpPass` 与 `turnstileSecretKey` 有值时均返回 `********`。存储日志策略包括 `trafficHourlyRetentionDays`（默认 90）、`nodeRateRetentionDays`（默认 30）、`logsRetentionDays`（默认 7）、`logsMaxCount`（默认 100000）、`logsMinIngestLevel`（默认 `INFO`）、`agentLogMaxSizeMb`（默认 50）和 `agentLogMaxFiles`（默认 5）。

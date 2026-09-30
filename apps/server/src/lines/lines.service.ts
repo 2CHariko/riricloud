@@ -47,7 +47,21 @@ const targetLineSummary = {
     entryNode: nodeSummary
   }
 } as const;
-const lineInclude = { entryNode: nodeSummary, landingNode: nodeSummary, targetLine: targetLineSummary, certificate: certificateSummary } as const;
+const upstreamNodeSummary = {
+  select: {
+    id: true,
+    name: true,
+    protocolType: true,
+    serverHost: true,
+    serverPort: true,
+    status: true,
+    latencyMs: true,
+    lastTestStatus: true,
+    subscriptionId: true,
+    subscription: { select: { id: true, name: true } }
+  }
+} as const;
+const lineInclude = { entryNode: nodeSummary, landingNode: nodeSummary, targetLine: targetLineSummary, certificate: certificateSummary, upstreamNode: upstreamNodeSummary } as const;
 type LineWithRelations = Prisma.LineGetPayload<{ include: typeof lineInclude }>;
 
 type LineInput = {
@@ -63,6 +77,7 @@ type LineInput = {
   landingNodeId?: string | null;
   landingPort?: number | null;
   targetLineId?: string | null;
+  upstreamNodeId?: string | null;
   certificateId?: string | null;
   endpointOverrideEnabled?: boolean;
   serverHost?: string | null;
@@ -289,13 +304,26 @@ export class LinesService {
     let landingPort: number | null = null;
     let targetLineId: string | null = null;
     let targetLine: { id: string; type: string; protocolType: string; entryNodeId: string; entryPort: number } | null = null;
+    let upstreamNodeId: string | null = null;
 
     if (type === 'DIRECT') {
       landingNodeId = null;
       landingPort = null;
       targetLineId = null;
+      upstreamNodeId = null;
     } else if (type === 'RELAY') {
-      if (relayMode === 'TARGET_LINE') {
+      if (relayMode === 'UPSTREAM_NODE') {
+        upstreamNodeId = input.upstreamNodeId !== undefined ? input.upstreamNodeId : current?.upstreamNodeId ?? null;
+        if (!upstreamNodeId) throw new BadRequestException('上游节点中继线路必须指定上游节点');
+        const upstreamNode = await this.prisma.upstreamNode.findUnique({
+          where: { id: upstreamNodeId },
+          select: { id: true, status: true, protocolType: true, name: true }
+        });
+        if (!upstreamNode) throw new NotFoundException('引用的上游节点不存在');
+        landingNodeId = null;
+        landingPort = null;
+        targetLineId = null;
+      } else if (relayMode === 'TARGET_LINE') {
         targetLineId = input.targetLineId !== undefined ? input.targetLineId : current?.targetLineId ?? null;
         if (!targetLineId) throw new BadRequestException('桥接中继线路必须指定目标线路');
         targetLine = await this.prisma.line.findUnique({
@@ -310,9 +338,11 @@ export class LinesService {
         if (targetLine.entryNodeId === entryNodeId) throw new BadRequestException('桥接目标必须位于其他节点');
         landingNodeId = null;
         landingPort = null;
+        upstreamNodeId = null;
       } else {
         landingNodeId = input.landingNodeId !== undefined ? input.landingNodeId : current?.landingNodeId ?? null;
         if (!landingNodeId) throw new BadRequestException('中继线路必须指定落地节点');
+        upstreamNodeId = null;
       }
     }
 
@@ -415,6 +445,7 @@ export class LinesService {
       landingNodeId,
       landingPort,
       targetLineId,
+      upstreamNodeId,
       certificateId,
       allowLanAccess,
       tunnelType,
@@ -617,7 +648,21 @@ export class LinesService {
                     ? line.targetLine.serverPort
                     : line.targetLine.entryPort)
             }
-          : line.landingNode && line.landingPort
+          : line.relayMode === 'UPSTREAM_NODE' && line.upstreamNode
+            ? {
+                node: {
+                  id: line.upstreamNode.id,
+                  name: `[上游] ${line.upstreamNode.name}`,
+                  serverHost: line.upstreamNode.serverHost,
+                  status: line.upstreamNode.status,
+                  isLocal: false,
+                  reachability: 'PUBLIC'
+                },
+                host: line.upstreamNode.serverHost,
+                port: line.upstreamNode.serverPort,
+                upstreamNode: line.upstreamNode
+              }
+            : line.landingNode && line.landingPort
             ? {
                 node: line.landingNode,
                 host: hasLandingOverride ? line.landingServerHost! : line.landingNode.serverHost,
@@ -627,6 +672,8 @@ export class LinesService {
       : null;
     return {
       ...line,
+      upstreamNodeId: line.upstreamNodeId ?? null,
+      upstreamNode: line.upstreamNode ?? null,
       protocolType: line.protocolType as ProtocolType,
       params,
       serverHost,

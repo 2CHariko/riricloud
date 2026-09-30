@@ -66,6 +66,10 @@ export class CreateLineDto {
   @IsOptional()
   targetLineId?: string | null;
 
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'UPSTREAM_NODE 中继模式引用的外部上游节点' })
+  @IsUUID()
+  @IsOptional()
+  upstreamNodeId?: string | null;
   @ApiPropertyOptional({ example: 24444, minimum: 1, maximum: 65535, nullable: true, description: '中继落地监听端口，普通中继省略时随机分配，直连与桥接置空' })
   @Type(() => Number)
   @IsInt()

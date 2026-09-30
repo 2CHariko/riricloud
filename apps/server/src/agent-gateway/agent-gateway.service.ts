@@ -1773,6 +1773,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           include: {
             landingNode: true,
             certificate: true,
+            upstreamNode: true,
             targetLine: { include: { entryNode: true } },
             relaySources: {
               where: { status: 'ACTIVE' },
@@ -1920,6 +1921,15 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         entryNode: { serverHost: string; status?: string };
       } | null;
       relaySources?: Array<{ id: string; tagsJson: string; isPublic: boolean; status: string }>;
+      upstreamNode?: {
+        id: string;
+        name: string;
+        protocolType: string;
+        serverHost: string;
+        serverPort: number;
+        paramsJson: string;
+        status: string;
+      } | null;
     };
     const lines = new Map<string, ConfigLine>();
     for (const line of node.entryLines ?? []) {
@@ -2129,6 +2139,40 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           inbounds.splice(-relayInbounds.length, relayInbounds.length);
           continue;
         }
+        outbounds.push(outbound);
+        relayRules.push({ inbound: [relayTag], outbound: `relay-out-${line.id}` });
+      }
+
+      if (isEntry && line.relayMode === 'UPSTREAM_NODE') {
+        const upstreamNode = line.upstreamNode;
+        if (!upstreamNode || upstreamNode.status !== 'ACTIVE') continue;
+        const relayTag = lineTags.entry ?? `relay-${line.id}-entry`;
+        const relayInbounds = buildServerInbounds({
+          type: protocolType,
+          tag: relayTag,
+          listen: line.listen || DEFAULT_INBOUND_LISTEN,
+          port: line.entryPort,
+          params,
+          users,
+          lineId: line.id,
+          proxyPoolUsers: proxyPoolUsersForTag(relayTag),
+          listenOptions
+        });
+        inbounds.push(...relayInbounds);
+
+        let upstreamParams: Record<string, unknown> = {};
+        try {
+          upstreamParams = JSON.parse(upstreamNode.paramsJson || '{}');
+        } catch {
+          // fallback
+        }
+        const outbound: Record<string, unknown> = {
+          type: String(upstreamNode.protocolType).toLowerCase(),
+          tag: `relay-out-${line.id}`,
+          server: upstreamNode.serverHost,
+          server_port: upstreamNode.serverPort,
+          ...upstreamParams
+        };
         outbounds.push(outbound);
         relayRules.push({ inbound: [relayTag], outbound: `relay-out-${line.id}` });
       }
