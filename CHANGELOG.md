@@ -13,10 +13,23 @@
 ## [Unreleased]
 
 ### Added
+- **上游订阅导入与多模式融合功能 (Upstream Subscriptions & Proxy Relay)**：
+  - 核心解析引擎：支持导入任意 Mihomo (Clash Meta) YAML、Sing-box JSON 及标准 URI 格式订阅，智能探测并归一化为统一的外部落地代理节点模型；
+  - 多模式落地支持：
+    1. 自建中转线路（`RELAY` + `UPSTREAM_NODE`）：指定自建公网 VPS 入口纳管外部上游节点，入口 Sing-box 原生构建对应 Outbound 与路由转发，100% 纳入入口物理流量监控与用户计费；
+    2. 客户端直连合并（`isDirectSub`）：允许管理员将候选池中的优质外部节点一键公开，自动合并入用户客户端订阅（免计系统配额）；
+    3. 直连代理池双模式：支持在直连代理池（ProxyKey）中挂载受控 MIXED 自动化代理，亦支持一键快捷导出/复制原始协议 URI 链接；
+  - 节点差异比对与失效联动治理：定时与手动同步时根据节点特征指纹（Fingerprint）稳定识别存量与新增节点，若上游删除已绑定的中转节点，系统自动将关联线路置为停用（DISABLED）并记录系统告警日志；
+  - 连通性测速与管理控制台：提供后台全自动定时更新、单节点/批量并发 TCP 握手测速、节点抽屉式管理与一键转自建中转向导。
 
 ### Changed
 
 ### Fixed
+- **修复本地 E2E 启动失败与 Shadowsocks 密码派生回退**：
+  - 修复 `apps/server/src/app.module.ts` 模块导入逗号缺失与模块内类型声明；
+  - 补齐 `apps/server/prisma/migrations/20260930120000_upstream_subscriptions_and_nodes` 数据库迁移脚本，解决联调库 `dev-e2e.db` 执行 `prisma migrate deploy` 时的表结构同步阻断；
+  - 修复 `builders.ts` 中 Shadowsocks 节点在 `multi-user` 模式下直接读取 master key 导致无法为用户派生专属凭证的缺陷；
+  - 修复前端 `admin.ts` 国际化字典闭合语法错误与上游订阅弹窗的表单重置钩子规范（采用 `useFormResetOnKey`）。
 
 
 ## [0.9.9] - 2026-09-29
