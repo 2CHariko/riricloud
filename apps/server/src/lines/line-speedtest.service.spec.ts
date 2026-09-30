@@ -314,6 +314,102 @@ describe('LineSpeedtestService', () => {
     tcpPingSpy.mockRestore();
   });
 
+  it('当中继线路对接的第三方上游节点已停用时，中继阶段报错拦截', async () => {
+    const upstreamRelayLine = {
+      ...rawLine,
+      id: 'line-upstream-disabled',
+      type: 'RELAY',
+      relayMode: 'UPSTREAM_NODE',
+      upstreamNodeId: 'up-1',
+      upstreamNode: {
+        id: 'up-1',
+        name: '机场落地节点 01',
+        status: 'DISABLED',
+        protocolType: 'VMESS',
+        serverHost: 'up.example.com',
+        serverPort: 443
+      }
+    };
+    prisma.line.findUnique.mockResolvedValue(upstreamRelayLine);
+    prisma.line.update.mockResolvedValue({ ...upstreamRelayLine, lastLatencyMs: null, lastTestStatus: 'ERROR' });
+
+    type MockableSpeedtest = {
+      resolveSingboxBinary: () => Promise<string | null>;
+      tcpPing: (...args: unknown[]) => Promise<number>;
+    };
+
+    const resolveSpy = jest.spyOn(service as unknown as MockableSpeedtest, 'resolveSingboxBinary')
+      .mockResolvedValue('/usr/local/bin/sing-box');
+    const tcpPingSpy = jest.spyOn(service as unknown as MockableSpeedtest, 'tcpPing')
+      .mockResolvedValue(18);
+
+    const result = await service.testLine(upstreamRelayLine.id);
+
+    expect(result.status).toBe('ERROR');
+    expect(result.latencyMs).toBeNull();
+    expect(result.stages.find((s) => s.id === 'relay_transit')?.status).toBe('FAILED');
+    expect(result.stages.find((s) => s.id === 'relay_transit')?.message).toContain('未启用');
+    expect(result.topology.landingNode).toEqual({
+      id: 'up-1',
+      name: '[上游] 机场落地节点 01',
+      host: 'up.example.com',
+      port: 443
+    });
+
+    resolveSpy.mockRestore();
+    tcpPingSpy.mockRestore();
+  });
+
+  it('当中继线路对接的第三方上游节点已启用时，正确通过中继校验并完成端到端探测', async () => {
+    const upstreamRelayLine = {
+      ...rawLine,
+      id: 'line-upstream-active',
+      type: 'RELAY',
+      relayMode: 'UPSTREAM_NODE',
+      upstreamNodeId: 'up-2',
+      upstreamNode: {
+        id: 'up-2',
+        name: '机场落地节点 02',
+        status: 'ACTIVE',
+        protocolType: 'VMESS',
+        serverHost: 'up2.example.com',
+        serverPort: 8443
+      }
+    };
+    prisma.line.findUnique.mockResolvedValue(upstreamRelayLine);
+    prisma.line.update.mockResolvedValue({ ...upstreamRelayLine, lastLatencyMs: 52, lastTestStatus: 'SUCCESS' });
+
+    type MockableSpeedtest = {
+      resolveSingboxBinary: () => Promise<string | null>;
+      tcpPing: (...args: unknown[]) => Promise<number>;
+      runSingboxProbe: (...args: unknown[]) => Promise<{ latencyMs: number; statusCode: number }>;
+    };
+
+    const resolveSpy = jest.spyOn(service as unknown as MockableSpeedtest, 'resolveSingboxBinary')
+      .mockResolvedValue('/usr/local/bin/sing-box');
+    const tcpPingSpy = jest.spyOn(service as unknown as MockableSpeedtest, 'tcpPing')
+      .mockResolvedValue(18);
+    const runSingboxSpy = jest.spyOn(service as unknown as MockableSpeedtest, 'runSingboxProbe')
+      .mockResolvedValue({ latencyMs: 52, statusCode: 204 });
+
+    const result = await service.testLine(upstreamRelayLine.id);
+
+    expect(result.status).toBe('SUCCESS');
+    expect(result.latencyMs).toBe(52);
+    expect(result.stages.find((s) => s.id === 'relay_transit')?.status).toBe('SUCCESS');
+    expect(result.stages.find((s) => s.id === 'relay_transit')?.message).toContain('机场落地节点 02');
+    expect(result.topology.landingNode).toEqual({
+      id: 'up-2',
+      name: '[上游] 机场落地节点 02',
+      host: 'up2.example.com',
+      port: 8443
+    });
+
+    resolveSpy.mockRestore();
+    tcpPingSpy.mockRestore();
+    runSingboxSpy.mockRestore();
+  });
+
   it('当线路为 Hysteria 2 纯 UDP 且端到端探测失败时，跳过 TCP 握手直接报错', async () => {
     const hy2Line = {
       ...rawLine,

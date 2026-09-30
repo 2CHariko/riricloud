@@ -784,12 +784,16 @@ function buildVlessUri(user: SubUser, entry: SubEntry): string {
   }
 
   if (tls && tls.enabled) {
-    if (tls.mode === 'reality' && tls.reality) {
+    const rawReality = tls.reality as unknown as { enabled?: boolean; publicKey?: string; public_key?: string; shortId?: string; short_id?: string; shortIds?: string[]; serverNames?: string[] } | undefined;
+    if ((tls.mode === 'reality' || Boolean(rawReality?.enabled || rawReality?.publicKey || rawReality?.public_key)) && rawReality) {
+      const sni = effectiveServerName(entry, tls.serverName || rawReality.serverNames?.[0]);
+      const pbk = rawReality.publicKey || rawReality.public_key || '';
+      const sid = rawReality.shortIds?.[0] ?? rawReality.shortId ?? rawReality.short_id ?? '';
       params.set('security', 'reality');
-      params.set('sni', effectiveServerName(entry, tls.serverName || tls.reality.serverNames[0])!);
+      if (sni) params.set('sni', sni);
       params.set('fp', REALITY_CLIENT_DEFAULTS.fp);
-      params.set('pbk', tls.reality.publicKey);
-      params.set('sid', tls.reality.shortIds[0]);
+      params.set('pbk', pbk);
+      params.set('sid', sid);
     } else {
       params.set('security', 'tls');
       const serverName = effectiveServerName(entry, tls.serverName);
@@ -799,7 +803,8 @@ function buildVlessUri(user: SubUser, entry: SubEntry): string {
     }
   }
 
-  return `vless://${user.uuid}@${endpointHost(entry)}:${endpointPort(entry)}?${params.toString()}#${encodeURIComponent(entry.label)}`;
+  const uuid = (p as unknown as { uuid?: string }).uuid || user.uuid;
+  return `vless://${uuid}@${endpointHost(entry)}:${endpointPort(entry)}?${params.toString()}#${encodeURIComponent(entry.label)}`;
 }
 
 function buildVmessUri(user: SubUser, entry: SubEntry): string {
@@ -812,9 +817,9 @@ function buildVmessUri(user: SubUser, entry: SubEntry): string {
     ps: entry.label,
     add: endpointHost(entry),
     port: endpointPort(entry),
-    id: user.uuid,
-    aid: p.alterId || 0,
-    scy: 'auto',
+    id: (p as unknown as { uuid?: string }).uuid || user.uuid,
+    aid: p.alterId ?? (p as unknown as { alter_id?: number }).alter_id ?? 0,
+    scy: (p as unknown as { security?: string }).security || 'auto',
     net: transport === 'httpupgrade' ? 'http' : transport,
     type: 'none',
     host: effectiveTransportHost(entry, p.transport?.host) || '',
@@ -859,7 +864,8 @@ function buildTrojanUri(user: SubUser, entry: SubEntry): string {
     if (host) params.set('host', host);
   }
 
-  return `trojan://${encodeURIComponent(user.credential)}@${endpointHost(entry)}:${endpointPort(entry)}?${params.toString()}#${encodeURIComponent(entry.label)}`;
+  const password = (p as unknown as { password?: string }).password || user.credential;
+  return `trojan://${encodeURIComponent(password)}@${endpointHost(entry)}:${endpointPort(entry)}?${params.toString()}#${encodeURIComponent(entry.label)}`;
 }
 
 function buildHysteria2Uri(user: SubUser, entry: SubEntry): string {
@@ -881,12 +887,18 @@ function buildHysteria2Uri(user: SubUser, entry: SubEntry): string {
   if (p.downMbps && p.downMbps > 0) {
     params.set('downmbps', String(p.downMbps));
   }
-  if (p.obfs && p.obfs.password) {
-    params.set('obfs', p.obfs.type || 'salamander');
-    params.set('obfs-password', p.obfs.password);
+  const rawObfs = (p as unknown as { obfs?: unknown; obfsPassword?: string }).obfs;
+  const rawObfsPassword = (p as unknown as { obfsPassword?: string }).obfsPassword;
+  if (rawObfs && typeof rawObfs === 'object' && (rawObfs as { password?: string }).password) {
+    params.set('obfs', (rawObfs as { type?: string }).type || 'salamander');
+    params.set('obfs-password', (rawObfs as { password: string }).password);
+  } else if (typeof rawObfs === 'string' && rawObfs && rawObfsPassword) {
+    params.set('obfs', rawObfs);
+    params.set('obfs-password', rawObfsPassword);
   }
   const qs = params.toString();
-  return `hy2://${encodeURIComponent(user.credential)}@${endpointHost(entry)}:${endpointPort(entry)}${qs ? `?${qs}` : ''}#${encodeURIComponent(entry.label)}`;
+  const password = (p as unknown as { password?: string }).password || user.credential;
+  return `hy2://${encodeURIComponent(password)}@${endpointHost(entry)}:${endpointPort(entry)}${qs ? `?${qs}` : ''}#${encodeURIComponent(entry.label)}`;
 }
 
 function buildShadowsocksUri(user: SubUser, entry: SubEntry): string {
@@ -914,7 +926,9 @@ function buildTuicUri(user: SubUser, entry: SubEntry): string {
   if (p.tls?.insecure) {
     params.set('allow_insecure', '1');
   }
-  return `tuic://${user.uuid}:${encodeURIComponent(user.credential)}@${endpointHost(entry)}:${endpointPort(entry)}?${params.toString()}#${encodeURIComponent(entry.label)}`;
+  const uuid = (p as unknown as { uuid?: string }).uuid || user.uuid;
+  const password = (p as unknown as { password?: string }).password || user.credential;
+  return `tuic://${uuid}:${encodeURIComponent(password)}@${endpointHost(entry)}:${endpointPort(entry)}?${params.toString()}#${encodeURIComponent(entry.label)}`;
 }
 
 function buildNaiveUri(user: SubUser, entry: SubEntry): string {
@@ -997,12 +1011,13 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
         if (tls.insecure) proxy['skip-cert-verify'] = true;
         if (tls.alpn) proxy.alpn = [...tls.alpn];
 
-        if (tls.mode === 'reality' && tls.reality) {
-          proxy.servername = effectiveServerName(entry, tls.serverName || tls.reality.serverNames[0]);
-          proxy['client-fingerprint'] = REALITY_CLIENT_DEFAULTS.fp;
+        const rawReality = tls.reality as unknown as { enabled?: boolean; publicKey?: string; public_key?: string; shortId?: string; short_id?: string; shortIds?: string[]; serverNames?: string[] } | undefined;
+        if ((tls.mode === 'reality' || Boolean(rawReality?.enabled || rawReality?.publicKey || rawReality?.public_key)) && rawReality) {
+          proxy.servername = effectiveServerName(entry, tls.serverName || rawReality.serverNames?.[0]);
+          proxy['client-fingerprint'] = (tls as unknown as { clientFingerprint?: string }).clientFingerprint || REALITY_CLIENT_DEFAULTS.fp;
           proxy['reality-opts'] = {
-            'public-key': tls.reality.publicKey,
-            'short-id': tls.reality.shortIds[0]
+            'public-key': rawReality.publicKey || rawReality.public_key || '',
+            'short-id': rawReality.shortIds?.[0] ?? rawReality.shortId ?? rawReality.short_id ?? ''
           };
         }
       }
@@ -1084,9 +1099,14 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
         ...(p.upMbps && p.upMbps > 0 ? { up: `${p.upMbps} Mbps` } : {}),
         ...(p.downMbps && p.downMbps > 0 ? { down: `${p.downMbps} Mbps` } : {})
       };
-      if (p.obfs && p.obfs.password) {
-        proxy.obfs = p.obfs.type || 'salamander';
-        proxy['obfs-password'] = p.obfs.password;
+      const rawObfs = (p as unknown as { obfs?: unknown; obfsPassword?: string }).obfs;
+      const rawObfsPassword = (p as unknown as { obfsPassword?: string }).obfsPassword;
+      if (rawObfs && typeof rawObfs === 'object' && (rawObfs as { password?: string }).password) {
+        proxy.obfs = (rawObfs as { type?: string }).type || 'salamander';
+        proxy['obfs-password'] = (rawObfs as { password: string }).password;
+      } else if (typeof rawObfs === 'string' && rawObfs && rawObfsPassword) {
+        proxy.obfs = rawObfs;
+        proxy['obfs-password'] = rawObfsPassword;
       }
       break;
     }
@@ -1288,8 +1308,8 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         server: serverHost,
         server_port: port,
         uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
-        alter_id: p.alterId || 0,
-        security: 'auto'
+        alter_id: p.alterId ?? (p as unknown as { alter_id?: number }).alter_id ?? 0,
+        security: (p as unknown as { security?: string }).security || 'auto'
       };
 
       const clientTls = buildClientTls(tls, effectiveServerName(entry));
@@ -1335,7 +1355,11 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         password: (p as unknown as { password?: string }).password || user.credential,
         ...(p.upMbps && p.upMbps > 0 ? { up_mbps: p.upMbps } : {}),
         ...(p.downMbps && p.downMbps > 0 ? { down_mbps: p.downMbps } : {}),
-        ...(p.obfs ? { obfs: p.obfs } : {})
+        ...(p.obfs && typeof p.obfs === 'object' && p.obfs.password
+          ? { obfs: { type: p.obfs.type || 'salamander', password: p.obfs.password } }
+          : (typeof (p as unknown as { obfs?: unknown }).obfs === 'string' && (p as unknown as { obfsPassword?: string }).obfsPassword
+              ? { obfs: { type: (p as unknown as { obfs: string }).obfs, password: (p as unknown as { obfsPassword: string }).obfsPassword } }
+              : {}))
       };
       const clientTls = buildClientTls(p.tls, effectiveServerName(entry));
       if (clientTls) outbound.tls = clientTls;

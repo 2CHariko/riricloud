@@ -186,9 +186,13 @@ export class UpstreamParserService {
         params.password = String(p.password || '');
         if (p.up) params.upMbps = Number(p.up);
         if (p.down) params.downMbps = Number(p.down);
-        if (p.obfs) params.obfs = String(p.obfs);
-        if (p['obfs-password']) params.obfsPassword = String(p['obfs-password']);
-        const tls: Record<string, unknown> = { enabled: true };
+        if (p.obfs && p['obfs-password']) {
+          params.obfs = { type: String(p.obfs), password: String(p['obfs-password']) };
+          params.obfsPassword = String(p['obfs-password']);
+        } else if (p.obfs && typeof p.obfs === 'object') {
+          params.obfs = p.obfs;
+        }
+        const tls: Record<string, unknown> = { enabled: true, mode: 'tls' };
         if (p.sni) tls.serverName = String(p.sni);
         if (p['skip-cert-verify'] !== undefined) tls.insecure = Boolean(p['skip-cert-verify']);
         if (Array.isArray(p.alpn)) tls.alpn = p.alpn;
@@ -247,7 +251,8 @@ export class UpstreamParserService {
 
   private extractClashTransportAndTls(p: Record<string, unknown>, params: Record<string, unknown>) {
     const tls: Record<string, unknown> = {
-      enabled: Boolean(p.tls)
+      enabled: Boolean(p.tls),
+      mode: 'tls'
     };
     if (p.sni) tls.serverName = String(p.sni);
     if (p['skip-cert-verify'] !== undefined) tls.insecure = Boolean(p['skip-cert-verify']);
@@ -257,15 +262,18 @@ export class UpstreamParserService {
     // Reality
     if (p['reality-opts'] && typeof p['reality-opts'] === 'object') {
       const ro = p['reality-opts'] as Record<string, unknown>;
+      const shortId = ro['short-id'] ? String(ro['short-id']) : '';
+      tls.mode = 'reality';
       tls.reality = {
         enabled: true,
         publicKey: ro['public-key'] ? String(ro['public-key']) : '',
-        shortId: ro['short-id'] ? String(ro['short-id']) : ''
+        shortId,
+        shortIds: [shortId],
+        ...(tls.serverName ? { serverNames: [String(tls.serverName)] } : {})
       };
       tls.enabled = true;
     }
     if (tls.enabled) params.tls = tls;
-
     // Transport
     const network = String(p.network || '').toLowerCase();
     if (network === 'ws') {
@@ -315,13 +323,12 @@ export class UpstreamParserService {
       if (!name || !serverHost || !serverPort) continue;
 
       const protocolType = type.toUpperCase() as ProtocolType;
-      // Sing-box 的 outbound 字段本身就是标准格式
       const params: Record<string, unknown> = { ...ob };
       delete params.type;
       delete params.tag;
       delete params.server;
       delete params.server_port;
-
+      this.normalizeSingboxParams(params);
       const fingerprint = this.computeFingerprint(protocolType, serverHost, serverPort, params);
       const tags = this.extractTags(name);
 
@@ -338,6 +345,89 @@ export class UpstreamParserService {
     }
 
     return nodes;
+  }
+
+  private normalizeSingboxParams(params: Record<string, unknown>) {
+    if (params.alter_id !== undefined) {
+      params.alterId = Number(params.alter_id) || 0;
+      delete params.alter_id;
+    }
+    if (params.up_mbps !== undefined) {
+      params.upMbps = Number(params.up_mbps) || 0;
+      delete params.up_mbps;
+    }
+    if (params.down_mbps !== undefined) {
+      params.downMbps = Number(params.down_mbps) || 0;
+      delete params.down_mbps;
+    }
+    if (params.congestion_control !== undefined) {
+      params.congestionControl = String(params.congestion_control);
+      delete params.congestion_control;
+    }
+    if (params.zero_rtt_handshake !== undefined) {
+      params.zeroRttHandshake = Boolean(params.zero_rtt_handshake);
+      delete params.zero_rtt_handshake;
+    }
+    if (params.udp_over_tcp !== undefined) {
+      params.udpOverTcp = Boolean(params.udp_over_tcp);
+      delete params.udp_over_tcp;
+    }
+    if (params.plugin_opts !== undefined) {
+      params.pluginOpts = params.plugin_opts;
+      delete params.plugin_opts;
+    }
+    if (params.tls && typeof params.tls === 'object' && !Array.isArray(params.tls)) {
+      const rawTls = { ...(params.tls as Record<string, unknown>) };
+      if (typeof rawTls.server_name === 'string') {
+        rawTls.serverName = rawTls.server_name;
+        delete rawTls.server_name;
+      }
+      if (rawTls.utls && typeof rawTls.utls === 'object' && !Array.isArray(rawTls.utls)) {
+        const utls = rawTls.utls as Record<string, unknown>;
+        if (typeof utls.fingerprint === 'string' && utls.fingerprint) {
+          rawTls.clientFingerprint = utls.fingerprint;
+        }
+      }
+      if (rawTls.reality && typeof rawTls.reality === 'object' && !Array.isArray(rawTls.reality)) {
+        const rawReality = { ...(rawTls.reality as Record<string, unknown>) };
+        const publicKey = typeof rawReality.public_key === 'string'
+          ? rawReality.public_key
+          : (typeof rawReality.publicKey === 'string' ? rawReality.publicKey : '');
+        const shortId = typeof rawReality.short_id === 'string'
+          ? rawReality.short_id
+          : (typeof rawReality.shortId === 'string' ? rawReality.shortId : '');
+        delete rawReality.public_key;
+        delete rawReality.short_id;
+        rawReality.enabled = rawReality.enabled ?? true;
+        rawReality.publicKey = publicKey;
+        rawReality.shortId = shortId;
+        rawReality.shortIds = Array.isArray(rawReality.shortIds) ? rawReality.shortIds : [shortId];
+        if (typeof rawTls.serverName === 'string' && rawTls.serverName && !Array.isArray(rawReality.serverNames)) {
+          rawReality.serverNames = [rawTls.serverName];
+        }
+        rawTls.reality = rawReality;
+        rawTls.mode = 'reality';
+      } else if (rawTls.enabled) {
+        rawTls.mode = rawTls.mode || 'tls';
+      }
+      params.tls = rawTls;
+    }
+    if (params.transport && typeof params.transport === 'object' && !Array.isArray(params.transport)) {
+      const rawTransport = { ...(params.transport as Record<string, unknown>) };
+      if (typeof rawTransport.service_name === 'string') {
+        rawTransport.serviceName = rawTransport.service_name;
+        delete rawTransport.service_name;
+      }
+      if (typeof rawTransport.max_early_data === 'number') {
+        rawTransport.maxEarlyData = rawTransport.max_early_data;
+        delete rawTransport.max_early_data;
+      }
+      if (typeof rawTransport.early_data_header_name === 'string') {
+        rawTransport.earlyDataHeaderName = rawTransport.early_data_header_name;
+        delete rawTransport.early_data_header_name;
+      }
+      params.transport = rawTransport;
+    }
   }
 
   // ==============================
@@ -421,16 +511,19 @@ export class UpstreamParserService {
 
     const security = query.get('security');
     if (security === 'tls' || security === 'reality') {
-      const tls: Record<string, unknown> = { enabled: true };
+      const tls: Record<string, unknown> = { enabled: true, mode: security };
       if (query.get('sni')) tls.serverName = query.get('sni');
       if (query.get('fp')) tls.clientFingerprint = query.get('fp');
       if (query.get('alpn')) tls.alpn = query.get('alpn')!.split(',');
       if (query.get('insecure') === '1') tls.insecure = true;
       if (security === 'reality') {
+        const shortId = query.get('sid') || '';
         tls.reality = {
           enabled: true,
           publicKey: query.get('pbk') || '',
-          shortId: query.get('sid') || ''
+          shortId,
+          shortIds: [shortId],
+          ...(tls.serverName ? { serverNames: [String(tls.serverName)] } : {})
         };
       }
       params.tls = tls;
@@ -641,8 +734,12 @@ export class UpstreamParserService {
     if (query.get('insecure') === '1') tls.insecure = true;
 
     const params: Record<string, unknown> = { password, tls };
-    if (query.get('obfs')) params.obfs = query.get('obfs');
-    if (query.get('obfs-password')) params.obfsPassword = query.get('obfs-password');
+    if (query.get('obfs') && query.get('obfs-password')) {
+      params.obfs = { type: query.get('obfs')!, password: query.get('obfs-password')! };
+      params.obfsPassword = query.get('obfs-password');
+    } else if (query.get('obfs')) {
+      params.obfs = query.get('obfs');
+    }
 
     const fingerprint = this.computeFingerprint('HYSTERIA2', serverHost, serverPort, params);
     return {

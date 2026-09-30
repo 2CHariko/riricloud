@@ -383,7 +383,7 @@ Agent 收到后原子落盘（临时文件 + rename），并与最近一次配�
 
 > 中继与测速凭证流量规则：协议代理/异构桥接出站使用上述内部中继凭证，Master 测速探针使用内部测速凭据；各节点上的内部专用凭证流量仅维护 `TrafficCursor` 基线，不生成 `TrafficLog`，不扣减任何普通用户或订阅配额。
 
-中继配置示例：盲转发线路在入口节点生成如下端口转发入站；协议代理线路生成与 Line 协议对应的入口入站、出口 outbound 以及 route rule；`TARGET_LINE` 则将 outbound 的协议、参数、目标地址和端口取自所引用的直连线路。
+中继配置示例：盲转发线路在入口节点生成如下端口转发入站；协议代理线路生成与 Line 协议对应的入口入站、出口 outbound 以及 route rule；`TARGET_LINE` 则将 outbound 的协议、参数、目标地址和端口取自所引用的直连线路；`UPSTREAM_NODE` 则将所引用外部上游节点的内部驼峰参数（`UpstreamNode.paramsJson`）严格归一化编译为 Sing-box 标准下划线出站结构（如 VMess `alter_id`、Hysteria2 `up_mbps`/`down_mbps`/`obfs`、TUIC `congestion_control`/`zero_rtt_handshake`、TLS `server_name`/`utls`/`reality`、gRPC `service_name` 等），禁止将内部驼峰字段直接透传至 Sing-box `outbounds`。
 ```json
 {
   "type": "direct",
@@ -689,7 +689,7 @@ rewrite 不覆盖原始查询字符串，因此 `?type=clash`、`?type=sing-box`
   ```
   凭证：hy2/trojan/tuic/naive 密码取 `User.password ?? User.uuid`；SS 共享模式使用入站密钥，多用户 SS2022 使用 `server_password:user_password`；vless/vmess/tuic 用户名为 `User.uuid`。
 
-> **协议兼容约束**：VMess 入站用户字段使用 `alterId`，Sing-box VMess 出站仍使用 `alter_id`；ShadowTLS 仅支持 v3，必须配置 SS2022 内层，服务端生成 `shadowtls` 外层入站与 `127.0.0.1:0` 的回环 SS 入站并通过 `detour` 串联，不再接受 v2 或独立 ShadowTLS 密码；SS2022 在共享模式、多用户模式和 ShadowTLS 内层均输出算法要求长度的 Base64 密钥。WebSocket 的 `host` 会转换为 `headers.Host`，不会写入 sing-box transport 顶层；标准 TLS 的 ALPN 由线路 `params.tls.alpn` 数组透传，Reality 不携带 ALPN；TUIC `zero_rtt_handshake` 默认关闭。协议代理中继仅允许目标为 VLESS、VMess、Trojan、Hysteria2、TUIC、Shadowsocks 或 NaiveProxy，避免生成无法工作的本地代理出站。
+> **协议兼容约束**：VMess 入站用户字段使用 `alterId`，Sing-box VMess 出站（含 `PROTOCOL_PROXY`、`TARGET_LINE`、`UPSTREAM_NODE` 中继出站及客户端 Sing-box 订阅出站）统一使用 `alter_id`；ShadowTLS 仅支持 v3，必须配置 SS2022 内层，服务端生成 `shadowtls` 外层入站与 `127.0.0.1:0` 的回环 SS 入站并通过 `detour` 串联，不再接受 v2 或独立 ShadowTLS 密码；SS2022 在共享模式、多用户模式和 ShadowTLS 内层均输出算法要求长度的 Base64 密钥。WebSocket 的 `host` 会转换为 `headers.Host`，不会写入 sing-box transport 顶层；标准 TLS 的 ALPN 由线路 `params.tls.alpn` 数组透传，Reality 不携带 ALPN；TUIC `zero_rtt_handshake` 默认关闭。协议代理中继仅允许目标为 VLESS、VMess、Trojan、Hysteria2、TUIC、Shadowsocks 或 NaiveProxy，避免生成无法工作的本地代理出站。
 
 ### 3.2 流量与有效期标准响应头 (UserInfo Header)
 订阅接口返回标准响应头，主流客户端会自动在首页显示流量条与过期日；`Profile-Update-Interval` 的值由 `subscriptionUpdateIntervalHours` 动态读取，`includeUsageHeaders=false` 时不返回用量头：

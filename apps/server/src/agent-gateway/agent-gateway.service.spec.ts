@@ -559,6 +559,172 @@ describe('AgentGatewayService', () => {
     ]));
   });
 
+  it('UPSTREAM_NODE 中继出站将内部驼峰参数转换为合法的 Sing-box 下划线字段（不残留 alterId 等非法字段）', async () => {
+    const vmessUpstreamRelay = line({
+      id: 'upstream-vmess-relay',
+      name: '上游 VMess 中转',
+      tag: 'relay-upstream-vmess',
+      type: 'RELAY',
+      relayMode: 'UPSTREAM_NODE',
+      protocolType: 'VLESS',
+      entryNodeId: 'node-1',
+      entryPort: 25110,
+      upstreamNodeId: 'up-vmess-1',
+      upstreamNode: {
+        id: 'up-vmess-1',
+        name: '香港 VMess',
+        protocolType: 'VMESS',
+        serverHost: 'vmess.upstream.example.com',
+        serverPort: 443,
+        status: 'ACTIVE',
+        paramsJson: JSON.stringify({
+          uuid: '11111111-2222-3333-4444-555555555555',
+          alterId: 0,
+          security: 'auto',
+          tls: { enabled: true, serverName: 'sni.upstream.example.com', insecure: true, clientFingerprint: 'firefox' },
+          transport: { type: 'grpc', serviceName: 'vmess-grpc' }
+        })
+      },
+      landingNode: null
+    });
+    const vlessRealityUpstreamRelay = line({
+      id: 'upstream-vless-reality',
+      name: '上游 VLESS Reality 中转',
+      tag: 'relay-upstream-reality',
+      type: 'RELAY',
+      relayMode: 'UPSTREAM_NODE',
+      protocolType: 'VLESS',
+      entryNodeId: 'node-1',
+      entryPort: 25111,
+      upstreamNodeId: 'up-vless-1',
+      upstreamNode: {
+        id: 'up-vless-1',
+        name: '日本 Reality',
+        protocolType: 'VLESS',
+        serverHost: 'jp.upstream.example.com',
+        serverPort: 443,
+        status: 'ACTIVE',
+        paramsJson: JSON.stringify({
+          uuid: '22222222-3333-4444-5555-666666666666',
+          flow: 'xtls-rprx-vision',
+          tls: {
+            enabled: true,
+            serverName: 'www.apple.com',
+            clientFingerprint: 'safari',
+            reality: { enabled: true, publicKey: 'pbk_123', shortId: 'abcd' }
+          }
+        })
+      },
+      landingNode: null
+    });
+    const hy2UpstreamRelay = line({
+      id: 'upstream-hy2-relay',
+      name: '上游 Hy2 中转',
+      tag: 'relay-upstream-hy2',
+      type: 'RELAY',
+      relayMode: 'UPSTREAM_NODE',
+      protocolType: 'VLESS',
+      entryNodeId: 'node-1',
+      entryPort: 25112,
+      upstreamNodeId: 'up-hy2-1',
+      upstreamNode: {
+        id: 'up-hy2-1',
+        name: '美国 Hy2',
+        protocolType: 'HYSTERIA2',
+        serverHost: 'us.upstream.example.com',
+        serverPort: 8443,
+        status: 'ACTIVE',
+        paramsJson: JSON.stringify({
+          password: 'hy2_secret',
+          upMbps: 100,
+          downMbps: 500,
+          obfs: 'salamander',
+          obfsPassword: 'obfs_secret',
+          tls: { enabled: true, serverName: 'us.upstream.example.com' }
+        })
+      },
+      landingNode: null
+    });
+
+    prisma.node.findUnique.mockResolvedValueOnce({
+      id: 'node-1',
+      serverHost: '198.51.100.10',
+      status: 'ONLINE',
+      configOverride: null,
+      entryLines: [vmessUpstreamRelay, vlessRealityUpstreamRelay, hy2UpstreamRelay],
+      landingLines: []
+    });
+    prisma.user.findMany.mockResolvedValue([user]);
+
+    const { singboxConfig } = await service.buildConfigSync('node-1');
+    const outbounds = singboxConfig.outbounds as Array<Record<string, unknown>>;
+
+    const vmessOut = outbounds.find((o) => o.tag === 'relay-out-upstream-vmess-relay');
+    expect(vmessOut).toEqual({
+      type: 'vmess',
+      tag: 'relay-out-upstream-vmess-relay',
+      server: 'vmess.upstream.example.com',
+      server_port: 443,
+      uuid: '11111111-2222-3333-4444-555555555555',
+      alter_id: 0,
+      security: 'auto',
+      tls: {
+        enabled: true,
+        server_name: 'sni.upstream.example.com',
+        utls: { enabled: true, fingerprint: 'firefox' },
+        insecure: true
+      },
+      transport: {
+        type: 'grpc',
+        service_name: 'vmess-grpc'
+      }
+    });
+    expect(vmessOut).not.toHaveProperty('alterId');
+
+    const realityOut = outbounds.find((o) => o.tag === 'relay-out-upstream-vless-reality');
+    expect(realityOut).toEqual({
+      type: 'vless',
+      tag: 'relay-out-upstream-vless-reality',
+      server: 'jp.upstream.example.com',
+      server_port: 443,
+      uuid: '22222222-3333-4444-5555-666666666666',
+      flow: 'xtls-rprx-vision',
+      tls: {
+        enabled: true,
+        server_name: 'www.apple.com',
+        utls: { enabled: true, fingerprint: 'safari' },
+        reality: {
+          enabled: true,
+          public_key: 'pbk_123',
+          short_id: 'abcd'
+        }
+      }
+    });
+
+    const hy2Out = outbounds.find((o) => o.tag === 'relay-out-upstream-hy2-relay');
+    expect(hy2Out).toEqual({
+      type: 'hysteria2',
+      tag: 'relay-out-upstream-hy2-relay',
+      server: 'us.upstream.example.com',
+      server_port: 8443,
+      password: 'hy2_secret',
+      up_mbps: 100,
+      down_mbps: 500,
+      obfs: {
+        type: 'salamander',
+        password: 'obfs_secret'
+      },
+      tls: {
+        enabled: true,
+        server_name: 'us.upstream.example.com',
+        insecure: false
+      }
+    });
+    expect(hy2Out).not.toHaveProperty('upMbps');
+    expect(hy2Out).not.toHaveProperty('downMbps');
+    expect(hy2Out).not.toHaveProperty('obfsPassword');
+  });
+
   it('心跳遥测独立落库，流量账务在单独事务内完成', async () => {
     txUserFindMany.mockResolvedValue([{ id: 'user-1', uuid: user.uuid, email: user.email }]);
     prisma.line.findFirst.mockResolvedValue({ id: 'line-1' });
