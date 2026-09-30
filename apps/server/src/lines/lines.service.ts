@@ -47,7 +47,21 @@ const targetLineSummary = {
     entryNode: nodeSummary
   }
 } as const;
-const lineInclude = { entryNode: nodeSummary, landingNode: nodeSummary, targetLine: targetLineSummary, certificate: certificateSummary } as const;
+const upstreamNodeSummary = {
+  select: {
+    id: true,
+    name: true,
+    protocolType: true,
+    serverHost: true,
+    serverPort: true,
+    status: true,
+    latencyMs: true,
+    lastTestStatus: true,
+    subscriptionId: true,
+    subscription: { select: { id: true, name: true } }
+  }
+} as const;
+const lineInclude = { entryNode: nodeSummary, landingNode: nodeSummary, targetLine: targetLineSummary, certificate: certificateSummary, upstreamNode: upstreamNodeSummary } as const;
 type LineWithRelations = Prisma.LineGetPayload<{ include: typeof lineInclude }>;
 
 type LineInput = {
@@ -63,6 +77,7 @@ type LineInput = {
   landingNodeId?: string | null;
   landingPort?: number | null;
   targetLineId?: string | null;
+  upstreamNodeId?: string | null;
   certificateId?: string | null;
   endpointOverrideEnabled?: boolean;
   serverHost?: string | null;
@@ -91,7 +106,16 @@ type LineInput = {
   proxyProtocolAcceptNoHeader?: boolean;
 };
 
-const UDP_PROTOCOLS = new Set<ProtocolType>(['HYSTERIA2', 'TUIC']);
+type PortTransportUsage = { tcp: boolean; udp: boolean };
+type PortEndpointContext = {
+  role?: 'entry' | 'landing';
+  type?: LineType;
+  relayMode?: RelayMode | null;
+  params?: Record<string, unknown>;
+};
+
+const UDP_ONLY_PROTOCOLS = new Set<ProtocolType>(['HYSTERIA2', 'TUIC']);
+const DUAL_STACK_PROTOCOLS = new Set<ProtocolType>(['SHADOWSOCKS', 'DIRECT']);
 
 @Injectable()
 export class LinesService {
@@ -289,13 +313,26 @@ export class LinesService {
     let landingPort: number | null = null;
     let targetLineId: string | null = null;
     let targetLine: { id: string; type: string; protocolType: string; entryNodeId: string; entryPort: number } | null = null;
+    let upstreamNodeId: string | null = null;
 
     if (type === 'DIRECT') {
       landingNodeId = null;
       landingPort = null;
       targetLineId = null;
+      upstreamNodeId = null;
     } else if (type === 'RELAY') {
-      if (relayMode === 'TARGET_LINE') {
+      if (relayMode === 'UPSTREAM_NODE') {
+        upstreamNodeId = input.upstreamNodeId !== undefined ? input.upstreamNodeId : current?.upstreamNodeId ?? null;
+        if (!upstreamNodeId) throw new BadRequestException('上游节点中继线路必须指定上游节点');
+        const upstreamNode = await this.prisma.upstreamNode.findUnique({
+          where: { id: upstreamNodeId },
+          select: { id: true, status: true, protocolType: true, name: true }
+        });
+        if (!upstreamNode) throw new NotFoundException('引用的上游节点不存在');
+        landingNodeId = null;
+        landingPort = null;
+        targetLineId = null;
+      } else if (relayMode === 'TARGET_LINE') {
         targetLineId = input.targetLineId !== undefined ? input.targetLineId : current?.targetLineId ?? null;
         if (!targetLineId) throw new BadRequestException('桥接中继线路必须指定目标线路');
         targetLine = await this.prisma.line.findUnique({
@@ -310,9 +347,11 @@ export class LinesService {
         if (targetLine.entryNodeId === entryNodeId) throw new BadRequestException('桥接目标必须位于其他节点');
         landingNodeId = null;
         landingPort = null;
+        upstreamNodeId = null;
       } else {
         landingNodeId = input.landingNodeId !== undefined ? input.landingNodeId : current?.landingNodeId ?? null;
         if (!landingNodeId) throw new BadRequestException('中继线路必须指定落地节点');
+        upstreamNodeId = null;
       }
     }
 
@@ -362,19 +401,21 @@ export class LinesService {
     }
     const allowLanAccess = input.allowLanAccess !== undefined ? Boolean(input.allowLanAccess) : current?.allowLanAccess ?? false;
 
+    const entryPortContext: PortEndpointContext = { role: 'entry', type, relayMode, params };
+    const landingPortContext: PortEndpointContext = { role: 'landing', type, relayMode, params };
     const entryPort = input.entryPort !== undefined && input.entryPort !== null
       ? input.entryPort
-      : current?.entryPort ?? await this.findAvailablePort(entryNodeId, protocolType, current?.id);
+      : current?.entryPort ?? await this.findAvailablePort(entryNodeId, protocolType, current?.id, entryPortContext);
 
     if (type === 'RELAY' && relayMode !== 'TARGET_LINE' && landingNodeId) {
       const requestedLandingPort = input.landingPort !== undefined && input.landingPort !== null ? input.landingPort : current?.landingPort;
-      landingPort = requestedLandingPort ?? await this.findAvailablePort(landingNodeId, protocolType, current?.id);
+      landingPort = requestedLandingPort ?? await this.findAvailablePort(landingNodeId, protocolType, current?.id, landingPortContext);
       if (entryNodeId === landingNodeId && entryPort === landingPort) {
         throw new BadRequestException('同节点中继线路的入口与落地端口必须不同');
       }
-      await this.assertPortAvailable(landingNodeId, landingPort, protocolType, current?.id);
+      await this.assertPortAvailable(landingNodeId, landingPort, protocolType, current?.id, landingPortContext);
     }
-    await this.assertPortAvailable(entryNodeId, entryPort, protocolType, current?.id);
+    await this.assertPortAvailable(entryNodeId, entryPort, protocolType, current?.id, entryPortContext);
 
     const name = input.name !== undefined ? input.name.trim() : current?.name;
     if (!name) throw new BadRequestException('线路名称不能为空');
@@ -415,6 +456,7 @@ export class LinesService {
       landingNodeId,
       landingPort,
       targetLineId,
+      upstreamNodeId,
       certificateId,
       allowLanAccess,
       tunnelType,
@@ -450,21 +492,101 @@ export class LinesService {
     };
   }
 
-  private async assertPortAvailable(nodeId: string, port: number, protocolType: ProtocolType, currentId?: string) {
+  private getPortTransportUsage(protocolType: ProtocolType, context?: PortEndpointContext): PortTransportUsage {
+    if (context?.role === 'entry' && context?.type === 'RELAY' && context?.relayMode === 'BLIND_FORWARD') {
+      return { tcp: true, udp: true };
+    }
+    if (DUAL_STACK_PROTOCOLS.has(protocolType)) {
+      return { tcp: true, udp: true };
+    }
+    if (UDP_ONLY_PROTOCOLS.has(protocolType)) {
+      return { tcp: false, udp: true };
+    }
+    if (protocolType === 'NAIVE') {
+      const network = typeof context?.params?.network === 'string' ? context.params.network.trim().toLowerCase() : 'tcp';
+      if (network === 'udp' || network === 'quic') {
+        return { tcp: false, udp: true };
+      }
+    }
+    return { tcp: true, udp: false };
+  }
+
+  private getExistingRowPortUsage(
+    row: {
+      protocolType: string;
+      type?: string | null;
+      relayMode?: string | null;
+      entryNodeId?: string | null;
+      entryPort?: number | null;
+      landingNodeId?: string | null;
+      landingPort?: number | null;
+      paramsJson?: string | null;
+    },
+    nodeId: string,
+    port: number
+  ): PortTransportUsage {
+    const params = row.paramsJson ? this.parseObject(row.paramsJson) : undefined;
+    const hasEndpointFields = row.entryNodeId !== undefined || row.landingNodeId !== undefined;
+    const isEntry = !hasEndpointFields || (row.entryNodeId === nodeId && row.entryPort === port);
+    const isLanding = hasEndpointFields && row.landingNodeId === nodeId && row.landingPort === port;
+    const lineType = (row.type as LineType | undefined) ?? 'DIRECT';
+    const relayMode = (row.relayMode as RelayMode | null | undefined) ?? null;
+    const protocolType = row.protocolType as ProtocolType;
+    let tcp = false;
+    let udp = false;
+    if (isEntry) {
+      const usage = this.getPortTransportUsage(protocolType, { role: 'entry', type: lineType, relayMode, params });
+      tcp = tcp || usage.tcp;
+      udp = udp || usage.udp;
+    }
+    if (isLanding) {
+      const usage = this.getPortTransportUsage(protocolType, { role: 'landing', type: lineType, relayMode, params });
+      tcp = tcp || usage.tcp;
+      udp = udp || usage.udp;
+    }
+    return { tcp, udp };
+  }
+
+  private hasPortTransportConflict(a: PortTransportUsage, b: PortTransportUsage): boolean {
+    return (a.tcp && b.tcp) || (a.udp && b.udp);
+  }
+
+  private async assertPortAvailable(
+    nodeId: string,
+    port: number,
+    protocolType: ProtocolType,
+    currentId?: string,
+    context?: PortEndpointContext
+  ) {
     const rows = await this.prisma.line.findMany({
       where: {
         ...(currentId ? { id: { not: currentId } } : {}),
         OR: [{ entryNodeId: nodeId, entryPort: port }, { landingNodeId: nodeId, landingPort: port }]
       },
-      select: { protocolType: true }
+      select: {
+        protocolType: true,
+        type: true,
+        relayMode: true,
+        entryNodeId: true,
+        entryPort: true,
+        landingNodeId: true,
+        landingPort: true,
+        paramsJson: true
+      }
     });
-    const wantsUdp = UDP_PROTOCOLS.has(protocolType);
-    if (rows.some((line) => UDP_PROTOCOLS.has(line.protocolType as ProtocolType) === wantsUdp)) {
+    const candidateUsage = this.getPortTransportUsage(protocolType, context);
+    if (rows.some((line) => this.hasPortTransportConflict(candidateUsage, this.getExistingRowPortUsage(line, nodeId, port)))) {
       throw new ConflictException(`节点 ${nodeId} 的端口 ${port} 已被同传输层线路占用`);
     }
   }
 
-  private async findAvailablePort(nodeId: string, protocolType: ProtocolType, currentId?: string) {
+  private async findAvailablePort(
+    nodeId: string,
+    protocolType: ProtocolType,
+    currentId?: string,
+    context?: PortEndpointContext
+  ) {
+    const candidateUsage = this.getPortTransportUsage(protocolType, context);
     try {
       return await findAvailableRandomPort(async (port) => {
         const rows = await this.prisma.line.findMany({
@@ -472,10 +594,18 @@ export class LinesService {
             ...(currentId ? { id: { not: currentId } } : {}),
             OR: [{ entryNodeId: nodeId, entryPort: port }, { landingNodeId: nodeId, landingPort: port }]
           },
-          select: { protocolType: true }
+          select: {
+            protocolType: true,
+            type: true,
+            relayMode: true,
+            entryNodeId: true,
+            entryPort: true,
+            landingNodeId: true,
+            landingPort: true,
+            paramsJson: true
+          }
         });
-        const wantsUdp = UDP_PROTOCOLS.has(protocolType);
-        return !rows.some((line) => UDP_PROTOCOLS.has(line.protocolType as ProtocolType) === wantsUdp);
+        return !rows.some((line) => this.hasPortTransportConflict(candidateUsage, this.getExistingRowPortUsage(line, nodeId, port)));
       });
     } catch {
       throw new ConflictException('没有可用的随机线路端口');
@@ -617,7 +747,21 @@ export class LinesService {
                     ? line.targetLine.serverPort
                     : line.targetLine.entryPort)
             }
-          : line.landingNode && line.landingPort
+          : line.relayMode === 'UPSTREAM_NODE' && line.upstreamNode
+            ? {
+                node: {
+                  id: line.upstreamNode.id,
+                  name: `[上游] ${line.upstreamNode.name}`,
+                  serverHost: line.upstreamNode.serverHost,
+                  status: line.upstreamNode.status,
+                  isLocal: false,
+                  reachability: 'PUBLIC'
+                },
+                host: line.upstreamNode.serverHost,
+                port: line.upstreamNode.serverPort,
+                upstreamNode: line.upstreamNode
+              }
+            : line.landingNode && line.landingPort
             ? {
                 node: line.landingNode,
                 host: hasLandingOverride ? line.landingServerHost! : line.landingNode.serverHost,
@@ -627,6 +771,8 @@ export class LinesService {
       : null;
     return {
       ...line,
+      upstreamNodeId: line.upstreamNodeId ?? null,
+      upstreamNode: line.upstreamNode ?? null,
       protocolType: line.protocolType as ProtocolType,
       params,
       serverHost,

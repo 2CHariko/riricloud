@@ -233,15 +233,25 @@ func (c *Client) pollOnce(ctx context.Context) error {
 		return err
 	}
 	sample := telemetry.Collect()
-	kernel := c.singboxMgr.Status()
-	trafficSnapshots, err := c.traffic.Collect(ctx, c.singboxMgr.StatsAddress())
-	if err != nil {
-		now := time.Now()
-		if now.Sub(c.lastTrafficErrAt) >= time.Minute {
-			c.lastTrafficErrAt = now
-			c.log.WithError(err).Warn("collect sing-box user traffic failed")
-		} else {
-			c.log.WithError(err).Debug("collect sing-box user traffic failed (throttled)")
+	var kernel singbox.Status
+	var statsAddr string
+	var supportsClash bool
+	if c.singboxMgr != nil {
+		kernel = c.singboxMgr.Status()
+		statsAddr = c.singboxMgr.StatsAddress()
+		supportsClash = c.singboxMgr.SupportsClashAPI()
+	}
+	var trafficSnapshots []trafficstats.Record
+	if c.traffic != nil && statsAddr != "" {
+		trafficSnapshots, err = c.traffic.Collect(ctx, statsAddr)
+		if err != nil {
+			now := time.Now()
+			if now.Sub(c.lastTrafficErrAt) >= time.Minute {
+				c.lastTrafficErrAt = now
+				c.log.WithError(err).Warn("collect sing-box user traffic failed")
+			} else {
+				c.log.WithError(err).Debug("collect sing-box user traffic failed (throttled)")
+			}
 		}
 	}
 	payload := pollPayload{
@@ -266,7 +276,7 @@ func (c *Client) pollOnce(ctx context.Context) error {
 			payload.OnlineDevices = items
 		}
 	}
-	if c.singboxMgr.SupportsClashAPI() {
+	if supportsClash {
 		payload.Capabilities = append(payload.Capabilities, "device_tracking")
 	}
 	for _, record := range trafficSnapshots {
@@ -279,23 +289,32 @@ func (c *Client) pollOnce(ctx context.Context) error {
 	if c.logCollector != nil {
 		payload.Logs = c.logCollector.Drain(50)
 	}
+	requeueLogs := func() {
+		if c.logCollector != nil && len(payload.Logs) > 0 {
+			c.logCollector.Requeue(payload.Logs)
+		}
+	}
 	sentResults := c.appendPendingResults(&payload)
 	body, err := json.Marshal(payload)
 	if err != nil {
+		requeueLogs()
 		return fmt.Errorf("marshal poll payload: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
 	if err != nil {
+		requeueLogs()
 		return fmt.Errorf("create poll request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Agent-Token", c.token)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		requeueLogs()
 		return fmt.Errorf("send poll request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		requeueLogs()
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("poll request: HTTP %s: %s", resp.Status, strings.TrimSpace(string(message)))
 	}

@@ -67,7 +67,7 @@ export function extractErrorMessage(error: unknown, fallback?: string): string {
 }
 
 export type LineType = 'DIRECT' | 'RELAY';
-export type RelayMode = 'BLIND_FORWARD' | 'PROTOCOL_PROXY' | 'TARGET_LINE';
+export type RelayMode = 'BLIND_FORWARD' | 'PROTOCOL_PROXY' | 'TARGET_LINE' | 'UPSTREAM_NODE';
 export type LineStatus = 'ACTIVE' | 'DISABLED';
 export type ProtocolType = 'VLESS' | 'VMESS' | 'TROJAN' | 'HYSTERIA2' | 'TUIC' | 'SHADOWSOCKS' | 'NAIVE' | 'SHADOWTLS' | 'MIXED' | 'SOCKS' | 'HTTP' | 'DIRECT';
 
@@ -79,6 +79,8 @@ export interface ApiLine {
   type: LineType;
   relayMode: RelayMode | null;
   targetLineId: string | null;
+  upstreamNodeId?: string | null;
+  upstreamNode?: ApiUpstreamNode | null;
   protocolType: ProtocolType;
   params: Record<string, unknown>;
   entryNodeId: string;
@@ -174,3 +176,116 @@ export interface ApiCertificate {
   createdAt: string;
   updatedAt: string;
 }
+
+// ==============================
+// 上游订阅类型与 API
+// ==============================
+export type UpstreamSourceType = 'URL' | 'TEXT';
+export type UpstreamFormat = 'AUTO' | 'CLASH_META' | 'SINGBOX' | 'URI_LIST';
+export type UpstreamSyncStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
+export type UpstreamNodeStatus = 'ACTIVE' | 'DISABLED';
+
+export interface ApiUpstreamSubscription {
+  id: string;
+  name: string;
+  sourceType: UpstreamSourceType;
+  format: UpstreamFormat;
+  url: string | null;
+  hasContent: boolean;
+  customHeaders: Record<string, string>;
+  autoUpdate: boolean;
+  updateIntervalMins: number;
+  lastSyncAt: string | null;
+  lastSyncStatus: UpstreamSyncStatus;
+  lastSyncMessage: string | null;
+  userInfoUsedBytes: number | null;
+  userInfoTotalBytes: number | null;
+  userInfoExpireAt: string | null;
+  nodeCount: number;
+  status: UpstreamNodeStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiUpstreamNode {
+  id: string;
+  subscriptionId: string;
+  subscription?: { id: string; name: string } | null;
+  name: string;
+  protocolType: ProtocolType;
+  serverHost: string;
+  serverPort: number;
+  params: Record<string, unknown>;
+  tags: string[];
+  latencyMs: number | null;
+  lastTestedAt: string | null;
+  lastTestStatus: 'SUCCESS' | 'TIMEOUT' | 'ERROR' | null;
+  lastTestMessage: string | null;
+  status: UpstreamNodeStatus;
+  isDirectSub: boolean;
+  relayLines?: Array<{ id: string; name: string; status: string }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const upstreamApi = {
+  list: (params?: { page?: number; pageSize?: number; search?: string; status?: string }) =>
+    api.get<{ data: ApiUpstreamSubscription[]; total: number; page: number; pageSize: number }>('/admin/upstream', { params }),
+  detail: (id: string) =>
+    api.get<{ subscription: ApiUpstreamSubscription }>(`/admin/upstream/${id}`),
+  create: (data: {
+    name: string;
+    sourceType?: UpstreamSourceType;
+    format?: UpstreamFormat;
+    url?: string;
+    content?: string;
+    customHeaders?: Record<string, string>;
+    autoUpdate?: boolean;
+    updateIntervalMins?: number;
+  }) => api.post<{ subscription: ApiUpstreamSubscription }>('/admin/upstream', data),
+  update: (
+    id: string,
+    data: Partial<{
+      name: string;
+      sourceType: UpstreamSourceType;
+      format: UpstreamFormat;
+      url: string;
+      content: string;
+      customHeaders: Record<string, string>;
+      autoUpdate: boolean;
+      updateIntervalMins: number;
+      status: UpstreamNodeStatus;
+    }>
+  ) => api.put<{ subscription: ApiUpstreamSubscription }>(`/admin/upstream/${id}`, data),
+  delete: (id: string) =>
+    api.delete<{ deleted: boolean; id: string }>(`/admin/upstream/${id}`),
+  sync: (id: string) =>
+    api.post<{ success: boolean; nodeCount: number; format: string }>(`/admin/upstream/${id}/sync`),
+  probeAll: (subscriptionId?: string) =>
+    api.post<{ total: number; tested: number; results: Array<{ id: string; latencyMs: number | null; status: string }> }>(
+      '/admin/upstream/probe-all',
+      undefined,
+      { params: subscriptionId ? { subscriptionId } : undefined }
+    ),
+  listNodes: (params?: {
+    page?: number;
+    pageSize?: number;
+    subscriptionId?: string;
+    search?: string;
+    protocolType?: string;
+    tag?: string;
+    status?: string;
+    isDirectSub?: boolean;
+  }) =>
+    api.get<{ data: ApiUpstreamNode[]; total: number; page: number; pageSize: number }>('/admin/upstream/nodes', { params }),
+  setNodeDirectSub: (nodeId: string, isDirectSub: boolean) =>
+    api.put<{ node: ApiUpstreamNode }>(`/admin/upstream/nodes/${nodeId}/direct-sub`, { isDirectSub }),
+  setNodeStatus: (nodeId: string, status: UpstreamNodeStatus) =>
+    api.put<{ node: ApiUpstreamNode }>(`/admin/upstream/nodes/${nodeId}/status`, { status }),
+  probeNode: (nodeId: string) =>
+    api.post<{ probe: { latencyMs: number | null; status: string; message: string | null }; node: ApiUpstreamNode }>(
+      `/admin/upstream/nodes/${nodeId}/probe`
+    ),
+  exportNodes: (params?: { nodeIds?: string; subscriptionId?: string; format?: 'uri' | 'json' }) =>
+    api.get<string>('/admin/upstream/nodes/export', { params, responseType: 'text' })
+};

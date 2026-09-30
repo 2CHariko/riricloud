@@ -24,7 +24,7 @@ export type ProtocolType = (typeof PROTOCOL_TYPES)[number];
 export const LINE_TYPES = ['DIRECT', 'RELAY'] as const;
 export type LineType = (typeof LINE_TYPES)[number];
 
-export const RELAY_MODES = ['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE'] as const;
+export const RELAY_MODES = ['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE', 'UPSTREAM_NODE'] as const;
 export type RelayMode = (typeof RELAY_MODES)[number];
 
 // 协议代理/异构桥接在出口节点使用的专用凭证，不对应任何普通用户。
@@ -57,3 +57,18 @@ export type LineStatus = (typeof LINE_STATUSES)[number];
 
 // 心跳超时判定：超过该秒数未见心跳即视为离线
 export const HEARTBEAT_TIMEOUT_SECONDS = 30;
+
+// ==============================
+// 上游订阅常量
+// ==============================
+export const UPSTREAM_SOURCE_TYPES = ['URL', 'TEXT'] as const;
+export type UpstreamSourceType = (typeof UPSTREAM_SOURCE_TYPES)[number];
+
+export const UPSTREAM_FORMATS = ['AUTO', 'CLASH_META', 'SINGBOX', 'URI_LIST'] as const;
+export type UpstreamFormat = (typeof UPSTREAM_FORMATS)[number];
+
+export const UPSTREAM_SYNC_STATUSES = ['PENDING', 'SUCCESS', 'FAILED'] as const;
+export type UpstreamSyncStatus = (typeof UPSTREAM_SYNC_STATUSES)[number];
+
+export const UPSTREAM_NODE_STATUSES = ['ACTIVE', 'DISABLED'] as const;
+export type UpstreamNodeStatus = (typeof UPSTREAM_NODE_STATUSES)[number];

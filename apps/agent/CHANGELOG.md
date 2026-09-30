@@ -17,6 +17,11 @@
 ### Changed
 
 ### Fixed
+- **修复 WS 重连协程泄漏与日志递归风暴、Linux TC 限速五位端口 `classid` 溢出及错误字段序列化丢失**：
+  - `internal/ws` 为每次 WebSocket 会话派生独立 `connCtx` 并使用 `sync.WaitGroup` 收敛 `readLoop`、`heartbeatLoop` 与 `logFlushLoop` 生命周期；`sendLogReport` 与 `internal/poll` 上报失败时不再打印递归 `WARN` 日志，而是调用 `Collector.Requeue` 将日志批次重入队至有界环形缓冲区；
+  - `internal/trafficshaper` 新增 `portClassID`，将端口号格式化为 16 位十六进制 `1:%x` 作为 `tc` HTB 子类 ID（对与默认类 `1:999` 冲突的端口 `2457` 自动重映射至高段空闲子类），彻底解决端口 `> 9999` 时 `tc` 报错 `exit status 255` 的问题；
+  - `internal/logging` 在采集 `logrus.Entry.Data` 时自动将实现 `error` 接口的值转换为 `.Error()` 字符串，解决结构化日志 `metadata.error` 被 JSON 序列化为 `{}` 的问题；
+  - `internal/singbox` 将 QUIC/Hysteria2 正常流关闭（`canceled by remote/local with error code 0`）归类为 `ACCESS` 并降级为 `INFO`，避免常规模式下产生误报 `WARN` 刷屏。
 
 
 ## [0.8.5] - 2026-09-28

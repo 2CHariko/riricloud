@@ -821,10 +821,50 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
 
   private async getLinesForSubscription(subscription: SubscriptionRecord) {
     const effective = applyPlanSnapshot(subscription) as SubscriptionRecord;
-    return this.linesService.getAvailableForPlan(
+    const directLines = await this.linesService.getAvailableForPlan(
       effective.plan ?? { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' },
       this.getExtraLineIds(subscription)
     );
+
+    let upstreamLines: Array<Awaited<ReturnType<LinesService['getAvailableForPlan']>>[number]> = [];
+    try {
+      const upstreamNodes = await this.prisma.upstreamNode.findMany({
+        where: {
+          isDirectSub: true,
+          status: 'ACTIVE',
+          subscription: { status: 'ACTIVE' }
+        }
+      });
+      upstreamLines = (upstreamNodes || []).map((node) => {
+        let params: Record<string, unknown> = {};
+        try {
+          params = JSON.parse(node.paramsJson || '{}');
+        } catch {
+          // ignore
+        }
+        let tags: string[] = [];
+        try {
+          tags = JSON.parse(node.tagsJson || '[]');
+        } catch {
+          // ignore
+        }
+        return {
+          id: node.id,
+          name: `[直连] ${node.name}`,
+          type: 'DIRECT',
+          protocolType: node.protocolType as unknown as ProtocolType,
+          serverHost: node.serverHost,
+          serverPort: node.serverPort,
+          params,
+          trafficRate: 0,
+          tags
+        } as unknown as Awaited<ReturnType<LinesService['getAvailableForPlan']>>[number];
+      });
+    } catch {
+      // ignore
+    }
+
+    return [...directLines, ...upstreamLines];
   }
 
   private async resolveTemplate(template?: SubscriptionTemplateConfig | null, templateId?: string) {

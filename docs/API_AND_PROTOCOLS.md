@@ -123,13 +123,13 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 #### 线路管理
 - `GET /admin/lines?page&pageSize&search&type&status&tag`：分页查询线路，可按名称/地址、类型、启停状态和标签筛选；响应包含 `tag`、`listen`、`protocolType`、脱敏后的 `params`、`certificateId`/`certificate` 简要关联、`targetLineId`/`targetLine` 目标摘要、`topology`（入口/落地节点与端口）、最终生效的 `serverHost/serverPort`、原始 `endpointOverrides` 以及测速快照（`lastLatencyMs`、`lastTestedAt`、`lastTestStatus`、`lastTestMessage`）。旧客户端仍可读取只读 `targetInbound` 摘要。⭐
 - `GET /admin/lines/:id`：查询线路详情及入口/落地节点关联、协议参数、证书简要信息、端点解析结果与最新测速快照。⭐
-- `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`proxyProtocol` 为布尔类型（开启时自动兼容解析 v1 与 v2 协议头），`proxyProtocolAcceptNoHeader` 控制是否允许无 PROXY 头的连接；`speedLimitMbps` 控制单端口限速；`certificateId` 只能用于标准 TLS，关联后无需在 `params.tls` 中填写本地证书/私钥路径，Master 会在配置同步时注入最新 PEM。`params` 按 `docs/DATA_MODELS.md` §3.1 归一化并在响应中脱敏，TLS `alpn` 使用字符串数组，可按协议/传输层从预设值多选。直连线路仅需指定入口节点与端口，落地字段保持为 null；普通中继线路必须指定入口、落地和机制，`TARGET_LINE` 必须指定其他节点上的 `DIRECT` 目标线路，落地节点与端口动态由目标线路解析（默认自动继承目标线路生效的 `endpointOverrideEnabled` 对外覆盖端点与 SNI）。中继线路支持开启 `landingEndpointOverrideEnabled` 显式覆盖入口连接落地时的拨号目标地址/端口（`landingServerHost`/`landingServerPort`），当配置为纯回源 IP 时自动解耦并保留目标线路或落地节点的绑定域名作为 TLS `server_name` 与传输层 `Host` 请求头；当落地为 NAT 节点时强制走 127.0.0.1 反向隧道。入口节点 `entryNodeId` 必须为公网可达节点（`reachability=PUBLIC`）；落地节点支持公网节点或 NAT 节点（`reachability=NAT`）。当落地为 NAT 节点时，系统自动编排反向 Yamux 多路复用隧道（`tunnelType=YAMUX`），复用或自动分配隧道端口（`tunnelPort`）与高熵密钥（`tunnelSecret`）；`allowLanAccess` 控制落地端是否放行家庭/私网局域网资源访问（布尔值，默认 `false` 严格拦截私网网段）。目标协议仅支持 `VLESS`、`VMESS`、`TROJAN`、`HYSTERIA2`、`TUIC`、`SHADOWSOCKS`、`NAIVE`。端口省略时由服务端在 `20000~65535` 范围随机分配五位端口。同节点同 TCP/UDP 传输层端口冲突返回 `409`，自定义 Tag 冲突返回 `409`，HYSTERIA2/TUIC 按 UDP 计算。
+- `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, upstreamNodeId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`relayMode` 支持 `BLIND_FORWARD`、`PROTOCOL_PROXY`、`TARGET_LINE` 与 `UPSTREAM_NODE`；当为 `UPSTREAM_NODE` 时落地目标指向已导入的外部上游节点（`upstreamNodeId` 必填），入口 VPS 自动生成对应 Outbound 并纳管入口流量计费。同节点端口冲突校验按实际传输层（TCP/UDP）重叠判定：`SHADOWSOCKS`、`DIRECT` 与 `BLIND_FORWARD` 盲转发入口均按 TCP+UDP 双栈占用校验，禁止与同节点同端口的 TCP 或 UDP（`HYSTERIA2`/`TUIC`）线路冲突。其余参数与约束见下文。⭐
 - `PATCH /admin/lines/:id`：部分更新线路，字段同创建请求。⭐ 保存后触发全量 Agent 配置推送防抖。
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
 - `POST /admin/lines/:id/test`：解析并返回最终对外端点、入口/落地节点与端口，不建立真实连接。⭐
-- `POST /admin/lines/:id/speedtest`：对单条线路执行即时端到端测速（要求全链路 100% 跑通并经 Sing-box 代理收到目标 HTTP 204/200 响应才判定为测速成功；若任一阶段失败或超时，整体状态记为 `ERROR` 或 `TIMEOUT` 且延迟置为 `null`，不进行 TCP 握手降级误报；使用内部专用探针凭据且不计入账单），响应 `{ lineId, lineName, latencyMs, status, message, testedAt, mode, topology, stages }`，并持久化到 Line 最新快照；其中 `stages` 包含多阶段耗时与状态（`master_ready` 主控探针准备、`entry_handshake` 入口网络握手、`relay_transit` 中继转发准备、`target_http` 目标端到端 HTTP 204/200 探测），支持在管理前端以弹窗展示完整的链路测试流程与异常诊断。⭐
-- `POST /admin/lines/speedtest-all`：受控并发（限制并发度 4）批量测试所有已启用的线路，响应 `{ total, success, failed }`。⭐
+- `POST /admin/lines/:id/speedtest`：对单条线路执行即时端到端测速（要求全链路 100% 跑通并经 Sing-box 代理收到目标 HTTP 204/200 响应才判定为测速成功；若任一阶段失败或超时，整体状态记为 `ERROR` 或 `TIMEOUT` 且延迟置为 `null`，不进行 TCP 握手降级误报；使用内部专用探针凭据且不计入账单；前端客户端为单条测速配置 45s 超时预算以完整接收阶段诊断报告），响应 `{ lineId, lineName, latencyMs, status, message, testedAt, mode, topology, stages }`，并持久化到 Line 最新快照；其中 `stages` 包含多阶段耗时与状态（`master_ready` 主控探针准备、`entry_handshake` 入口网络握手、`relay_transit` 中继转发准备、`target_http` 目标端到端 HTTP 204/200 探测），支持在管理前端以弹窗展示完整的链路测试流程与异常诊断。⭐
+- `POST /admin/lines/speedtest-all`：受控并发（限制并发度 4）批量测试所有已启用的线路（前端客户端配置 120s 超时预算），响应 `{ total, success, failed }`。⭐
 - `POST /admin/lines/batch-status`：批量启用/禁用线路。⭐ 请求 `{ ids: UUID[], status: "ACTIVE"|"DISABLED" }`。
 - `PATCH /admin/lines/reorder`：批量调整排序。⭐ 请求 `{ items: [{ id, sortOrder }] }`。
 
@@ -140,6 +140,20 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `POST /admin/certificates`：创建证书。请求 `{ name, certificatePem, privateKeyPem }`；仅接受包含 SAN 的 X.509 叶子证书和未加密 PEM 私钥，证书与私钥不匹配返回 `400`。⭐
 - `PATCH /admin/certificates/:id`：更新证书名称或 PEM 内容；省略 `privateKeyPem` 时保留现有私钥。保存后自动查找关联线路的入口/落地节点并推送 `config_sync`，响应附带 `affectedNodeIds` 与 `syncedNodeIds`。⭐
 - `DELETE /admin/certificates/:id`：删除未被线路引用的证书；仍有关联线路时返回 `409`。⭐
+
+#### 上游订阅与节点管理 (`/admin/upstream`)
+- `GET /admin/upstream?page&pageSize&search&status`：分页查询上游订阅列表，响应包含订阅名称、来源类型（URL/文本）、解析格式、自动更新周期、上次同步状态、流量用量与节点总数。⭐
+- `GET /admin/upstream/:id`：查询指定上游订阅详情。⭐
+- `POST /admin/upstream`：创建上游订阅。⭐ 请求 `{ name, sourceType?, format?, url?, content?, customHeaders?, autoUpdate?, updateIntervalMins? }`；创建成功后自动异步触发一次初始同步。
+- `PUT /admin/upstream/:id`：修改上游订阅配置。⭐
+- `DELETE /admin/upstream/:id`：删除上游订阅并级联删除所属节点。⭐ 若有中转线路正引用该订阅下的节点，自动将相关线路置为 `DISABLED` 并清空引用，同时向节点推送配置。
+- `POST /admin/upstream/:id/sync`：立即强制同步指定的上游订阅。⭐ 拉取内容并执行节点差异比对，平滑保留存量节点配置，若上游删除节点则自动停用关联的中继线路。
+- `POST /admin/upstream/probe-all?subscriptionId`：并发对全部或指定订阅的有效节点执行 TCP 连通性测速。⭐
+- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status&isDirectSub`：分页多维度筛选上游解析节点列表。⭐
+- `PUT /admin/upstream/nodes/:nodeId/direct-sub`：切换指定节点是否直接合并入用户客户端订阅。⭐ 请求 `{ isDirectSub: boolean }`。
+- `PUT /admin/upstream/nodes/:nodeId/status`：启用或停用单个外部节点。⭐ 若停用节点，自动联动停用引用它的中继线路。
+- `POST /admin/upstream/nodes/:nodeId/probe`：单节点 TCP 握手连通性测速。⭐ 响应 `{ probe: { latencyMs, status, message }, node }`。
+- `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：快捷导出外部节点为标准协议 URI 文本列表或 JSON。⭐
 
 #### 系统设置
 - `GET /admin/settings`：读取全量设置。⭐ 响应包含 `docs/DATA_MODELS.md` §SystemSetting 列出的全部强类型字段（含 SMTP、邮箱验证、CAPTCHA、统一时区 `systemTimezone`、速率色彩阶梯 `speedLimitColorTiers` 与单位换算 `speedLimitUnitConversionEnabled`、存储日志策略、结构化公告列表 `siteAnnouncementsJson`、首页配置 `landingEnabled` / `landingHero*` / `landingShow*` / `landingCustom*Json`、多设备限制 `deviceLimitEnabled`（默认 `true`）与在线活跃窗口 `deviceOnlineWindowSecs`（默认 60 秒）等）；`smtpPass` 与 `turnstileSecretKey` 有值时均返回 `********`。存储日志策略包括 `trafficHourlyRetentionDays`（默认 90）、`nodeRateRetentionDays`（默认 30）、`logsRetentionDays`（默认 7）、`logsMaxCount`（默认 100000）、`logsMinIngestLevel`（默认 `INFO`）、`agentLogMaxSizeMb`（默认 50）和 `agentLogMaxFiles`（默认 5）。
@@ -504,10 +518,10 @@ Agent 对下载文件流式计算 SHA-256；Sing-box 升级还会使用当前配
 
 #### 7. 运行日志上报 (`log_report`) —— Agent -> Master (v0.6.12，v0.8.13 扩展)
 Agent 在运行期通过有界环形缓冲区采集自身运行日志与托管的 Sing-box 日志并批量上报，交由 Master `SystemLogsService` 统一入库与实时推流：
-- **真实级别解析**：Agent 去除 ANSI 控制字符，解析 Sing-box `DEBUG/TRACE -> DEBUG`、`INFO -> INFO`、`WARN -> WARN`、`ERROR/FATAL/PANIC -> ERROR`；stderr 仅作为 `metadata.stream` 元数据，不再自动升级为 WARN，未知级别默认按 INFO。进程异常退出、启动失败和配置预检失败由 Agent supervisor 生成结构化生命周期 WARN/ERROR。
+- **真实级别解析**：Agent 去除 ANSI 控制字符，解析 Sing-box `DEBUG/TRACE -> DEBUG`、`INFO -> INFO`、`WARN -> WARN`、`ERROR/FATAL/PANIC -> ERROR`；stderr 仅作为 `metadata.stream` 元数据，不再自动升级为 WARN，未知级别默认按 INFO；QUIC/Hysteria2 正常流关闭（`canceled by remote/local with error code 0`）识别为 `ACCESS` 并降级为 `INFO`。进程异常退出、启动失败和配置预检失败由 Agent supervisor 生成结构化生命周期 WARN/ERROR；Agent 结构化日志中的 `error` 接口字段统一序列化为可读错误字符串。
 - **分级过滤策略**：Agent 自身日志继续上报 `INFO` / `WARN` / `ERROR`；Sing-box 在 `NORMAL` 模式只上报真实 `WARN/ERROR`，并丢弃 `ACCESS` 高频连接日志；管理员开启 `INFO`/`DEBUG` 诊断后按下发门槛放行，固定 30 分钟后自动恢复。Master 会再次按节点有效诊断状态拦截旧 Agent 或异常客户端发送的 Sing-box INFO/DEBUG。
 - **重复合并与安全**：相同节点、模块、标准化消息的 Sing-box WARN 在 60 秒内合并为一条并在 `metadata.repeatCount` 记录次数；ERROR 不合并。入库和实时推流沿用日志脱敏，并清洗域名、IP、Token、密码与密钥模式。系统日志不承担流量计费，流量仍来自 StatsService/heartbeat/小时桶。
-- **上报触发机制**：WS 长连接下通过独立 goroutine 每 2 秒批量上报（单次至多 50 条），当捕获到 `ERROR` 级别日志时立即触发快速刷新上报；HTTP 轮询模式下随 `POST /api/v1/agent/poll` 请求体中的可选 `logs` 数组字段批量携带上报。
+- **上报触发与失败重入队机制**：WS 长连接下通过绑定单次会话生命周期的独立 goroutine 每 2 秒批量上报（单次至多 50 条），当捕获到 `ERROR` 级别日志时立即触发快速刷新上报；HTTP 轮询模式下随 `POST /api/v1/agent/poll` 请求体中的可选 `logs` 数组字段批量携带上报。当 WS 帧发送或 HTTP 轮询请求失败时，已取出的日志批次会重入队至有界环形缓冲区且不打印递归 WARN 日志，待重连后继续上报。
 ```json
 {
   "type": "log_report",

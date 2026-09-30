@@ -15,7 +15,7 @@ import { useRealityKeypair } from '../use-lines';
 import { LineAdvancedFields } from './line-advanced-fields';
 import { LineInboundFields } from './line-inbound-fields';
 import { defaultLineFormValues, lineFormSchema, lineToFormValues, newLineFormValues, toLinePayload, type LineFormValues } from './line-form-schema';
-import type { ApiCertificate, ProtocolType } from '@/lib/api';
+import type { ApiCertificate, ProtocolType, ApiUpstreamNode } from '@/lib/api';
 
 interface LineFormDialogProps {
   open: boolean;
@@ -26,9 +26,10 @@ interface LineFormDialogProps {
   certificates: ApiCertificate[];
   pending: boolean;
   onSubmit: (payload: LinePayload) => void;
+  initialUpstreamNode?: ApiUpstreamNode | null;
 }
 
-export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certificates, pending, onSubmit }: LineFormDialogProps) {
+export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certificates, pending, onSubmit, initialUpstreamNode }: LineFormDialogProps) {
   const { t } = useTranslation(['admin', 'common']);
   const [tab, setTab] = useState('inbound');
   const form = useForm<LineFormValues>({
@@ -43,7 +44,18 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
     reset: () => {
       setTab('inbound');
       const maxSort = lines.length ? Math.max(...lines.map((item) => item.sortOrder ?? 0)) : 0;
-      form.reset(line ? lineToFormValues(line) : newLineFormValues('VLESS', maxSort + 10));
+      if (line) {
+        form.reset(lineToFormValues(line));
+      } else if (initialUpstreamNode) {
+        const values = newLineFormValues('VLESS', maxSort + 10);
+        values.name = `${t('admin:lines.typeRelay')} · ${initialUpstreamNode.name}`;
+        values.type = 'RELAY';
+        values.relayMode = 'UPSTREAM_NODE';
+        values.upstreamNodeId = initialUpstreamNode.id;
+        form.reset(values);
+      } else {
+        form.reset(newLineFormValues('VLESS', maxSort + 10));
+      }
     }
   });
 

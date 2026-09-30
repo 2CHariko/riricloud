@@ -54,8 +54,9 @@ export const lineFormSchema = z.object({
   listen: z.string().trim().min(1, i18n.t('admin:lineForm.validation.listenRequired')).max(64, i18n.t('admin:lineForm.validation.listenMax')),
   type: z.enum(['DIRECT', 'RELAY']),
   protocolType: z.enum(PROTOCOL_TYPES),
-  relayMode: z.enum(['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE']).optional(),
+  relayMode: z.enum(['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE', 'UPSTREAM_NODE']).optional(),
   targetLineId: z.string().optional(),
+  upstreamNodeId: z.string().optional(),
   entryNodeId: z.string().optional(),
   entryPort: optionalPort,
   landingNodeId: z.string().optional(),
@@ -158,7 +159,7 @@ export const lineFormSchema = z.object({
   tunnelSecret: z.string().optional()
 }).superRefine((value, ctx) => {
   if (!value.entryNodeId) ctx.addIssue({ code: 'custom', path: ['entryNodeId'], message: i18n.t('admin:lineForm.validation.entryNodeRequired') });
-  if (value.type === 'RELAY' && value.relayMode !== 'TARGET_LINE' && !value.landingNodeId) {
+  if (value.type === 'RELAY' && value.relayMode !== 'TARGET_LINE' && value.relayMode !== 'UPSTREAM_NODE' && !value.landingNodeId) {
     ctx.addIssue({ code: 'custom', path: ['landingNodeId'], message: i18n.t('admin:lineForm.validation.landingNodeRequired') });
   }
   if (value.type === 'RELAY' && !value.relayMode) {
@@ -166,6 +167,9 @@ export const lineFormSchema = z.object({
   }
   if (value.type === 'RELAY' && value.relayMode === 'TARGET_LINE' && !value.targetLineId) {
     ctx.addIssue({ code: 'custom', path: ['targetLineId'], message: i18n.t('admin:lineForm.validation.targetLineRequired') });
+  }
+  if (value.type === 'RELAY' && value.relayMode === 'UPSTREAM_NODE' && !value.upstreamNodeId) {
+    ctx.addIssue({ code: 'custom', path: ['upstreamNodeId'], message: i18n.t('admin:lineForm.validation.upstreamNodeRequired') });
   }
 
   const tlsRequired = ['TROJAN', 'HYSTERIA2', 'TUIC', 'NAIVE'].includes(value.protocolType);
@@ -280,7 +284,7 @@ export function defaultLineFormValues(protocolType: ProtocolType = 'VLESS'): Lin
   const tlsMode = protocolTlsMode(protocolType);
   const isQuic = protocolType === 'HYSTERIA2' || protocolType === 'TUIC';
   return {
-    name: '', tag: '', listen: '0.0.0.0', type: 'DIRECT', protocolType, relayMode: 'BLIND_FORWARD', targetLineId: '',
+    name: '', tag: '', listen: '0.0.0.0', type: 'DIRECT', protocolType, relayMode: 'BLIND_FORWARD', targetLineId: '', upstreamNodeId: '',
     entryNodeId: '', entryPort: undefined, landingNodeId: '', landingPort: undefined,
     certificateId: MANUAL_CERTIFICATE_ID,
     transportType: 'tcp', wsPath: '/ws', wsHost: '', wsHeaders: [], wsMaxEarlyData: undefined,
@@ -352,6 +356,7 @@ export function lineToFormValues(line: ApiLine): LineFormValues {
     protocolType: line.protocolType,
     relayMode: line.relayMode ?? 'BLIND_FORWARD',
     targetLineId: line.targetLineId ?? '',
+    upstreamNodeId: line.upstreamNodeId ?? '',
     entryNodeId: line.entryNodeId,
     entryPort: line.entryPort,
     landingNodeId: line.landingNodeId ?? '',
@@ -591,7 +596,7 @@ export function buildParamsFromValues(values: LineFormValues): Record<string, un
 
 export function toLinePayload(values: LineFormValues) {
   const entryNodeId = values.entryNodeId || '';
-  const isRelayWithLanding = values.type === 'RELAY' && values.relayMode !== 'TARGET_LINE';
+  const isRelayWithLanding = values.type === 'RELAY' && values.relayMode !== 'TARGET_LINE' && values.relayMode !== 'UPSTREAM_NODE';
   const landingNodeId = isRelayWithLanding ? values.landingNodeId || null : null;
   const landingPort = isRelayWithLanding ? values.landingPort ?? null : null;
   return {
@@ -603,6 +608,7 @@ export function toLinePayload(values: LineFormValues) {
     params: buildParamsFromValues(values),
     relayMode: values.type === 'RELAY' ? values.relayMode : null,
     targetLineId: values.type === 'RELAY' && values.relayMode === 'TARGET_LINE' ? values.targetLineId || null : null,
+    upstreamNodeId: values.type === 'RELAY' && values.relayMode === 'UPSTREAM_NODE' ? values.upstreamNodeId || null : null,
     entryNodeId,
     entryPort: values.entryPort,
     landingNodeId,

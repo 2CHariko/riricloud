@@ -303,7 +303,7 @@ model Line {
   tag             String?
   listen          String   @default("0.0.0.0")
   type            String   @default("DIRECT") // DIRECT | RELAY
-  relayMode       String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE
+  relayMode       String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE | UPSTREAM_NODE
   protocolType    String   @default("VLESS") // ProtocolType
   paramsJson      String   @default("{}") // 协议专属参数 JSON；Reality 私钥按应用层 AES-GCM 加密保存
   entryNodeId     String
@@ -349,6 +349,8 @@ model Line {
   targetLine    Line? @relation("LineRelayTarget", fields: [targetLineId], references: [id], onDelete: Restrict)
   relaySources  Line[] @relation("LineRelayTarget")
   certificate   Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  upstreamNodeId String?  // UPSTREAM_NODE 模式引用的外部上游节点
+  upstreamNode  UpstreamNode? @relation(\"LineUpstreamNode\", fields: [upstreamNodeId], references: [id], onDelete: SetNull)
 
   @@index([entryNodeId])
   @@index([landingNodeId])
@@ -358,6 +360,7 @@ model Line {
   @@index([type, status])
   @@index([isPublic])
   @@index([sortOrder])
+  @@index([upstreamNodeId])
 }
 
 // ==============================
@@ -1130,3 +1133,52 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 
 - 系统在首次 `pnpm db:seed` 时自动灌入涵盖 Windows (Clash Verge Rev)、macOS (Clash Verge Rev)、iOS (Shadowrocket)、Android (Clash Meta) 及常见故障排查 (FAQ) 的 5 篇官方标准化图文教程。
 - 管理端提供 `POST /api/v1/admin/help/articles/reset-defaults` 安全重置机制，支持在文档损毁或配置错乱时一键恢复官方标准预设文档，可选择覆写冲突项或全量刷新。
+
+---\n
+## 11. 上游订阅与代理节点模型（UpstreamSubscription / UpstreamNode）\n
+上游订阅机制允许管理员导入外部任意 Mihomo (Clash Meta) YAML、Sing-box JSON 或标准 URI 订阅，解析提取外部落地代理节点，并支持三种核心落地形态：直接合并入用户客户端订阅、作为自建 VPS 中转线路的落地目标，或提取挂载为直连代理池。\n
+### 11.1 UpstreamSubscription 字段字典\n
+| 字段 | 类型 | 默认值 | 约束与说明 |
+| :--- | :--- | :--- | :--- |
+| `id` | String (UUID) | uuid() | 上游订阅记录唯一主键 |
+| `name` | String | 必填 | 订阅源名称标识（如「XX 机场主力」） |
+| `sourceType` | String | `\"URL\"` | 来源类型：`URL`（远程链接） / `TEXT`（手动粘贴快照） |
+| `format` | String | `\"AUTO\"` | 解析格式：`AUTO`（智能探测）/ `CLASH_META` / `SINGBOX` / `URI_LIST` |
+| `url` | String? | `null` | 远程拉取链接（HTTPS / HTTP） |
+| `content` | String? | `null` | 文本配置快照或最近一次拉取成功的缓存内容 |
+| `customHeadersJson` | String | `\"{}\"` | 远程拉取时的自定义 HTTP Header（如 User-Agent 等） |
+| `autoUpdate` | Boolean | `true` | 是否开启后台定时自动更新同步 |
+| `updateIntervalMins` | Int | `720` | 自动刷新间隔周期（分钟，默认 12 小时） |
+| `lastSyncAt` | DateTime? | `null` | 最近一次同步尝试时间戳 |
+| `lastSyncStatus` | String | `\"PENDING\"` | 最近同步状态：`PENDING` / `SUCCESS` / `FAILED` |
+| `lastSyncMessage` | String? | `null` | 最近同步状态详情或错误诊断信息 |
+| `userInfoUsedBytes` | BigInt? | `null` | 从 `subscription-userinfo` 响应头解析出的已用流量 |
+| `userInfoTotalBytes`| BigInt? | `null` | 从 `subscription-userinfo` 响应头解析出的总配额 |
+| `userInfoExpireAt` | DateTime? | `null` | 从 `subscription-userinfo` 响应头解析出的到期时间 |
+| `nodeCount` | Int | `0` | 当前解析包含的有效节点总数 |
+| `status` | String | `\"ACTIVE\"` | 订阅源启用状态：`ACTIVE` / `DISABLED` |
+| `createdAt` / `updatedAt` | DateTime | 自动 | 创建与更新时间戳 |\n
+### 11.2 UpstreamNode 字段字典\n
+| 字段 | 类型 | 默认值 | 约束与说明 |
+| :--- | :--- | :--- | :--- |
+| `id` | String (UUID) | uuid() | 外部节点唯一主键 |
+| `subscriptionId` | String | 必填 | 归属上游订阅源 ID，级联删除 `onDelete: Cascade` |
+| `name` | String | 必填 | 节点展示名称（如「🇭🇰 香港 01 [IEPL]」） |
+| `protocolType` | String | 必填 | 协议类型（`VLESS`, `VMESS`, `TROJAN`, `HYSTERIA2`, `TUIC`, `SHADOWSOCKS`, `SOCKS`, `HTTP` 等） |
+| `serverHost` | String | 必填 | 目标主机地址（域名或 IP） |
+| `serverPort` | Int | 必填 | 目标端口 (1~65535) |
+| `paramsJson` | String | 必填 | 归一化 Sing-box 客户端 Outbound 与连接参数 JSON |
+| `rawConfigJson` | String | 必填 | 导入时的单节点原始配置快照 |
+| `fingerprint` | String | 必填 | 节点指纹哈希（基于协议、地址、端口与鉴权计算，更新时精准 Diff Match） |
+| `tagsJson` | String | `\"[]\"` | 自动提取的地区代码标签（如 `[\"HK\"]`, `[\"US\"]`） |
+| `latencyMs` | Int? | `null` | 最近一次连通性测速握手延迟（毫秒） |
+| `lastTestedAt` | DateTime? | `null` | 最近一次测速时间 |
+| `lastTestStatus` | String? | `null` | 测速状态：`SUCCESS` / `TIMEOUT` / `ERROR` |
+| `lastTestMessage` | String? | `null` | 测速诊断详细信息 |
+| `status` | String | `\"ACTIVE\"` | 节点可用状态：`ACTIVE` / `DISABLED` |
+| `isDirectSub` | Boolean | `false` | 是否直接合并进用户客户端订阅（默认 `false`，仅作为候选节点池） |
+| `createdAt` / `updatedAt` | DateTime | 自动 | 创建与更新时间戳 |\n
+### 11.3 联动与生命周期规则\n
+1. **指纹比对与平滑更新**：定时或手动同步时，依据 `fingerprint` 识别存量节点与新节点。存量节点更新连接配置但保留原有 UUID，保障已有中转线路不中断。
+2. **失效自动停用机制**：若上游删除了某个节点，系统自动将其关联的 `Line.status` 置为 `DISABLED`，记录系统警告日志并下发 `config_sync` 安全剔除失效出站。
+3. **中继链路与出站注入**：当 `Line.relayMode === 'UPSTREAM_NODE'` 时，入口节点 Agent 会直接根据 `upstreamNode.paramsJson` 组装对应协议的 Sing-box Outbound，所有入口连接均完整通过 Agent 进行流量统计与配额计费。

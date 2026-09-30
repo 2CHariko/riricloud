@@ -175,6 +175,23 @@ func (c *Collector) Drain(maxCount int) []LogItem {
 	return out
 }
 
+// Requeue 在发送失败时将未上报成功的日志放回缓冲区头部；超出容量时丢弃最旧日志。
+func (c *Collector) Requeue(items []LogItem) {
+	if len(items) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	combined := make([]LogItem, 0, len(items)+len(c.items))
+	combined = append(combined, items...)
+	combined = append(combined, c.items...)
+	if len(combined) > c.capacity {
+		combined = append([]LogItem(nil), combined[len(combined)-c.capacity:]...)
+	}
+	c.items = combined
+}
+
 // NotifyError 返回一个通道，当发生 ERROR 日志时触发通知以支持秒级快速上报
 func (c *Collector) NotifyError() <-chan struct{} {
 	return c.notifyError
@@ -242,9 +259,15 @@ func (h *Hook) Fire(entry *logrus.Entry) error {
 
 	var metadata map[string]interface{}
 	if len(entry.Data) > 0 {
-		metadata = make(map[string]interface{}, len(entry.Data))
 		for k, v := range entry.Data {
 			if k == "source" || k == "module" {
+				continue
+			}
+			if metadata == nil {
+				metadata = make(map[string]interface{}, len(entry.Data))
+			}
+			if errVal, ok := v.(error); ok {
+				metadata[k] = errVal.Error()
 				continue
 			}
 			metadata[k] = v

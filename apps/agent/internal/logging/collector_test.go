@@ -1,6 +1,8 @@
 package logging
 
 import (
+	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -149,5 +151,66 @@ func TestCollector_PushAppliesPolicyForDirectCalls(t *testing.T) {
 	items := collector.Drain(10)
 	if len(items) != 1 || items[0].Message != "warn" {
 		t.Fatalf("direct Push should enforce normal Sing-box policy, got %+v", items)
+	}
+}
+
+func TestHook_WithErrorSerializesErrorMessage(t *testing.T) {
+	collector := NewCollector(10)
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	logger.AddHook(NewHook(collector))
+
+	logger.WithError(errors.New("dial tcp 127.0.0.1:10085: connection refused")).Warn("collect sing-box user traffic failed")
+
+	items := collector.Drain(10)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 log item, got %d", len(items))
+	}
+	if got := items[0].Metadata["error"]; got != "dial tcp 127.0.0.1:10085: connection refused" {
+		t.Fatalf("expected error string in metadata, got %#v", got)
+	}
+
+	raw, err := json.Marshal(items[0])
+	if err != nil {
+		t.Fatalf("marshal log item: %v", err)
+	}
+	var decoded struct {
+		Metadata map[string]interface{} `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal log item: %v", err)
+	}
+	if got := decoded.Metadata["error"]; got != "dial tcp 127.0.0.1:10085: connection refused" {
+		t.Fatalf("expected serialized metadata.error string, got %#v", got)
+	}
+}
+
+func TestCollector_RequeuePreservesOrderAndCapacity(t *testing.T) {
+	c := NewCollector(3)
+	c.Push(LogItem{Message: "msg1"})
+	c.Push(LogItem{Message: "msg2"})
+
+	batch := c.Drain(2)
+	c.Push(LogItem{Message: "msg3"})
+	c.Requeue(batch)
+
+	items := c.Drain(10)
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items after requeue, got %d: %+v", len(items), items)
+	}
+	if items[0].Message != "msg1" || items[1].Message != "msg2" || items[2].Message != "msg3" {
+		t.Fatalf("unexpected order after requeue: %+v", items)
+	}
+
+	// 超出容量时保留最新条目（丢弃最旧条目）
+	c.Push(LogItem{Message: "msg4"})
+	c.Push(LogItem{Message: "msg5"})
+	c.Requeue([]LogItem{{Message: "old1"}, {Message: "old2"}})
+	bounded := c.Drain(10)
+	if len(bounded) != 3 {
+		t.Fatalf("expected capacity 3, got %d: %+v", len(bounded), bounded)
+	}
+	if bounded[0].Message != "old2" || bounded[1].Message != "msg4" || bounded[2].Message != "msg5" {
+		t.Fatalf("unexpected bounded items after overflow requeue: %+v", bounded)
 	}
 }

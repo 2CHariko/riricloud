@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useLocation } from 'react-router-dom';
+import type { ApiUpstreamNode } from '@/lib/api';
 import { Activity, ArrowDown, ArrowUp, Copy, GitBranch, HelpCircle, Pencil, Plus, Search, Trash2, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PageContainer, PageHeader } from '@/components/shared/page-container';
@@ -35,6 +37,17 @@ export default function AdminLinesPage() {
   const [editing, setEditing] = React.useState<AdminLine | null>(null);
   const [deleting, setDeleting] = React.useState<AdminLine | null>(null);
   const [speedtestingLine, setSpeedtestingLine] = React.useState<AdminLine | null>(null);
+  const [initialUpstreamNode, setInitialUpstreamNode] = React.useState<ApiUpstreamNode | null>(null);
+  const location = useLocation();
+  React.useEffect(() => {
+    const state = location.state as { createUpstreamNode?: ApiUpstreamNode } | undefined;
+    if (state?.createUpstreamNode) {
+      setEditing(null);
+      setInitialUpstreamNode(state.createUpstreamNode);
+      setFormOpen(true);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const typeLabels: Record<LineType, string> = {
     DIRECT: t('admin:lines.typeDirect'),
@@ -43,13 +56,17 @@ export default function AdminLinesPage() {
   const relayLabels: Record<RelayMode, string> = {
     BLIND_FORWARD: t('admin:lines.relayBlindForward'),
     PROTOCOL_PROXY: t('admin:lines.relayProtocolProxy'),
-    TARGET_LINE: t('admin:lines.relayTargetBridge')
+    TARGET_LINE: t('admin:lines.relayTargetBridge'),
+    UPSTREAM_NODE: t('admin:lines.relayUpstreamNode')
   };
 
   function relayDescription(line: AdminLine) {
     if (line.relayMode === 'TARGET_LINE' && line.targetLine) {
       const targetPort = line.topology.landing?.port ?? line.targetLine.entryPort;
       return `${t('admin:lines.relayTargetBridge')} ➔ [${line.targetLine.entryNode.name}] ${line.targetLine.protocolType}:${targetPort}`;
+    }
+    if (line.relayMode === 'UPSTREAM_NODE' && line.topology.landing?.node) {
+      return `${t('admin:lines.relayUpstreamNode')} ➔ ${line.topology.landing.node.name}`;
     }
     return line.relayMode ? relayLabels[line.relayMode] : '';
   }
@@ -256,7 +273,7 @@ export default function AdminLinesPage() {
           )}
         </CardContent>
       </Card>
-      <LineFormDialog open={formOpen} onOpenChange={setFormOpen} line={editing} nodes={nodes ?? []} lines={lines} certificates={certificates?.data ?? []} pending={busy} onSubmit={(payload) => editing ? update.mutate({ id: editing.id, ...payload }, { onSuccess: () => setFormOpen(false) }) : create.mutate(payload, { onSuccess: () => setFormOpen(false) })} />
+      <LineFormDialog open={formOpen} onOpenChange={(open) => { setFormOpen(open); if (!open) setInitialUpstreamNode(null); }} line={editing} initialUpstreamNode={initialUpstreamNode} nodes={nodes ?? []} lines={lines} certificates={certificates?.data ?? []} pending={busy} onSubmit={(payload) => editing ? update.mutate({ id: editing.id, ...payload }, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } }) : create.mutate(payload, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } })} />
       <LineSpeedtestDialog open={!!speedtestingLine} onOpenChange={(open) => !open && setSpeedtestingLine(null)} line={speedtestingLine} />
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>

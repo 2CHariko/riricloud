@@ -75,6 +75,8 @@ Linux 开发机使用系统环境安装 Node.js、pnpm 与 Go，不在仓库内�
 
 **2026-09-10 补充 — `multer` 传递依赖强制升级**：新披露 3 条 High DoS advisory（`GHSA-wc9g-mqfw-jrwm`、`GHSA-qfvm-cv95-jqjf`、`GHSA-535w-7cp7-47q4`）影响 `multer@2.2.0`，该版本经 `@nestjs/platform-express -> multer` 传递进入主控的上传链路。由于 `@nestjs/platform-express` 11.x 最新版（11.2.3）仍精确依赖 `multer@2.2.0`，在 **NestJS 11 内无版本可升**，因此在根 `package.json` 的 `pnpm.overrides` 中强制 `multer: 2.3.0`（advisory 声明的已修复版本），并随 `pnpm-lock.yaml` 一并锁定。该 override 属**临时安全锁定**：当 `@nestjs/platform-express` 自行依赖 `multer>=2.3.0`（或升级到 NestJS 12 时）必须移除本项，避免长期漂移；`pnpm audit --audit-level high` 已恢复通过（仅剩上方已登记的忽略项）。
 
+**2026-09-30 补充 — `nodemailer` / `multer` / `fast-uri` / `brace-expansion` / `js-yaml` 安全补丁锁定**：针对新披露的 High/Moderate advisory（`GHSA-v53p-9fqp-m79j`、`GHSA-qw65-cvwx-89v3`、`GHSA-58mr-gqgx-xq4g`、`GHSA-qhr7-859c-m2p7`、`GHSA-6j4f-fj2g-mc7p` 等），在根 `package.json` 的 `pnpm.overrides` 中将 `multer` 升至 `>=2.4.0`、`nodemailer` 升至 `>=10.0.9`、`fast-uri@>=3.0.0 <3.1.7` 升至 `>=3.1.7`、`brace-expansion` 各主版本分别锁定至 `1.1.21` / `2.1.7` / `5.0.12`、`js-yaml@>=5.0.0 <=5.4.0` 升至 `>=5.4.1`，并同步更新 `pnpm-lock.yaml`，使 `pnpm audit --audit-level high` 持续保持零未评估高危漏洞。
+
 ---
 
 ## 4. 边缘节点技术栈详解 (`apps/agent`)

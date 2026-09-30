@@ -980,7 +980,7 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
         type: 'vless',
         server: serverHost,
         port,
-        uuid: user.uuid,
+        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
         network: transport === 'httpupgrade' ? 'ws' : transport,
         udp: true
       };
@@ -1023,7 +1023,7 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
         type: 'vmess',
         server: serverHost,
         port,
-        uuid: user.uuid,
+        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
         alterId: p.alterId || 0,
         cipher: 'auto',
         network: transport === 'httpupgrade' ? 'ws' : transport,
@@ -1054,7 +1054,7 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
         type: 'trojan',
         server: serverHost,
         port,
-        password: user.credential,
+        password: (p as unknown as { password?: string }).password || user.credential,
         udp: true,
         network: transport === 'httpupgrade' ? 'ws' : transport
       };
@@ -1077,7 +1077,7 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
         type: 'hysteria2',
         server: serverHost,
         port,
-        password: user.credential,
+        password: (p as unknown as { password?: string }).password || user.credential,
         sni: effectiveServerName(entry, p.tls?.serverName) || '',
         'skip-cert-verify': p.tls?.insecure ?? false,
         alpn: p.tls?.alpn ? [...p.tls.alpn] : ['h3'],
@@ -1139,8 +1139,8 @@ function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown
         type: 'tuic',
         server: serverHost,
         port,
-        uuid: user.uuid,
-        password: user.credential,
+        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
+        password: (p as unknown as { password?: string }).password || user.credential,
         sni: effectiveServerName(entry, p.tls?.serverName) || '',
         'skip-cert-verify': p.tls?.insecure ?? false,
         alpn: p.tls?.alpn ? [...p.tls.alpn] : ['h3'],
@@ -1259,7 +1259,7 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         tag: entry.label,
         server: serverHost,
         server_port: port,
-        uuid: user.uuid
+        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid
       };
 
       const clientTls = buildClientTls(tls, effectiveServerName(entry));
@@ -1287,7 +1287,7 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         tag: entry.label,
         server: serverHost,
         server_port: port,
-        uuid: user.uuid,
+        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
         alter_id: p.alterId || 0,
         security: 'auto'
       };
@@ -1312,7 +1312,7 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         tag: entry.label,
         server: serverHost,
         server_port: port,
-        password: user.credential
+        password: (p as unknown as { password?: string }).password || user.credential
       };
 
       const clientTls = buildClientTls(tls, effectiveServerName(entry));
@@ -1332,7 +1332,7 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         tag: entry.label,
         server: serverHost,
         server_port: port,
-        password: user.credential,
+        password: (p as unknown as { password?: string }).password || user.credential,
         ...(p.upMbps && p.upMbps > 0 ? { up_mbps: p.upMbps } : {}),
         ...(p.downMbps && p.downMbps > 0 ? { down_mbps: p.downMbps } : {}),
         ...(p.obfs ? { obfs: p.obfs } : {})
@@ -1381,8 +1381,8 @@ export function buildSingboxOutbound(user: SubUser, entry: SubEntry): Record<str
         tag: entry.label,
         server: serverHost,
         server_port: port,
-        uuid: user.uuid,
-        password: user.credential,
+        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
+        password: (p as unknown as { password?: string }).password || user.credential,
         congestion_control: p.congestionControl || 'bbr',
         ...(p.zeroRttHandshake ? { zero_rtt_handshake: true } : {})
       };

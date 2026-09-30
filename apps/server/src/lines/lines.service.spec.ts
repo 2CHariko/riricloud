@@ -132,6 +132,39 @@ describe('LinesService', () => {
     expect(prisma.line.create).not.toHaveBeenCalled();
   });
 
+  it('双栈入站（SHADOWSOCKS 或盲转发入口）与 UDP 协议（HYSTERIA2）同端口时拒绝创建', async () => {
+    prisma.line.findMany.mockResolvedValue([
+      {
+        protocolType: 'HYSTERIA2',
+        type: 'DIRECT',
+        relayMode: null,
+        entryNodeId: entryNode.id,
+        entryPort: 21514,
+        landingNodeId: null,
+        landingPort: null
+      }
+    ]);
+    await expect(service.create({
+      name: 'Shadowsocks 冲突',
+      protocolType: 'SHADOWSOCKS',
+      entryNodeId: entryNode.id,
+      entryPort: 21514
+    })).rejects.toThrow(ConflictException);
+
+    await expect(service.create({
+      name: '盲转发入口冲突',
+      type: 'RELAY',
+      relayMode: 'BLIND_FORWARD',
+      protocolType: 'VLESS',
+      entryNodeId: entryNode.id,
+      entryPort: 21514,
+      landingNodeId: exitNode.id,
+      landingPort: 25002
+    })).rejects.toThrow(ConflictException);
+
+    expect(prisma.line.create).not.toHaveBeenCalled();
+  });
+
   it('同节点中继线路不得复用相同的入口和落地端口', async () => {
     await expect(service.create({
       name: '同节点盲转',

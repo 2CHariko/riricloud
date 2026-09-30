@@ -66,6 +66,10 @@ export class UpdateLineDto {
   @IsUUID()
   @IsOptional()
   targetLineId?: string | null;
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'UPSTREAM_NODE 中继模式引用的外部上游节点' })
+  @IsUUID()
+  @IsOptional()
+  upstreamNodeId?: string | null;
 
   @ApiPropertyOptional({ minimum: 1, maximum: 65535, nullable: true, description: '中继落地监听端口' })
   @Type(() => Number)
