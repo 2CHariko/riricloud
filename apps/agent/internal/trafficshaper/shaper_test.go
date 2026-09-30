@@ -42,6 +42,9 @@ func TestShaperLinuxExecution(t *testing.T) {
 	shaper := New(newTestLogger())
 	shaper.goos = "linux"
 	shaper.SetInterface("eth0")
+	shaper.lookPath = func(file string) (string, error) {
+		return "/sbin/tc", nil
+	}
 
 	var mu sync.Mutex
 	var executed []string
@@ -52,24 +55,38 @@ func TestShaperLinuxExecution(t *testing.T) {
 		return []byte("ok"), nil
 	}
 
-	// 注入自定义 LookPath 行为
-	// 由于我们直接测试 runner 执行流，在 linux 上验证命令构造
-	err := shaper.Sync(map[int]int{8443: 50, 443: 100})
+	// 包含常规端口 (443, 8443)、大端口号 (>9999: 21514 -> 0x540a) 及与默认类 0x999 冲突的端口 (2457 -> 0xfffe)
+	err := shaper.Sync(map[int]int{8443: 50, 443: 100, 21514: 200, 2457: 30})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 如果系统中没有 tc 二进制，LookPath 会平滑跳过
-	// 如果有 tc 二进制，验证 qdisc 与 class
 	mu.Lock()
 	cmds := append([]string(nil), executed...)
 	mu.Unlock()
 
-	// 无论本地系统是否存在 tc 二进制，Sync 均必须平滑退出
+	joined := strings.Join(cmds, "\n")
+	expectedSnippets := []string{
+		"tc qdisc add dev eth0 root handle 1: htb default 999",
+		"tc class add dev eth0 parent 1: classid 1:999 htb rate 10000mbit",
+		"tc class add dev eth0 parent 1: classid 1:1bb htb rate 100mbit ceil 100mbit",
+		"tc class add dev eth0 parent 1: classid 1:fffe htb rate 30mbit ceil 30mbit",
+		"tc class add dev eth0 parent 1: classid 1:20fb htb rate 50mbit ceil 50mbit",
+		"tc class add dev eth0 parent 1: classid 1:540a htb rate 200mbit ceil 200mbit",
+		"tc filter add dev eth0 protocol ip parent 1: prio 1 u32 match ip sport 21514 0xffff flowid 1:540a",
+	}
+	for _, snippet := range expectedSnippets {
+		if !strings.Contains(joined, snippet) {
+			t.Fatalf("expected command %q in executed commands:\n%s", snippet, joined)
+		}
+	}
+	if strings.Contains(joined, "classid 1:21514") {
+		t.Fatalf("must not use decimal classid for port > 9999:\n%s", joined)
+	}
+
 	if err := shaper.Cleanup(); err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
-	_ = cmds
 }
 
 func TestShaperMockCommands(t *testing.T) {
@@ -102,7 +119,9 @@ func TestShaperPermissionDenied(t *testing.T) {
 	shaper := New(newTestLogger())
 	shaper.goos = "linux"
 	shaper.SetInterface("eth0")
-
+	shaper.lookPath = func(file string) (string, error) {
+		return "/sbin/tc", nil
+	}
 	shaper.runner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "add" {
 			return []byte("RTNETLINK answers: Operation not permitted"), errors.New("exit status 2")

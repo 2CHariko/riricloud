@@ -123,7 +123,7 @@ export function useLineMutations() {
     onError: (error: unknown) => onError(error, i18n.t('admin:lines.reorderFailed'))
   });
   const speedtest = useMutation({
-    mutationFn: async (id: string) => (await api.post<SpeedTestExecutionResult>(`/admin/lines/${id}/speedtest`)).data,
+    mutationFn: async (id: string) => (await api.post<SpeedTestExecutionResult>(`/admin/lines/${id}/speedtest`, {}, { timeout: 45_000 })).data,
     onSuccess: (data) => {
       if (data.status === 'SUCCESS') {
         toast.success(i18n.t('admin:lines.speedtestSuccess', { latency: data.latencyMs ?? '—' }));
@@ -135,7 +135,7 @@ export function useLineMutations() {
     onError: (error: unknown) => onError(error, i18n.t('admin:lines.speedtestRequestFailed'))
   });
   const speedtestAll = useMutation({
-    mutationFn: async () => (await api.post<{ total: number; success: number; failed: number }>('/admin/lines/speedtest-all')).data,
+    mutationFn: async () => (await api.post<{ total: number; success: number; failed: number }>('/admin/lines/speedtest-all', {}, { timeout: 120_000 })).data,
     onSuccess: (data) => {
       toast.success(i18n.t('admin:lines.speedtestAllSuccess', { total: data.total, success: data.success, failed: data.failed }));
       invalidate();

@@ -30,6 +30,13 @@
   - 补齐 `apps/server/prisma/migrations/20260930120000_upstream_subscriptions_and_nodes` 数据库迁移脚本，解决联调库 `dev-e2e.db` 执行 `prisma migrate deploy` 时的表结构同步阻断；
   - 修复 `builders.ts` 中 Shadowsocks 节点在 `multi-user` 模式下直接读取 master key 导致无法为用户派生专属凭证的缺陷；
   - 修复前端 `admin.ts` 国际化字典闭合语法错误与上游订阅弹窗的表单重置钩子规范（采用 `useFormResetOnKey`）。
+- **修复 Agent 日志上报协程泄漏与递归刷屏、TC 限速五位端口溢出及双栈线路端口冲突校验**：
+  - 修复 Agent WS 重连时 `logFlushLoop` / `heartbeatLoop` 协程未随单次连接断开退出导致的协程泄漏、旧连接写失败告警及递归日志循环，并在 WS/HTTP 轮询发送失败时将已取出的日志重入队至环形缓冲区；
+  - 修复 Agent `trafficshaper` 在端口大于 `9999` 时将十进制端口号直接拼入 `tc` 十六进制 `classid` 导致 `exit status 255` 失败的问题，改为 `1:%x` 十六进制类 ID 并规避默认类 `1:999`（端口 `2457`）冲突；
+  - 修复 Agent 日志采集器 `Hook.Fire` 中 Go `error` 接口值被 JSON 序列化为空对象 `{}` 的问题，统一转换为可读错误字符串；
+  - 将 Sing-box QUIC/Hysteria2 正常流关闭日志（`canceled by remote/local with error code 0`）识别为 `ACCESS` 并降级为 `INFO`，消除常规模式下的误报 WARN 噪音；
+  - 升级主控端 `LinesService` 端口冲突校验为按 TCP/UDP 传输层重叠判定，将 `SHADOWSOCKS`、`DIRECT` 与 `BLIND_FORWARD` 盲转发入口均识别为 TCP+UDP 双栈占用，阻断与同节点同端口 `HYSTERIA2`/`TUIC` 的 UDP 绑定冲突；
+  - 调高前端单条线路测速（`45s`）与全量批量测速（`120s`）的客户端 HTTP 超时预算，防止高延迟或慢速回退链路在服务端返回完整阶段诊断报告前被前端提前中断。
 
 
 ## [0.9.9] - 2026-09-29

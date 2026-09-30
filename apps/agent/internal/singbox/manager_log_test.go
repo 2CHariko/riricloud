@@ -25,6 +25,7 @@ func TestClassifySingboxOutput(t *testing.T) {
 		{name: "debug", line: "DEBUG trace details", wantLevel: logrus.DebugLevel, wantText: "DEBUG trace details", wantCategory: "EVENT", wantRaw: "DEBUG"},
 		{name: "trace", line: "TRACE trace details", wantLevel: logrus.DebugLevel, wantText: "TRACE trace details", wantCategory: "EVENT", wantRaw: "TRACE"},
 		{name: "access", line: "INFO accepted connection from 192.0.2.10", wantLevel: logrus.InfoLevel, wantText: "INFO accepted connection from 192.0.2.10", wantCategory: "ACCESS", wantRaw: "INFO"},
+		{name: "benign stream cancel code 0", line: "ERROR[0012.345] [12345 10ms] inbound/hysteria2[line-1]: stream 4 canceled by remote with error code 0", wantLevel: logrus.InfoLevel, wantText: "ERROR [12345 10ms] inbound/hysteria2[line-1]: stream 4 canceled by remote with error code 0", wantCategory: "ACCESS", wantRaw: "ERROR"},
 		{name: "unknown stderr fallback", line: "kernel emitted an unclassified line", wantLevel: logrus.InfoLevel, wantText: "kernel emitted an unclassified line", wantCategory: "EVENT", wantRaw: ""},
 	}
 
@@ -59,5 +60,19 @@ func TestLogSingboxOutputStderrInfoIsNotUpgraded(t *testing.T) {
 	}
 	if items[0].Level != "INFO" || items[0].Metadata["stream"] != "stderr" {
 		t.Fatalf("stderr metadata or level mismatch: %+v", items[0])
+	}
+}
+
+func TestLogSingboxOutputBenignStreamCancelFilteredInNormalMode(t *testing.T) {
+	collector := logging.NewCollector(10)
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	logger.SetLevel(logrus.TraceLevel)
+	logger.AddHook(logging.NewHook(collector))
+	manager := &Manager{log: logrus.NewEntry(logger)}
+
+	manager.logSingboxOutput("ERROR[0012.345] inbound/hysteria2[line-1]: stream 4 canceled by remote with error code 0", true)
+	if items := collector.Drain(10); len(items) != 0 {
+		t.Fatalf("benign stream cancel with error code 0 must be filtered in normal mode, got %+v", items)
 	}
 }

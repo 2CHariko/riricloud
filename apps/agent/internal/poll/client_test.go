@@ -1,9 +1,17 @@
 package poll
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/sirupsen/logrus"
+
+	"github.com/Nanako660/riricloud/apps/agent/internal/logging"
 	"github.com/Nanako660/riricloud/apps/agent/internal/protocol"
 )
 
@@ -78,5 +86,28 @@ func TestPollPayloadIncludesLogCapabilities(t *testing.T) {
 	}
 	if len(capabilities) != 3 || capabilities[1] != "singbox_log_capture" || capabilities[2] != "agent_log_rotation" {
 		t.Fatalf("unexpected capabilities: %#v", capabilities)
+	}
+}
+
+func TestPollOnceRequeuesLogsOnRequestFailure(t *testing.T) {
+	collector := logging.NewCollector(20)
+	collector.Push(logging.LogItem{Source: "AGENT", Level: "INFO", Module: "Agent", Message: "buffered before failure"})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	client := NewClient(srv.URL, "token-1", 5*time.Second, nil, nil, "0.8.5", "linux/amd64", logrus.NewEntry(logger), nil, collector)
+
+	if err := client.pollOnce(context.Background()); err == nil {
+		t.Fatal("expected pollOnce to fail on HTTP 502")
+	}
+
+	retained := collector.Drain(20)
+	if len(retained) != 1 || retained[0].Message != "buffered before failure" {
+		t.Fatalf("expected logs to be requeued after failed poll, got %+v", retained)
 	}
 }

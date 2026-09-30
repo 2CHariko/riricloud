@@ -484,6 +484,7 @@ var singboxLevelPattern = regexp.MustCompile(`(?i)\b(DEBUG|TRACE|INFO|WARN(?:ING
 var singboxLevelRuntimePrefix = regexp.MustCompile(`(?i)^((?:DEBUG|TRACE|INFO|WARN(?:ING)?|ERROR|FATAL|PANIC))\s*\[[0-9:.+\-]+\]\s*`)
 var singboxLeadingTimestamp = regexp.MustCompile(`^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.+\-Z]+|[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?)\s+`)
 var singboxAccessPattern = regexp.MustCompile(`(?i)(accepted|inbound.*connection|outbound.*connection|connection.*closed|dial(?:ing)?|destination=|request.*(?:tcp|udp|http|https))`)
+var singboxBenignStreamCancelPattern = regexp.MustCompile(`(?i)\bcanceled by (?:remote|local) with error code 0\b`)
 
 func fileFingerprint(binaryPath string) string {
 	info, err := os.Stat(binaryPath)
@@ -1163,7 +1164,10 @@ func classifySingboxOutput(line string) (logrus.Level, string, string, string) {
 		level = logrus.ErrorLevel
 	}
 	category := "EVENT"
-	if singboxAccessPattern.MatchString(message) {
+	if singboxBenignStreamCancelPattern.MatchString(message) {
+		category = "ACCESS"
+		level = logrus.InfoLevel
+	} else if singboxAccessPattern.MatchString(message) {
 		category = "ACCESS"
 	}
 	return level, message, category, rawLevel

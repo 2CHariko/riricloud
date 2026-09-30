@@ -23,6 +23,8 @@ func defaultCommandRunner(ctx context.Context, name string, args ...string) ([]b
 	return cmd.CombinedOutput()
 }
 
+const defaultClassMinor = 0x999
+
 // Shaper 负责纳管基于 Linux tc (Traffic Control) 的物理端口限速
 type Shaper struct {
 	mu           sync.Mutex
@@ -30,6 +32,7 @@ type Shaper struct {
 	iface        string
 	activeLimits map[int]int
 	runner       CommandRunner
+	lookPath     func(string) (string, error)
 	goos         string
 }
 
@@ -39,6 +42,7 @@ func New(log *logrus.Entry) *Shaper {
 		log:          log.WithField("subsystem", "trafficshaper"),
 		activeLimits: make(map[int]int),
 		runner:       defaultCommandRunner,
+		lookPath:     exec.LookPath,
 		goos:         runtime.GOOS,
 	}
 }
@@ -105,7 +109,11 @@ func (s *Shaper) Sync(portLimits map[int]int) error {
 	}
 
 	// 检查 tc 命令是否存在
-	if _, err := exec.LookPath("tc"); err != nil {
+	lookPath := s.lookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	if _, err := lookPath("tc"); err != nil {
 		s.log.Warn("tc binary not found in PATH, skipping traffic shaping")
 		s.activeLimits = validLimits
 		return nil
@@ -145,12 +153,17 @@ func (s *Shaper) Sync(portLimits map[int]int) error {
 		ports = append(ports, p)
 	}
 	sort.Ints(ports)
+	usedMinor := map[int]bool{defaultClassMinor: true}
+	for _, port := range ports {
+		if port != defaultClassMinor {
+			usedMinor[port] = true
+		}
+	}
 
 	for _, port := range ports {
 		mbps := validLimits[port]
-		classID := fmt.Sprintf("1:%d", port)
+		classID := portClassID(port, usedMinor)
 		rateStr := fmt.Sprintf("%dmbit", mbps)
-
 		// 创建端口 class
 		if out, err := s.runner(context.Background(), "tc", "class", "add", "dev", iface, "parent", "1:", "classid", classID, "htb", "rate", rateStr, "ceil", rateStr); err != nil {
 			s.log.Warnf("tc class add for port %d failed: %v (%s)", port, err, strings.TrimSpace(string(out)))
@@ -188,4 +201,19 @@ func (s *Shaper) Cleanup() error {
 	}
 	s.activeLimits = make(map[int]int)
 	return nil
+}
+
+// portClassID 将端口号映射为合法的 16 位十六进制 tc classid（1:1 ~ 1:ffff），并避开默认类 1:999。
+func portClassID(port int, usedMinor map[int]bool) string {
+	minor := port
+	if minor <= 0 || minor > 0xffff || minor == defaultClassMinor {
+		for candidate := 0xfffe; candidate >= 1; candidate-- {
+			if !usedMinor[candidate] {
+				minor = candidate
+				break
+			}
+		}
+	}
+	usedMinor[minor] = true
+	return fmt.Sprintf("1:%x", minor)
 }

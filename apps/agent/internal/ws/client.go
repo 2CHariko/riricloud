@@ -309,29 +309,39 @@ func (c *Client) runOnce(ctx context.Context) error {
 	authed = true
 	c.log.WithField("nodeId", auth.NodeID).Info("authenticated")
 
-	// 读取循环（含 config_sync）；心跳与日志上报独立 goroutine，ctx 退出
+	// 读取循环（含 config_sync）；心跳与日志上报绑定单次连接上下文 connCtx，连接结束时确保全部退出
+	connCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	errCh := make(chan error, 3)
+	var wg sync.WaitGroup
+	wg.Add(3)
 	go func() {
-		errCh <- c.readLoop(ctx, conn)
+		defer wg.Done()
+		errCh <- c.readLoop(connCtx, conn)
 	}()
 	go func() {
-		errCh <- c.heartbeatLoop(ctx, conn)
+		defer wg.Done()
+		errCh <- c.heartbeatLoop(connCtx, conn)
 	}()
 	go func() {
-		errCh <- c.logFlushLoop(ctx, conn)
+		defer wg.Done()
+		errCh <- c.logFlushLoop(connCtx, conn)
 	}()
 
+	var runErr error
 	select {
 	case <-ctx.Done():
-		conn.Close()
-		return nil
 	case err := <-errCh:
-		conn.Close()
-		if err != nil && authed {
-			return err
-		}
-		return err
+		runErr = err
 	}
+	cancel()
+	_ = conn.Close()
+	wg.Wait()
+	if runErr != nil && authed {
+		return runErr
+	}
+	return runErr
 }
 
 // readLoop 持续读取服务端消息；升级与探针任务在该连接的可取消上下文中执行。
@@ -517,7 +527,7 @@ func (c *Client) handleUpgrade(parent context.Context, conn *websocket.Conn, tas
 	if err != nil {
 		c.log.WithError(err).Warn("upgrade task failed")
 		c.sendUpgradeResult(conn, task, false, err.Error())
-		c.sendLogReport(conn, []agentLogItem{{
+		_ = c.sendLogReport(conn, []agentLogItem{{
 			Level:   "ERROR",
 			Module:  "Upgrade",
 			Source:  "AGENT",
@@ -526,7 +536,7 @@ func (c *Client) handleUpgrade(parent context.Context, conn *websocket.Conn, tas
 		return
 	}
 	c.sendUpgradeResult(conn, task, true, "ok")
-	c.sendLogReport(conn, []agentLogItem{{
+	_ = c.sendLogReport(conn, []agentLogItem{{
 		Level:   "INFO",
 		Module:  "Upgrade",
 		Source:  "AGENT",
@@ -559,7 +569,7 @@ func (c *Client) upgradeSelf(ctx context.Context, task upgradeTask) error {
 func (c *Client) restartSelf(conn *websocket.Conn) {
 	if err := c.restart.RestartAndExit(); err != nil {
 		c.log.WithError(err).Error("agent restart failed")
-		c.sendLogReport(conn, []agentLogItem{{
+		_ = c.sendLogReport(conn, []agentLogItem{{
 			Level:   "ERROR",
 			Module:  "Upgrade",
 			Source:  "AGENT",
@@ -627,8 +637,19 @@ func (c *Client) heartbeatLoop(ctx context.Context, conn *websocket.Conn) error 
 		case <-ticker.C:
 			// 采集含 1 秒采样窗口，放行到 goroutine 避免阻塞 ticker
 			sample := telemetry.Collect()
-			kernel := c.singboxMgr.Status()
-			trafficSnapshots, err := c.traffic.Collect(ctx, c.singboxMgr.StatsAddress())
+			var kernel singbox.Status
+			var statsAddr string
+			var supportsClash bool
+			if c.singboxMgr != nil {
+				kernel = c.singboxMgr.Status()
+				statsAddr = c.singboxMgr.StatsAddress()
+				supportsClash = c.singboxMgr.SupportsClashAPI()
+			}
+			var trafficSnapshots []trafficstats.Record
+			var err error
+			if c.traffic != nil && statsAddr != "" {
+				trafficSnapshots, err = c.traffic.Collect(ctx, statsAddr)
+			}
 			if err != nil {
 				now := time.Now()
 				if now.Sub(c.lastTrafficErrAt) >= time.Minute {
@@ -639,7 +660,7 @@ func (c *Client) heartbeatLoop(ctx context.Context, conn *websocket.Conn) error 
 				}
 			}
 			capabilities := []string{"mirror_proxy", "singbox_log_capture", "agent_log_rotation"}
-			if c.singboxMgr.SupportsClashAPI() {
+			if supportsClash {
 				capabilities = append(capabilities, "device_tracking")
 			}
 			payload := heartbeatData{
@@ -703,20 +724,29 @@ func (c *Client) logFlushLoop(ctx context.Context, conn *websocket.Conn) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	flush := func() error {
+		logs := c.logCollector.Drain(50)
+		if len(logs) == 0 {
+			return nil
+		}
+		if err := c.sendLogReport(conn, logs); err != nil {
+			c.logCollector.Requeue(logs)
+			return fmt.Errorf("send log_report: %w", err)
+		}
+		return nil
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			if remaining := c.logCollector.Drain(50); len(remaining) > 0 {
-				c.sendLogReport(conn, remaining)
-			}
 			return nil
 		case <-ticker.C:
-			if logs := c.logCollector.Drain(50); len(logs) > 0 {
-				c.sendLogReport(conn, logs)
+			if err := flush(); err != nil {
+				return err
 			}
 		case <-c.logCollector.NotifyError():
-			if logs := c.logCollector.Drain(50); len(logs) > 0 {
-				c.sendLogReport(conn, logs)
+			if err := flush(); err != nil {
+				return err
 			}
 		}
 	}
@@ -768,15 +798,21 @@ func (c *Client) sendRestartResult(conn *websocket.Conn, taskID string, success 
 	c.sendFrame(conn, "restart_agent_result", data)
 }
 
-func (c *Client) sendLogReport(conn *websocket.Conn, logs []agentLogItem) {
+func (c *Client) sendLogReport(conn *websocket.Conn, logs []agentLogItem) error {
 	if len(logs) == 0 {
-		return
+		return nil
 	}
 	data, err := json.Marshal(logReportData{Logs: logs})
 	if err != nil {
-		return
+		return err
 	}
-	c.sendFrame(conn, "log_report", data)
+	frame, err := json.Marshal(message{Type: "log_report", Data: data})
+	if err != nil {
+		return err
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return conn.WriteMessage(websocket.TextMessage, frame)
 }
 
 func (c *Client) sendMirrorHeaders(conn *websocket.Conn, headers mirrorResponseHeaders) error {
