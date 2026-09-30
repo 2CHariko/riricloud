@@ -124,10 +124,13 @@ proxies:
       expect(trojan.name).toBe('🇸🇬 新加坡 01 [Trojan]');
       expect(trojan.protocolType).toBe('TROJAN');
       expect(trojan.serverHost).toBe('sg.example.com');
+      expect((trojan.params.tls as { serverName?: string })?.serverName).toBe('sg.example.com');
       expect(trojan.tags).toContain('SG');
 
       expect(tuic.name).toBe('🇹🇼 台湾 01 [TUIC]');
       expect(tuic.protocolType).toBe('TUIC');
+      expect(tuic.params.congestionControl).toBe('bbr');
+      expect(tuic.params).not.toHaveProperty('congestion_control');
       expect(tuic.tags).toContain('TW');
     });
   });

@@ -110,6 +110,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
       include: {
         entryNode: true,
         landingNode: true,
+        upstreamNode: true,
         targetLine: {
           include: {
             entryNode: true,
@@ -143,7 +144,16 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
         landingPort = line.landingPort ?? null;
       } else if (hasLandingOverride) {
         landingHost = line.landingServerHost!.trim();
-        landingPort = line.landingServerPort ?? (line.relayMode === 'TARGET_LINE' ? (line.targetLine?.entryPort ?? null) : (line.landingPort ?? null));
+        landingPort = line.landingServerPort ?? (
+          line.relayMode === 'TARGET_LINE'
+            ? (line.targetLine?.entryPort ?? null)
+            : line.relayMode === 'UPSTREAM_NODE'
+              ? (line.upstreamNode?.serverPort ?? null)
+              : (line.landingPort ?? null)
+        );
+      } else if (line.relayMode === 'UPSTREAM_NODE' && line.upstreamNode) {
+        landingHost = line.upstreamNode.serverHost;
+        landingPort = line.upstreamNode.serverPort;
       } else if (line.relayMode === 'TARGET_LINE' && line.targetLine) {
         landingHost = (line.targetLine.endpointOverrideEnabled && line.targetLine.serverHost)
           ? line.targetLine.serverHost.trim()
@@ -168,21 +178,28 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
         port: serverPort
       },
       landingNode: isRelay
-        ? (line.relayMode === 'TARGET_LINE' && line.targetLine
+        ? (line.relayMode === 'UPSTREAM_NODE' && line.upstreamNode
             ? {
-                id: line.targetLine.entryNode.id,
-                name: line.targetLine.entryNode.name,
-                host: landingHost ?? line.targetLine.entryNode.serverHost,
-                port: landingPort ?? line.targetLine.entryPort
+                id: line.upstreamNode.id,
+                name: `[上游] ${line.upstreamNode.name}`,
+                host: landingHost ?? line.upstreamNode.serverHost,
+                port: landingPort ?? line.upstreamNode.serverPort
               }
-            : line.landingNode
+            : line.relayMode === 'TARGET_LINE' && line.targetLine
               ? {
-                  id: line.landingNode.id,
-                  name: line.landingNode.name,
-                  host: landingHost ?? line.landingNode.serverHost,
-                  port: landingPort ?? line.landingPort
+                  id: line.targetLine.entryNode.id,
+                  name: line.targetLine.entryNode.name,
+                  host: landingHost ?? line.targetLine.entryNode.serverHost,
+                  port: landingPort ?? line.targetLine.entryPort
                 }
-              : null)
+              : line.landingNode
+                ? {
+                    id: line.landingNode.id,
+                    name: line.landingNode.name,
+                    host: landingHost ?? line.landingNode.serverHost,
+                    port: landingPort ?? line.landingPort
+                  }
+                : null)
         : null
     };
 
@@ -252,7 +269,37 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     let relayOk = true;
     let relayErrMessage = '';
     if (isRelay) {
-      if (line.relayMode === 'TARGET_LINE') {
+      if (line.relayMode === 'UPSTREAM_NODE') {
+        if (!line.upstreamNode) {
+          relayOk = false;
+          relayErrMessage = '未配置或找不到引用的上游节点';
+          stages.push({
+            id: 'relay_transit',
+            name: '外部上游落地',
+            target: '未绑定上游节点',
+            status: 'FAILED',
+            message: relayErrMessage
+          });
+        } else if (line.upstreamNode.status !== 'ACTIVE') {
+          relayOk = false;
+          relayErrMessage = `引用的上游节点 [${line.upstreamNode.name}] 未启用 (${line.upstreamNode.status})`;
+          stages.push({
+            id: 'relay_transit',
+            name: '外部上游落地',
+            target: `${line.upstreamNode.name} (${landingHost}:${landingPort})`,
+            status: 'FAILED',
+            message: relayErrMessage
+          });
+        } else {
+          stages.push({
+            id: 'relay_transit',
+            name: '外部上游落地',
+            target: `${line.upstreamNode.name} (${landingHost}:${landingPort})`,
+            status: 'SUCCESS',
+            message: `外部上游节点就绪: [${line.upstreamNode.protocolType}] ${line.upstreamNode.name}`
+          });
+        }
+      } else if (line.relayMode === 'TARGET_LINE') {
         if (!line.targetLine) {
           relayOk = false;
           relayErrMessage = '未配置或找不到目标桥接线路';

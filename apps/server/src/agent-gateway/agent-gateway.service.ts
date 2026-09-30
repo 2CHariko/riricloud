@@ -2159,20 +2159,11 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           listenOptions
         });
         inbounds.push(...relayInbounds);
-
-        let upstreamParams: Record<string, unknown> = {};
-        try {
-          upstreamParams = JSON.parse(upstreamNode.paramsJson || '{}');
-        } catch {
-          // fallback
+        const outbound = this.buildUpstreamRelayOutbound(line, upstreamNode);
+        if (!outbound) {
+          inbounds.splice(-relayInbounds.length, relayInbounds.length);
+          continue;
         }
-        const outbound: Record<string, unknown> = {
-          type: String(upstreamNode.protocolType).toLowerCase(),
-          tag: `relay-out-${line.id}`,
-          server: upstreamNode.serverHost,
-          server_port: upstreamNode.serverPort,
-          ...upstreamParams
-        };
         outbounds.push(outbound);
         relayRules.push({ inbound: [relayTag], outbound: `relay-out-${line.id}` });
       }
@@ -2505,6 +2496,193 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       transportHost
     );
     if (clientTransport) outbound.transport = clientTransport;
+    return outbound;
+  }
+
+  private buildUpstreamRelayOutbound(
+    line: {
+      id: string;
+      landingEndpointOverrideEnabled?: boolean;
+      landingServerHost?: string | null;
+      landingServerPort?: number | null;
+    },
+    upstreamNode: {
+      protocolType: string;
+      serverHost: string;
+      serverPort: number;
+      paramsJson: string;
+    }
+  ): Record<string, unknown> | undefined {
+    if (!upstreamNode.serverHost || !upstreamNode.serverPort) return undefined;
+    let params: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(upstreamNode.paramsJson || '{}');
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        params = parsed as Record<string, unknown>;
+      }
+    } catch {
+      params = {};
+    }
+
+    const protocolType = String(upstreamNode.protocolType || '').toUpperCase();
+    const hasLandingOverride = Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
+    const targetHost = hasLandingOverride ? line.landingServerHost!.trim() : upstreamNode.serverHost.trim();
+    const targetPort = hasLandingOverride && line.landingServerPort ? line.landingServerPort : upstreamNode.serverPort;
+
+    const tls = (params.tls && typeof params.tls === 'object' && !Array.isArray(params.tls))
+      ? (params.tls as Record<string, unknown>)
+      : undefined;
+    const reality = (tls?.reality && typeof tls.reality === 'object' && !Array.isArray(tls.reality))
+      ? (tls.reality as Record<string, unknown>)
+      : undefined;
+    const explicitServerName = typeof tls?.serverName === 'string' && tls.serverName.trim()
+      ? tls.serverName.trim()
+      : (typeof tls?.server_name === 'string' && tls.server_name.trim()
+          ? tls.server_name.trim()
+          : (Array.isArray(reality?.serverNames) && typeof reality.serverNames[0] === 'string'
+              ? reality.serverNames[0]
+              : undefined));
+    const nodeDomainServerName = isIP(upstreamNode.serverHost.trim()) === 0
+      ? upstreamNode.serverHost.trim()
+      : undefined;
+    const tlsServerName = explicitServerName || nodeDomainServerName;
+
+    const outboundType = protocolType === 'MIXED' || protocolType === 'SOCKS'
+      ? 'socks'
+      : protocolType.toLowerCase();
+    const outbound: Record<string, unknown> = {
+      type: outboundType,
+      tag: `relay-out-${line.id}`,
+      server: targetHost,
+      server_port: targetPort
+    };
+
+    switch (protocolType) {
+      case 'VLESS':
+        outbound.uuid = typeof params.uuid === 'string' ? params.uuid : '';
+        if (typeof params.flow === 'string' && params.flow) outbound.flow = params.flow;
+        if (typeof params.packet_encoding === 'string' && params.packet_encoding) {
+          outbound.packet_encoding = params.packet_encoding;
+        }
+        break;
+      case 'VMESS': {
+        outbound.uuid = typeof params.uuid === 'string' ? params.uuid : '';
+        const rawAlterId = params.alterId ?? params.alter_id ?? 0;
+        outbound.alter_id = typeof rawAlterId === 'number' && Number.isFinite(rawAlterId)
+          ? rawAlterId
+          : (Number(rawAlterId) || 0);
+        outbound.security = typeof params.security === 'string' && params.security ? params.security : 'auto';
+        if (typeof params.packet_encoding === 'string' && params.packet_encoding) {
+          outbound.packet_encoding = params.packet_encoding;
+        }
+        break;
+      }
+      case 'TROJAN':
+        outbound.password = typeof params.password === 'string' ? params.password : '';
+        break;
+      case 'SHADOWSOCKS': {
+        outbound.method = typeof params.method === 'string' && params.method ? params.method : 'aes-256-gcm';
+        outbound.password = typeof params.password === 'string' ? params.password : '';
+        const rawPlugin = typeof params.plugin === 'string' && params.plugin.trim() ? params.plugin.trim() : '';
+        if (rawPlugin) {
+          outbound.plugin = rawPlugin === 'obfs' ? 'obfs-local' : rawPlugin;
+        }
+        const rawPluginOpts = params.plugin_opts ?? params.pluginOpts;
+        if (typeof rawPluginOpts === 'string' && rawPluginOpts.trim()) {
+          outbound.plugin_opts = rawPluginOpts.trim();
+        } else if (rawPluginOpts && typeof rawPluginOpts === 'object' && !Array.isArray(rawPluginOpts)) {
+          const optsObj = rawPluginOpts as Record<string, unknown>;
+          if (rawPlugin === 'obfs' || rawPlugin === 'obfs-local') {
+            const parts: string[] = [];
+            if (optsObj.mode) parts.push(`obfs=${String(optsObj.mode)}`);
+            if (optsObj.host) parts.push(`obfs-host=${String(optsObj.host)}`);
+            if (parts.length) outbound.plugin_opts = parts.join(';');
+          } else {
+            const parts = Object.entries(optsObj)
+              .filter(([, v]) => v !== undefined && v !== null && v !== '')
+              .map(([k, v]) => `${k}=${String(v)}`);
+            if (parts.length) outbound.plugin_opts = parts.join(';');
+          }
+        }
+        if (params.udpOverTcp === true || params.udp_over_tcp === true) {
+          outbound.udp_over_tcp = true;
+        }
+        break;
+      }
+      case 'HYSTERIA2': {
+        outbound.password = typeof params.password === 'string' ? params.password : '';
+        const upMbps = Number(params.upMbps ?? params.up_mbps ?? 0);
+        const downMbps = Number(params.downMbps ?? params.down_mbps ?? 0);
+        if (Number.isFinite(upMbps) && upMbps > 0) outbound.up_mbps = upMbps;
+        if (Number.isFinite(downMbps) && downMbps > 0) outbound.down_mbps = downMbps;
+        if (params.obfs && typeof params.obfs === 'object' && !Array.isArray(params.obfs)) {
+          const obfsObj = params.obfs as Record<string, unknown>;
+          if (typeof obfsObj.password === 'string' && obfsObj.password) {
+            outbound.obfs = {
+              type: typeof obfsObj.type === 'string' && obfsObj.type ? obfsObj.type : 'salamander',
+              password: obfsObj.password
+            };
+          }
+        } else if (typeof params.obfs === 'string' && params.obfs) {
+          const obfsPassword = typeof params.obfsPassword === 'string' ? params.obfsPassword : '';
+          if (obfsPassword) {
+            outbound.obfs = { type: params.obfs, password: obfsPassword };
+          }
+        }
+        break;
+      }
+      case 'TUIC': {
+        outbound.uuid = typeof params.uuid === 'string' ? params.uuid : '';
+        outbound.password = typeof params.password === 'string' ? params.password : '';
+        outbound.congestion_control = typeof params.congestionControl === 'string' && params.congestionControl
+          ? params.congestionControl
+          : (typeof params.congestion_control === 'string' && params.congestion_control ? params.congestion_control : 'bbr');
+        if (params.zeroRttHandshake === true || params.zero_rtt_handshake === true) {
+          outbound.zero_rtt_handshake = true;
+        }
+        if (typeof params.heartbeat === 'string' && params.heartbeat) {
+          outbound.heartbeat = params.heartbeat;
+        }
+        if (typeof params.udp_relay_mode === 'string' && params.udp_relay_mode) {
+          outbound.udp_relay_mode = params.udp_relay_mode;
+        }
+        break;
+      }
+      case 'NAIVE':
+        if (typeof params.username === 'string') outbound.username = params.username;
+        if (typeof params.password === 'string') outbound.password = params.password;
+        break;
+      case 'SOCKS':
+      case 'MIXED':
+        outbound.version = '5';
+        if (typeof params.username === 'string' && params.username) outbound.username = params.username;
+        if (typeof params.password === 'string' && params.password) outbound.password = params.password;
+        break;
+      case 'HTTP':
+        if (typeof params.username === 'string' && params.username) outbound.username = params.username;
+        if (typeof params.password === 'string' && params.password) outbound.password = params.password;
+        break;
+      default:
+        return undefined;
+    }
+
+    const clientTls = buildClientTls(
+      tls as unknown as Parameters<typeof buildClientTls>[0],
+      tlsServerName,
+      protocolType === 'NAIVE' ? { includeAlpn: false, includeInsecure: false } : undefined
+    );
+    if (clientTls) outbound.tls = clientTls;
+
+    const transport = (params.transport && typeof params.transport === 'object' && !Array.isArray(params.transport))
+      ? (params.transport as Record<string, unknown>)
+      : undefined;
+    const transportHost = typeof transport?.host === 'string' ? transport.host : null;
+    const clientTransport = buildClientTransport(
+      transport as unknown as Parameters<typeof buildClientTransport>[0],
+      transportHost
+    );
+    if (clientTransport) outbound.transport = clientTransport;
+
     return outbound;
   }
 

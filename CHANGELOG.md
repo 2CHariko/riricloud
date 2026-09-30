@@ -37,6 +37,10 @@
   - 将 Sing-box QUIC/Hysteria2 正常流关闭日志（`canceled by remote/local with error code 0`）识别为 `ACCESS` 并降级为 `INFO`，消除常规模式下的误报 WARN 噪音；
   - 升级主控端 `LinesService` 端口冲突校验为按 TCP/UDP 传输层重叠判定，将 `SHADOWSOCKS`、`DIRECT` 与 `BLIND_FORWARD` 盲转发入口均识别为 TCP+UDP 双栈占用，阻断与同节点同端口 `HYSTERIA2`/`TUIC` 的 UDP 绑定冲突；
   - 调高前端单条线路测速（`45s`）与全量批量测速（`120s`）的客户端 HTTP 超时预算，防止高延迟或慢速回退链路在服务端返回完整阶段诊断报告前被前端提前中断。
+- **修复上游节点中继（`UPSTREAM_NODE`）下发 Sing-box 配置时因 `alterId` 等驼峰字段触发 `sing-box check` 致命校验失败**：
+  - 重构 `AgentGatewayService` 的 `UPSTREAM_NODE` 中继出站构建器（`buildUpstreamRelayOutbound`），不再将 `UpstreamNode.paramsJson` 内部驼峰结构直接浅拷贝至 Sing-box `outbounds`，而是按协议严格映射为 Sing-box 标准下划线出站结构（VMess `alter_id`、Hysteria2 `up_mbps`/`down_mbps`/`obfs`、TUIC `congestion_control`/`zero_rtt_handshake`、Reality `public_key`/`short_id`、uTLS `utls.fingerprint`、gRPC `service_name` 等），彻底消除 `json: unknown field "alterId"` 报错；
+  - 统一 `UpstreamParserService` 对 Sing-box JSON、Clash YAML 与 URI 订阅的节点参数归一化输出，并在 `inbound.ts` 与订阅编译器 `builders.ts` 中兼容驼峰与下划线双格式字段回退，存量已导入上游节点无需重新导入即可正常工作；
+  - 补齐 `LineSpeedtestService` 对 `UPSTREAM_NODE` 中继线路的落地拓扑解析与第三阶段（`relay_transit`）上游节点可用性校验。
 
 
 ## [0.9.9] - 2026-09-29

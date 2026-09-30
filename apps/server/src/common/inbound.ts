@@ -859,8 +859,18 @@ export function buildClientTransport(
   hostOverride?: string | null
 ): Record<string, unknown> | undefined {
   if (!transport || transport.type === 'tcp') return undefined;
-  const host = hostOverride?.trim() || transport.host;
+  const rawTransport = transport as unknown as Record<string, unknown>;
+  const host = hostOverride?.trim() || (typeof transport.host === 'string' ? transport.host : undefined);
   const headers = transport.headers ? { ...transport.headers } : {};
+  const maxEarlyData = typeof transport.maxEarlyData === 'number'
+    ? transport.maxEarlyData
+    : (typeof rawTransport.max_early_data === 'number' ? rawTransport.max_early_data : undefined);
+  const earlyDataHeaderName = typeof transport.earlyDataHeaderName === 'string'
+    ? transport.earlyDataHeaderName
+    : (typeof rawTransport.early_data_header_name === 'string' ? rawTransport.early_data_header_name : undefined);
+  const serviceName = typeof transport.serviceName === 'string' && transport.serviceName
+    ? transport.serviceName
+    : (typeof rawTransport.service_name === 'string' ? rawTransport.service_name : undefined);
 
   switch (transport.type) {
     case 'ws':
@@ -869,21 +879,25 @@ export function buildClientTransport(
         type: 'ws',
         ...(transport.path ? { path: transport.path } : {}),
         ...(Object.keys(headers).length ? { headers } : {}),
-        ...(transport.maxEarlyData && transport.maxEarlyData > 0 ? { max_early_data: transport.maxEarlyData } : {}),
-        ...(transport.earlyDataHeaderName ? { early_data_header_name: transport.earlyDataHeaderName } : {})
+        ...(maxEarlyData && maxEarlyData > 0 ? { max_early_data: maxEarlyData } : {}),
+        ...(earlyDataHeaderName ? { early_data_header_name: earlyDataHeaderName } : {})
       };
     case 'grpc':
       return {
         type: 'grpc',
-        ...(transport.serviceName ? { service_name: transport.serviceName } : {})
+        ...(serviceName ? { service_name: serviceName } : {})
       };
-    case 'http':
+    case 'http': {
+      const hostList = host
+        ? [host]
+        : (Array.isArray(rawTransport.host) ? rawTransport.host.filter((h): h is string => typeof h === 'string' && Boolean(h)) : undefined);
       return {
         type: 'http',
-        ...(host ? { host: [host] } : {}),
+        ...(hostList?.length ? { host: hostList } : {}),
         ...(transport.path ? { path: transport.path } : {}),
         ...(Object.keys(headers).length ? { headers } : {})
       };
+    }
     case 'httpupgrade':
       return {
         type: 'httpupgrade',
@@ -903,18 +917,43 @@ export function buildClientTls(
   options: { includeAlpn?: boolean; includeInsecure?: boolean } = {}
 ): Record<string, unknown> | undefined {
   if (!tls || !tls.enabled || tls.mode === 'none') return undefined;
+  const rawTls = tls as unknown as Record<string, unknown>;
   const reality = tls.reality;
-  const serverName = serverNameOverride?.trim() || tls.serverName || reality?.serverNames[0];
+  const rawReality = (reality ?? undefined) as unknown as Record<string, unknown> | undefined;
+  const serverName =
+    serverNameOverride?.trim() ||
+    tls.serverName ||
+    (typeof rawTls.server_name === 'string' ? rawTls.server_name.trim() : undefined) ||
+    (Array.isArray(reality?.serverNames) ? reality.serverNames[0] : undefined);
+  const rawUtls = rawTls.utls && typeof rawTls.utls === 'object' && !Array.isArray(rawTls.utls)
+    ? (rawTls.utls as Record<string, unknown>)
+    : undefined;
+  const customFingerprint = typeof rawTls.clientFingerprint === 'string' && rawTls.clientFingerprint.trim()
+    ? rawTls.clientFingerprint.trim()
+    : (typeof rawUtls?.fingerprint === 'string' && rawUtls.fingerprint.trim() ? rawUtls.fingerprint.trim() : undefined);
 
-  if (tls.mode === 'reality' && reality) {
+  const isReality = Boolean(
+    rawReality &&
+    (tls.mode === 'reality' || rawReality.enabled === true || Boolean(rawReality.publicKey || rawReality.public_key))
+  );
+
+  if (isReality && rawReality) {
+    const publicKey = typeof rawReality.publicKey === 'string'
+      ? rawReality.publicKey
+      : (typeof rawReality.public_key === 'string' ? rawReality.public_key : '');
+    const shortId = Array.isArray(reality?.shortIds) && reality.shortIds.length > 0
+      ? reality.shortIds[0]
+      : (typeof rawReality.shortId === 'string'
+          ? rawReality.shortId
+          : (typeof rawReality.short_id === 'string' ? rawReality.short_id : ''));
     return {
       enabled: true,
       ...(serverName ? { server_name: serverName } : {}),
-      utls: { enabled: true, fingerprint: 'chrome' },
+      utls: { enabled: true, fingerprint: customFingerprint || 'chrome' },
       reality: {
         enabled: true,
-        public_key: reality.publicKey,
-        short_id: reality.shortIds[0]
+        public_key: publicKey,
+        short_id: shortId
       }
     };
   }
@@ -922,7 +961,8 @@ export function buildClientTls(
   return {
     enabled: true,
     ...(serverName ? { server_name: serverName } : {}),
-    ...(options.includeAlpn !== false && tls.alpn?.length ? { alpn: tls.alpn } : {}),
+    ...(customFingerprint ? { utls: { enabled: true, fingerprint: customFingerprint } } : {}),
+    ...(options.includeAlpn !== false && Array.isArray(tls.alpn) && tls.alpn.length ? { alpn: tls.alpn } : {}),
     ...(options.includeInsecure !== false ? { insecure: tls.insecure === true } : {})
   };
 }
