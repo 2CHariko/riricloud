@@ -68,6 +68,12 @@ export const router = createBrowserRouter([
                 })
               },
               {
+                path: '/admin/upstream',
+                lazy: async () => ({
+                  Component: (await import('@/pages/admin/upstream')).default
+                })
+              },
+              {
                 path: '/admin/certificates',
                 lazy: async () => ({
                   Component: (await import('@/pages/admin/certificates')).default

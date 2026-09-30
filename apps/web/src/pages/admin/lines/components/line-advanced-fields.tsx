@@ -1,4 +1,6 @@
 import type { UseFormReturn } from 'react-hook-form';
+import { useQuery } from '@tanstack/react-query';
+import { upstreamApi } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
 import { FormField, FormItem, FormLabel, FormControl, FormDescription } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
@@ -43,6 +45,15 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
     value: line.id,
     label: `${line.name} · ${line.entryNode.name} · ${line.protocolType} · ${line.entryPort}${line.status === 'ACTIVE' ? '' : t('admin:lineForm.lineDisabledTag')}`
   }));
+  const upstreamNodesQuery = useQuery({
+    queryKey: ['admin-upstream-nodes-selector'],
+    queryFn: async () => (await upstreamApi.listNodes({ status: 'ACTIVE', pageSize: 200 })).data,
+    enabled: type === 'RELAY' && relayMode === 'UPSTREAM_NODE'
+  });
+  const upstreamNodeOptions = (upstreamNodesQuery.data?.data ?? []).map((node) => ({
+    value: node.id,
+    label: `${node.subscription?.name ? `[${node.subscription.name}] ` : ''}${node.name} · ${node.protocolType} · ${node.serverHost}:${node.serverPort}`
+  }));
   const changeRelayMode = (value: string) => {
     form.setValue('relayMode', value as LineFormValues['relayMode'], { shouldDirty: true });
     if (value !== 'TARGET_LINE') form.setValue('targetLineId', '', { shouldDirty: true });
@@ -65,8 +76,8 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
             options={[{ value: 'DIRECT', label: t('admin:lineForm.modeDirect') }, { value: 'RELAY', label: t('admin:lineForm.modeRelay') }]}
             onValueChange={(value) => onTypeChange(value as LineFormValues['type'])}
           />
-          {type === 'RELAY' && relayMode !== 'TARGET_LINE' && <SelectField form={form} name="landingNodeId" label={t('admin:lineForm.landingNode')} options={nodeOptions} />}
-          {type === 'RELAY' && relayMode !== 'TARGET_LINE' && <TextField form={form} name="landingPort" label={t('admin:lineForm.landingPort')} type="number" placeholder={t('admin:lineForm.landingPortPlaceholder')} />}
+          {type === 'RELAY' && relayMode !== 'TARGET_LINE' && relayMode !== 'UPSTREAM_NODE' && <SelectField form={form} name="landingNodeId" label={t('admin:lineForm.landingNode')} options={nodeOptions} />}
+          {type === 'RELAY' && relayMode !== 'TARGET_LINE' && relayMode !== 'UPSTREAM_NODE' && <TextField form={form} name="landingPort" label={t('admin:lineForm.landingPort')} type="number" placeholder={t('admin:lineForm.landingPortPlaceholder')} />}
         </FieldGrid>
         {type === 'RELAY' && (
           <SelectField
@@ -82,7 +93,8 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
                 : [
                     { value: 'BLIND_FORWARD', label: t('admin:lineForm.relayModes.blindForward') },
                     { value: 'PROTOCOL_PROXY', label: t('admin:lineForm.relayModes.protocolProxy') },
-                    { value: 'TARGET_LINE', label: t('admin:lineForm.relayModes.targetLine') }
+                    { value: 'TARGET_LINE', label: t('admin:lineForm.relayModes.targetLine') },
+                    { value: 'UPSTREAM_NODE', label: t('admin:lineForm.relayModes.upstreamNode') }
                   ]
             }
             onValueChange={changeRelayMode}
@@ -142,6 +154,18 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
             <p className="text-muted-foreground">{t('admin:lineForm.targetProtocol')}{targetLine.protocolType} · {targetLine.status === 'ACTIVE' ? t('admin:lineForm.lineActive') : t('admin:lineForm.lineDisabled')}</p>
           </div>}
         </div>}
+        {type === 'RELAY' && relayMode === 'UPSTREAM_NODE' && (
+          <div className="space-y-3">
+            <SelectField
+              form={form}
+              name="upstreamNodeId"
+              label={t('admin:lineForm.upstreamNodeLabel')}
+              options={upstreamNodeOptions.length ? upstreamNodeOptions : [{ value: '__no_upstream_node__', label: t('admin:lineForm.noUpstreamNode') }]}
+              disabled={upstreamNodeOptions.length === 0}
+              description={t('admin:lineForm.upstreamNodeDesc')}
+            />
+          </div>
+        )}
       </section>
 
       <Separator />

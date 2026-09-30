@@ -68,6 +68,7 @@
 | **`UI-39`** | 共享组件 | 在线设备管理弹窗（用户/管理员） | `UI-11` / `UI-21` 操作入口 | `apps/web/src/components/shared/device-management-dialog.tsx` | 管理员侧显示配置上限、设备上限及策略来源；用户侧仅显示在线设备数与设备上限，隐藏配置上限、策略来源及在线汇总说明；设备 IP 复制、跨节点节点名/线路名、连接数与活跃时间；管理员保留管理操作措辞，用户侧单台与全部设备操作统一称为「下线」；确认弹窗、处理中状态、空态、错误 Toast；Light/Dark 与桌面/移动弹窗布局 |
 | **`UI-40`** | 业务运营 | 管理端公告管理与分屏编辑器 | `/admin/announcements` | `apps/web/src/pages/admin/announcements/**` | 公告管理数据表格（标题、摘要、分类、展示策略徽标、行内启用 Switch、更新时间）、分类/状态/搜索组合筛选、新建/编辑公告全屏分屏弹窗（CodeMirror 源码高亮 + 语法快捷插入工具条 + 实时渲染预览 + 4 维展示策略开关）、删除确认弹窗、明暗主题与移动端局部滚动 |
 | **`UI-41`** | 节点运维 | 批量 Agent 升级确认与逐节点结果 | `/admin/nodes`（选择节点并点击批量升级） | `apps/web/src/pages/admin/nodes/components/batch-upgrade-nodes-dialog.tsx` | 展示所选节点及混合 OS/架构、仅显示覆盖全部目标平台的 ACTIVE Agent 资源、默认主控资源提示、HTTP/离线排队说明；确认后逐节点展示 DISPATCHED/QUEUED/FAILED 与错误信息、部分成功汇总；下发期间防重复提交；Light/Dark、1440x900、375x812 与 768x1024 下检查 Dialog/Sheet 滚动、资源选择器和结果列表不溢出 |
+| **`UI-42`** | 网络与节点 | 上游订阅管理、节点池抽屉与中转创建 | `/admin/upstream` | `apps/web/src/pages/admin/upstream/**` | 订阅列表卡片/表格（名称、来源类型、解析格式、节点数、流量配额进度条、上次同步状态与时间）、一键立即同步（防抖与旋转动画）、添加/编辑订阅弹窗（支持 URL/文本双模输入、自动更新周期与自定义 Header）、解析节点池抽屉（Sheet 展示节点名/地区标签/协议 Badge/服务器:端口/连通性测速延迟 Badge）、单节点/全部并发 TCP 握手测速、一键加入用户订阅 Switch 开关、单节点与批量导出标准 URI 链接、一键转中转线路（自动跳转至 `/admin/lines` 并预选为上游中继落地）；明暗主题自适应、移动端表格容器局部横向滚动 |
 
 认证页面的会话验证以 Cookie 为浏览器实现细节：视觉走查只需确认登录/注册成功后正确进入已认证路由、刷新页面仍保持登录态、注销后返回登录页；不得在页面 DOM、localStorage 或 sessionStorage 中出现 JWT 文本。
 
