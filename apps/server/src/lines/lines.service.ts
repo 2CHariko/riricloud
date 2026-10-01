@@ -1,3 +1,4 @@
+import { assertEgressNotLoop, assertEgressOverride, canConfigureEgress, readEgressProxy, safeEgressProxy, saveEgressProxy, type EgressProxyInput } from '../common/line-egress';
 import { getUpstreamUnavailableReason, readUpstreamConnection, isMeteredUpstreamEntry } from '../common/upstream-availability';
 import type { SubLine } from '../subscription/builders';
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
@@ -40,6 +41,7 @@ const targetLineSummary = {
     id: true,
     updatedAt: true,
     paramsJson: true,
+    egressProxyJson: true,
     name: true,
     type: true,
     protocolType: true,
@@ -85,6 +87,7 @@ type LineInput = {
   type?: LineType;
   protocolType?: ProtocolType;
   params?: Record<string, unknown>;
+  egressProxy?: EgressProxyInput | null;
   relayMode?: RelayMode | null;
   entryNodeId?: string | null;
   entryPort?: number | null;
@@ -196,6 +199,7 @@ export class LinesService {
       type: current.type as LineType,
       ...(current.type === 'EXTERNAL' ? {} : { protocolType: current.protocolType as ProtocolType }),
       params: this.parseObject(current.paramsJson),
+      egressProxy: readEgressProxy(current.egressProxyJson),
       certificateId: current.certificateId,
       relayMode: current.relayMode as RelayMode | null,
       entryNodeId: current.entryNodeId,
@@ -227,6 +231,7 @@ export class LinesService {
     if (dto.status === 'ACTIVE') {
       for (const id of dto.ids) {
         const line = await this.findRaw(id);
+        await this.validateEgress(line.egressProxyJson, line);
         if (line.type === 'EXTERNAL') await this.assertUpstreamAvailable(line.upstreamNodeId);
         if (line.relayMode === 'UPSTREAM_NODE') {
           const upstream = await this.assertUpstreamAvailable(line.upstreamNodeId);
@@ -329,6 +334,7 @@ export class LinesService {
   }
 
   private async prepareExternal(input: LineInput, current?: LineWithRelations): Promise<Prisma.LineUncheckedCreateInput> {
+    if (input.egressProxy != null) throw new BadRequestException('EXTERNAL 不支持最终代理出站');
     const nullable = ['entryNodeId', 'entryPort', 'landingNodeId', 'landingPort', 'targetLineId', 'relayMode', 'certificateId', 'serverHost', 'serverPort', 'serverName', 'host', 'landingServerHost', 'landingServerPort', 'tunnelType', 'tunnelPort', 'tunnelSecret', 'udpTimeout'] as const;
     for (const key of nullable) if (input[key] !== undefined && input[key] !== null && input[key] !== '') throw new BadRequestException(`EXTERNAL 不支持 ${key}`);
     const toggles = ['proxyPoolEnabled', 'endpointOverrideEnabled', 'landingEndpointOverrideEnabled', 'allowLanAccess', 'tcpFastOpen', 'tcpMultiPath', 'udpFragment', 'proxyProtocol', 'proxyProtocolAcceptNoHeader'] as const;
@@ -343,6 +349,7 @@ export class LinesService {
     return {
       name, type: 'EXTERNAL', upstreamNodeId: node.id, protocolType: node.protocolType,
       paramsJson: '{}', entryNodeId: null, entryPort: null, landingNodeId: null, landingPort: null,
+      egressProxyJson: null,
       targetLineId: null, relayMode: null, certificateId: null, listen: DEFAULT_INBOUND_LISTEN,
       tag: input.tag !== undefined ? input.tag?.trim() || null : current?.tag ?? null,
       tagsJson: input.tags ? JSON.stringify(input.tags.map((tag) => tag.trim()).filter(Boolean)) : current?.tagsJson ?? '[]',
@@ -537,6 +544,8 @@ export class LinesService {
       entryNodeId,
       landingNodeId
     });
+    const egressProxyJson = saveEgressProxy(input.egressProxy, current?.egressProxyJson);
+    await this.validateEgress(egressProxyJson, { id: current?.id, type, relayMode, entryNodeId, entryPort, landingNodeId, landingPort });
 
     return {
       name,
@@ -546,6 +555,7 @@ export class LinesService {
       relayMode,
       protocolType,
       paramsJson: JSON.stringify(params),
+      egressProxyJson,
       entryNodeId,
       entryPort,
       landingNodeId,
@@ -827,6 +837,20 @@ export class LinesService {
     return target;
   }
 
+  private async validateEgress(stored: string | null | undefined, line: { id?: string; type: string; relayMode?: string | null; entryNodeId: string | null; entryPort: number | null; landingNodeId: string | null; landingPort: number | null }) {
+    if (stored == null) return;
+    if (!canConfigureEgress(line.type, line.relayMode)) throw new BadRequestException('该线路模式不支持独立最终出站，请显式清除已有配置');
+    const nodeId = line.type === 'DIRECT' ? line.entryNodeId : line.landingNodeId;
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId! } });
+    if (!node) throw new NotFoundException('最终出站执行节点不存在');
+    assertEgressOverride(node.configOverride, line.id);
+    const rows = await this.prisma.line.findMany({ where: { OR: [{ entryNodeId: nodeId }, { landingNodeId: nodeId }] }, select: { entryNodeId: true, entryPort: true, landingNodeId: true, landingPort: true } });
+    const ports = rows.flatMap(row => [row.entryNodeId === nodeId ? row.entryPort : null, row.landingNodeId === nodeId ? row.landingPort : null]);
+    if (line.entryNodeId === nodeId) ports.push(line.entryPort);
+    if (line.landingNodeId === nodeId) ports.push(line.landingPort);
+    assertEgressNotLoop(readEgressProxy(stored)!, node.serverHost, ports);
+  }
+
   private toView(line: LineWithRelations) {
     const external = line.type === 'EXTERNAL';
     const serverHost = external ? line.upstreamNode?.serverHost ?? '' : line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode?.serverHost ?? '';
@@ -875,14 +899,21 @@ export class LinesService {
               }
             : null)
       : null;
-    const { upstreamNode: _upstreamNode, ...safeLine } = line;
+    const { upstreamNode: _upstreamNode, egressProxyJson: _egressProxyJson, ...safeLine } = line;
+    const source = line.relayMode === 'TARGET_LINE' ? line.targetLine : line;
+    const egressProxy = safeEgressProxy(line.egressProxyJson);
+    const effectiveEgress = source && (canConfigureEgress(source.type, line.relayMode === 'TARGET_LINE' ? null : line.relayMode))
+      ? { sourceLineId: source.id, nodeId: source.type === 'DIRECT' ? source.entryNodeId : line.landingNodeId, inherited: line.relayMode === 'TARGET_LINE', proxy: safeEgressProxy(source.egressProxyJson) }
+      : null;
     return {
       ...safeLine,
+      egressProxy,
+      effectiveEgress,
       entryNode: safeNode(line.entryNode),
       landingNode: safeNode(line.landingNode),
       lastProbeJson: undefined,
       lastProbe,
-      targetLine: line.targetLine ? { ...line.targetLine, paramsJson: undefined, entryNode: safeNode(line.targetLine.entryNode) } : null,
+      targetLine: line.targetLine ? { ...line.targetLine, paramsJson: undefined, egressProxyJson: undefined, egressProxy: safeEgressProxy(line.targetLine.egressProxyJson), entryNode: safeNode(line.targetLine.entryNode) } : null,
       lastLatencyMs: lastProbe?.latencyMs ?? null,
       lastTestedAt: lastProbe?.testedAt ?? null,
       lastTestStatus: lastProbe?.status ?? null,

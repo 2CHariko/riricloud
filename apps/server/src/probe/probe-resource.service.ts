@@ -26,16 +26,18 @@ function managedVersion(node: Pick<NonNullable<ProbeLine['entryNode']>, 'id' | '
   return node ? [node.id, node.serverHost, node.status, node.reachability, node.configOverride] : null;
 }
 type LineVersionInput = Pick<ProbeLine, 'id' | 'type' | 'status' | 'paramsJson' | 'protocolType' | 'entryNodeId' | 'entryPort' | 'landingNodeId' | 'landingPort' | 'targetLineId' | 'upstreamNodeId' | 'relayMode' | 'endpointOverrideEnabled' | 'serverHost' | 'serverPort' | 'serverName' | 'host' | 'landingEndpointOverrideEnabled' | 'landingServerHost' | 'landingServerPort' | 'certificateId' | 'allowLanAccess' | 'tunnelType' | 'tunnelPort' | 'tunnelSecret'> & {
+  egressProxyJson?: string | null;
   certificate: { id: string; updatedAt: Date } | null;
   entryNode: Pick<NonNullable<ProbeLine['entryNode']>, 'id' | 'serverHost' | 'status' | 'reachability' | 'configOverride'> | null;
   landingNode: Pick<NonNullable<ProbeLine['entryNode']>, 'id' | 'serverHost' | 'status' | 'reachability' | 'configOverride'> | null;
   upstreamNode: Parameters<typeof nodeProbeVersion>[0] | null;
-  targetLine: Pick<NonNullable<ProbeLine['targetLine']>, 'id' | 'updatedAt' | 'status' | 'protocolType' | 'paramsJson' | 'entryPort' | 'serverHost' | 'serverPort'> & { entryNode: LineVersionInput['entryNode']; certificate: LineVersionInput['certificate'] } | null;
+  targetLine: Pick<NonNullable<ProbeLine['targetLine']>, 'id' | 'updatedAt' | 'status' | 'protocolType' | 'paramsJson' | 'entryPort' | 'serverHost' | 'serverPort'> & { egressProxyJson?: string | null; entryNode: LineVersionInput['entryNode']; certificate: LineVersionInput['certificate'] } | null;
 };
 export function lineProbeVersion(line: LineVersionInput): string {
   const { entryNode, landingNode, upstreamNode, targetLine } = line;
   const config = [line.id, line.type, line.status, line.paramsJson, line.protocolType, line.entryNodeId, line.entryPort, line.landingNodeId, line.landingPort, line.targetLineId, line.upstreamNodeId, line.relayMode, line.endpointOverrideEnabled, line.serverHost, line.serverPort, line.serverName, line.host, line.landingEndpointOverrideEnabled, line.landingServerHost, line.landingServerPort, line.certificateId, line.allowLanAccess, line.tunnelType, line.tunnelPort, line.tunnelSecret];
-  return probeHash([config, line.certificate ? [line.certificate.id, line.certificate.updatedAt] : null, managedVersion(entryNode), managedVersion(landingNode), upstreamNode ? nodeProbeVersion(upstreamNode) : null, targetLine ? [targetLine.id, targetLine.updatedAt, targetLine.status, targetLine.protocolType, targetLine.paramsJson, targetLine.entryPort, targetLine.serverHost, targetLine.serverPort, managedVersion(targetLine.entryNode), targetLine.certificate ? [targetLine.certificate.id, targetLine.certificate.updatedAt] : null] : null]);
+  config.push(line.egressProxyJson ?? null);
+  return probeHash([config, line.certificate ? [line.certificate.id, line.certificate.updatedAt] : null, managedVersion(entryNode), managedVersion(landingNode), upstreamNode ? nodeProbeVersion(upstreamNode) : null, targetLine ? [targetLine.id, targetLine.updatedAt, targetLine.status, targetLine.protocolType, targetLine.paramsJson, targetLine.entryPort, targetLine.serverHost, targetLine.serverPort, targetLine.egressProxyJson ?? null, managedVersion(targetLine.entryNode), targetLine.certificate ? [targetLine.certificate.id, targetLine.certificate.updatedAt] : null] : null]);
 }
 
 @Injectable()

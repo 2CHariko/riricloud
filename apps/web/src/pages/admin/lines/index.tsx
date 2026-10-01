@@ -29,6 +29,7 @@ import { usePublicSettings } from '@/lib/public-settings';
 import { formatSpeedLimit, getSpeedTierBadgeClass } from '@/lib/speed-tier';
 import { useAdminLines, useLineMutations, type AdminLine } from './use-lines';
 import { ProxyPoolCapacity } from './components/proxy-pool-capacity';
+import { LineEgressBadge } from './components/line-egress-badge';
 
 export default function AdminLinesPage() {
   const { t } = useTranslation(['admin', 'common']);
@@ -223,6 +224,7 @@ export default function AdminLinesPage() {
                     <TableCell className="min-w-36"><div className="font-mono text-xs">{line.serverHost}:{line.serverPort}</div><div className="text-xs text-muted-foreground">{line.endpointOverrideEnabled ? t('admin:lines.overrideEnabled') : t('admin:lines.reuseUnderlying')}</div>{line.serverName && <div className="text-xs text-muted-foreground">SNI {line.serverName}</div>}{line.host && <div className="text-xs text-muted-foreground">Host {line.host}</div>}</TableCell>
                     <TableCell>
                       <LineTopology line={line} />
+                      <LineEgressBadge line={line} />
                     </TableCell>
                     <TableCell><div className="flex max-w-40 flex-wrap gap-1">{Boolean(line.speedLimitMbps) && <Badge variant="outline" className={cn('gap-1', getSpeedTierBadgeClass(line.speedLimitMbps, publicSettings?.speedLimitColorTiers))}><Zap className="size-3" />{formatSpeedLimit(line.speedLimitMbps, unitConversion)}</Badge>}{line.tags.map((item) => <Badge key={item} variant="secondary">#{item}</Badge>)}<Badge variant="outline">{line.trafficRate}x</Badge></div></TableCell>
                     <TableCell>

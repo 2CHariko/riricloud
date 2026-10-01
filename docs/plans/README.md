@@ -31,6 +31,7 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
+| [线路最终落地 HTTP/SOCKS5 出站](./archive/2026-10-02-line-egress-proxy.md) | `下一次 MINOR 发布` | 2026-10-02 | — |
 | [代理池统一授权与受控上游中继接入](./archive/2026-10-01-proxy-pool-unified-access.md) | `下一次 MINOR 发布` | 2026-10-01 | — |
 | [上游订阅导入与多模式融合功能方案 (Upstream Subscriptions & Proxy Relay)](./archive/2026-09-30-upstream-subscriptions-proxy-relay.md) | `v0.10.0` | 2026-09-30 | — |
 | [上游订阅破坏性重构：统一线路授权与可靠同步](./archive/2026-09-30-upstream-subscription-breaking-refactor.md) | `下一次 MINOR 发布` | 2026-09-30 | — |

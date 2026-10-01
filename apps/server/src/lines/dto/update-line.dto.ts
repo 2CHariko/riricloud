@@ -1,3 +1,5 @@
+import { ValidateNested } from 'class-validator';
+import { LineEgressProxyDto } from './line-egress-proxy.dto';
 import { Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -38,6 +40,12 @@ export class UpdateLineDto {
   @IsObject()
   @IsOptional()
   params?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ type: LineEgressProxyDto, nullable: true, description: '省略保留、null 清除最终出站' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LineEgressProxyDto)
+  egressProxy?: LineEgressProxyDto | null;
 
   @ApiPropertyOptional({ enum: RELAY_MODES, nullable: true })
   @IsIn(RELAY_MODES)

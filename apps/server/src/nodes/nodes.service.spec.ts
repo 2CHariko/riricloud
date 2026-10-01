@@ -13,7 +13,8 @@ describe('NodesService', () => {
   const nodeWithLines = { ...baseNode, entryLines: [], landingLines: [] };
   const prisma = {
     node: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
-    binaryDeploymentTask: { findMany: jest.fn(), count: jest.fn() }
+    binaryDeploymentTask: { findMany: jest.fn(), count: jest.fn() },
+    line: { findFirst: jest.fn() },
   };
   const systemLogsService = { enqueue: jest.fn() };
   const gateway = { pushConfig: jest.fn().mockResolvedValue(false), pushConfigToAll: jest.fn().mockResolvedValue(0), disconnectNode: jest.fn(), requestUpgrade: jest.fn(), requestProbe: jest.fn(), enableSingboxLogDiagnostics: jest.fn(), disableSingboxLogDiagnostics: jest.fn(), getPendingVersionConfirmation: jest.fn().mockReturnValue(null) };
@@ -39,6 +40,17 @@ describe('NodesService', () => {
   });
 
   beforeEach(() => jest.clearAllMocks());
+
+  it('出站线路阻断节点高级覆盖，节点关联响应不返回出站密文', async () => {
+    prisma.node.findUnique.mockResolvedValue(nodeWithLines);
+    prisma.line.findFirst.mockResolvedValue({ id: 'egress-line' });
+    await expect(service.update(baseNode.id, { configOverride: '{"route":{}}' })).rejects.toThrow(/高级覆盖/);
+    const targetLine = { id: 'target', egressProxyJson: 'enc:v1:target-secret' };
+    const line = { id: 'line', type: 'DIRECT', entryPort: 24443, egressProxyJson: 'enc:v1:line-secret', targetLine, tagsJson: '[]' };
+    prisma.node.findMany.mockResolvedValue([{ ...nodeWithLines, entryLines: [line], landingLines: [line] }]);
+    expect(JSON.stringify(await service.list())).not.toContain('enc:v1');
+    prisma.line.findFirst.mockResolvedValue(null);
+  });
 
   it('节点列表返回线路反向列表和派生端口，而不是可编辑入站', async () => {
     const line = { id: 'line-1', name: '跨节点线路', type: 'RELAY', relayMode: 'BLIND_FORWARD', protocolType: 'VLESS', entryNodeId: baseNode.id, entryPort: 25001, landingNodeId: 'node-2', landingPort: 25002, serverHost: null, serverPort: null, trafficRate: 1, tagsJson: '[]', level: 0, sortOrder: 0, isPublic: true, status: 'ACTIVE', entryNode: baseNode, landingNode: { ...baseNode, id: 'node-2', name: '香港节点' } };

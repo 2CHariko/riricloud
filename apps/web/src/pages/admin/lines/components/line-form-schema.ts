@@ -4,6 +4,7 @@ import type { ApiLine, ProtocolType } from '@/lib/api';
 import type { InboundParams } from '../../nodes/use-nodes';
 import type { LinePayload } from '../use-lines';
 import { canEnableProxyPool, requiresUpstreamUserAuth } from './proxy-pool-line-capabilities';
+import { egressFormFields, egressToFormValues, toEgressPayload, validateEgress } from './line-egress-schema';
 
 export const PROTOCOL_TYPES = [
   'VLESS', 'VMESS', 'TROJAN', 'HYSTERIA2', 'TUIC', 'SHADOWSOCKS',
@@ -51,6 +52,7 @@ const optionalNonNegative = z.preprocess(
 const headersSchema = z.array(z.object({ key: z.string(), value: z.string() }));
 
 export const lineFormSchema = z.object({
+  ...egressFormFields,
   name: z.string().trim().min(1, i18n.t('admin:lineForm.validation.nameRequired')),
   tag: z.string().trim().max(64, i18n.t('admin:lineForm.validation.tagMax')),
   listen: z.string().trim().min(1, i18n.t('admin:lineForm.validation.listenRequired')).max(64, i18n.t('admin:lineForm.validation.listenMax')),
@@ -161,6 +163,7 @@ export const lineFormSchema = z.object({
   tunnelPort: optionalPort,
   tunnelSecret: z.string().optional()
 }).superRefine((value, ctx) => {
+  validateEgress(value, ctx);
   if (value.proxyPoolEnabled && !canEnableProxyPool(value)) {
     ctx.addIssue({ code: 'custom', path: ['proxyPoolEnabled'], message: i18n.t('admin:lineForm.proxyPoolInvalid') });
   }
@@ -298,6 +301,7 @@ export function defaultLineFormValues(protocolType: ProtocolType = 'VLESS'): Lin
   const tlsMode = protocolTlsMode(protocolType);
   const isQuic = protocolType === 'HYSTERIA2' || protocolType === 'TUIC';
   return {
+    ...egressToFormValues(),
     name: '', tag: '', listen: '0.0.0.0', type: 'DIRECT', protocolType, relayMode: 'BLIND_FORWARD', targetLineId: '', upstreamNodeId: '',
     entryNodeId: '', entryPort: undefined, landingNodeId: '', landingPort: undefined,
     proxyPoolEnabled: false,
@@ -369,6 +373,7 @@ export function lineToFormValues(line: ApiLine): LineFormValues {
 
   return {
     ...defaults,
+    ...egressToFormValues(line.egressProxy),
     name: line.name,
     tag: line.tag ?? '',
     listen: line.listen,
@@ -619,7 +624,8 @@ export function toLinePayload(values: LineFormValues): LinePayload {
   if (values.type === 'EXTERNAL') return {
     type: 'EXTERNAL', name: values.name.trim(), tag: values.tag.trim() || null,
     upstreamNodeId: values.upstreamNodeId || '', tags: splitList(values.tags),
-    level: values.level, sortOrder: values.sortOrder, isPublic: values.isPublic, status: values.status
+    level: values.level, sortOrder: values.sortOrder, isPublic: values.isPublic, status: values.status,
+    ...(values.egressClearConfirmed ? { egressProxy: null } : {})
   };
   const entryNodeId = values.entryNodeId || '';
   const isRelayWithLanding = values.type === 'RELAY' && values.relayMode !== 'TARGET_LINE' && values.relayMode !== 'UPSTREAM_NODE';
@@ -632,6 +638,7 @@ export function toLinePayload(values: LineFormValues): LinePayload {
     type: values.type,
     protocolType: values.protocolType,
     proxyPoolEnabled: values.proxyPoolEnabled,
+    ...(toEgressPayload(values) !== undefined ? { egressProxy: toEgressPayload(values) } : {}),
     params: buildParamsFromValues(values),
     relayMode: values.type === 'RELAY' ? values.relayMode : null,
     targetLineId: values.type === 'RELAY' && values.relayMode === 'TARGET_LINE' ? values.targetLineId || null : null,

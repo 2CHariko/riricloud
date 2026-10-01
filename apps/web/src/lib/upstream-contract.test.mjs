@@ -11,7 +11,7 @@ function load(relative) {
   const source = readFileSync(new URL(relative, import.meta.url), 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const exports = {};
-  runInNewContext(output, { exports, require: (name) => name === '@/i18n/config' ? { default: { t: (key) => key } } : name === './proxy-pool-line-capabilities' ? load('../pages/admin/lines/components/proxy-pool-line-capabilities.ts') : require(name), crypto: { randomUUID: () => '00000000-0000-0000-0000-000000000000' } });
+  runInNewContext(output, { exports, require: (name) => name === '@/i18n/config' ? { default: { t: (key) => key } } : name === './proxy-pool-line-capabilities' ? load('../pages/admin/lines/components/proxy-pool-line-capabilities.ts') : name === './line-egress-schema' ? load('../pages/admin/lines/components/line-egress-schema.ts') : require(name), crypto: { randomUUID: () => '00000000-0000-0000-0000-000000000000' } });
   return exports;
 }
 const schema = load('../pages/admin/lines/components/line-form-schema.ts');

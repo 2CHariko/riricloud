@@ -11,6 +11,7 @@ export function ExternalLineFields({ form, summary }: { form: UseFormReturn<Line
     <p className="text-sm text-destructive">{t('upstream.externalRisk')}</p>
     <p className="text-sm text-muted-foreground">{t('upstream.externalDefaults')}</p>
     <UpstreamNodePicker form={form} selectedSummary={summary} />
+    <p className="text-xs text-muted-foreground">{t('lineForm.egress.unsupported')}</p>
     <FieldGrid>
       <TextField form={form} name="tag" label={t('lineForm.tag')} />
       <TextField form={form} name="tags" label={t('lineForm.tags')} placeholder={t('lineForm.tagsPlaceholder')} />

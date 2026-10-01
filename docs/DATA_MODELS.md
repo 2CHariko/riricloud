@@ -306,6 +306,7 @@ model Line {
   relayMode       String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE | UPSTREAM_NODE
   protocolType    String   @default("VLESS") // ProtocolType
   paramsJson      String   @default("{}") // 协议专属参数 JSON；Reality 私钥按应用层 AES-GCM 加密保存
+  egressProxyJson  String? // 最终落地 HTTP/SOCKS5 出站整段 AES-GCM 密文；null 默认出站
   entryNodeId     String? // DIRECT/RELAY 必填，EXTERNAL 必须为空
   entryPort       Int?    // EXTERNAL 不分配端口
   landingNodeId   String?  // 普通中继落地节点；直连与 TARGET_LINE 为 null
@@ -1201,3 +1202,11 @@ Line 与 UpstreamNode 新增 `lastProbeJson String?`，保存 schemaVersion=1 �
 `Line.proxyPoolEnabled Boolean @default(false)` 只支持DIRECT/MIXED和RELAY/UPSTREAM_NODE/MIXED，上游入口仍须usersEnabled=true；开关关闭后普通订阅业务不变，独立ProxyKey不注入单HTTP/SOCKS或未参与线路。
 
 追加迁移 `20261001020000_proxy_pool_line_access` 只新增字段、为旧ACTIVE/public/DIRECT/MIXED且真实入口端口有效的线路回填true，其余默认false，不自动开放上游中继。保留用户/订阅/Line/Key、密码/exportToken、余额/流量/TrafficCursor；旧登录名停止新连接，升级须重新导出，不清现有库或历史账务。全量schema见apps/server/prisma/schema.prisma，代理池绑定不新增持久化表。
+
+## 14. 线路最终落地代理出站
+
+`Line.egressProxyJson String?` 保存规范化 HTTP/SOCKS5 连接的整段 AES-GCM 密文，包含认证与 UDP 策略，与入站 paramsJson 分离。迁移 `20261001030000_line_egress_proxy` 仅新增可空 TEXT 列，既有线路全为 null；不改变用户、Key、订阅、授权、余额、流量及游标，不启用任何出口。
+
+公共模块 line-egress 负责校验、密码保留、加密/解密与脱敏；HTTP 不含 TLS、不支持 UDP；SOCKS5 version=5、udpEnabled 默认 false。DIRECT 当前节点、自建双节点中继落地执行，TARGET_LINE 从目标直连继承，UPSTREAM_NODE/EXTERNAL 不允许独立出站。复制重加密并保留设置，副本禁用。PATCH null 清除，省略保持原密文；对象密码省略保留旧密码，关闭认证删除旧凭据。
+
+管理视图显式剥离当前/目标线路及节点关联的 egressProxyJson，仅返回不含密码的 egressProxy/hasPassword 和 effectiveEgress。用户摘要/订阅不交付出站连接。秘密只在实际执行节点配置编译时解密。线路出站变化清除派生拨测摘要，目标线路版本变化使桥接摘要 STALE；配置下发继续复用 WS/HTTP，不新增模型关系、任务表或 Go 协议。

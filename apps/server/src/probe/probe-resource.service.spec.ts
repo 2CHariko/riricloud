@@ -42,6 +42,20 @@ describe('资源快照与条件写入', () => {
     expect(snapshot.request.connection.params.uuid).toBe(INTERNAL_SPEEDTEST_UUID);
     expect(JSON.stringify(snapshot.request.connection)).not.toContain('secret');
   });
+  it('最终出站更新使线路与桥接拨测失效，旧结果不写回', async () => {
+    const { service, prisma } = setup();
+    const line = { id: 'line', status: 'ACTIVE', type: 'DIRECT', protocolType: 'VLESS', paramsJson: '{"tls":{"mode":"none"}}', entryNode: { id: 'entry', serverHost: 'example.com', status: 'ONLINE' }, entryPort: 443, updatedAt: new Date(2), egressProxyJson: 'old' };
+    prisma.line.findUnique.mockResolvedValue(line);
+    const snapshot = (await service.snapshot('LINE', 'line', service.reserve('LINE', ['line'])))!;
+    line.egressProxyJson = 'new';
+    expect(await service.persist(snapshot, { ...result('line'), subjectType: 'LINE', configHash: snapshot.version }, new AbortController().signal)).toBe(false);
+    const targetLine = { ...line, id: 'target' };
+    prisma.line.findUnique.mockResolvedValue({ ...line, type: 'RELAY', relayMode: 'TARGET_LINE', targetLine });
+    const bridge = (await service.snapshot('LINE', 'line', snapshot.sequence))!;
+    targetLine.updatedAt = new Date(4);
+    targetLine.egressProxyJson = 'changed';
+    expect((await service.snapshot('LINE', 'line', snapshot.sequence))!.version).not.toBe(bridge.version);
+  });
   it('同 ID 证书原地更新及目标线路证书更新阻断旧结果并失效展示', async () => {
     const { service, prisma } = setup();
     const certificate = { id: 'cert', updatedAt: new Date(1) };

@@ -72,6 +72,27 @@ export type RelayMode = 'BLIND_FORWARD' | 'PROTOCOL_PROXY' | 'TARGET_LINE' | 'UP
 export type LineStatus = 'ACTIVE' | 'DISABLED';
 export type ProtocolType = 'VLESS' | 'VMESS' | 'TROJAN' | 'HYSTERIA2' | 'TUIC' | 'SHADOWSOCKS' | 'NAIVE' | 'SHADOWTLS' | 'MIXED' | 'SOCKS' | 'HTTP' | 'DIRECT';
 
+export interface EgressProxyPayload {
+  protocol: 'HTTP' | 'SOCKS5';
+  serverHost: string;
+  serverPort: number;
+  authEnabled: boolean;
+  username?: string;
+  password?: string;
+  udpEnabled: boolean;
+}
+
+export interface ApiEgressProxy extends Omit<EgressProxyPayload, 'password'> {
+  hasPassword: boolean;
+}
+
+export interface ApiEffectiveEgress {
+  sourceLineId: string;
+  nodeId: string;
+  inherited: boolean;
+  proxy: ApiEgressProxy | null;
+}
+
 export interface ApiLine {
   id: string;
   name: string;
@@ -85,6 +106,8 @@ export interface ApiLine {
   protocolType: ProtocolType;
   proxyPoolEnabled: boolean;
   params: Record<string, unknown>;
+  egressProxy?: ApiEgressProxy | null;
+  effectiveEgress?: ApiEffectiveEgress | null;
   entryNodeId: string | null;
   entryPort: number | null;
   landingNodeId?: string | null;

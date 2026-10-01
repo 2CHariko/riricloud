@@ -135,6 +135,16 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `POST /admin/lines/batch-status`：批量启用/禁用线路。⭐ 请求 `{ ids: UUID[], status: "ACTIVE"|"DISABLED" }`。
 - `PATCH /admin/lines/reorder`：批量调整排序。⭐ 请求 `{ items: [{ id, sortOrder }] }`。
 
+##### 最终落地代理出站
+
+创建/编辑线路接收可选 `egressProxy: {protocol:'HTTP'|'SOCKS5',serverHost,serverPort,authEnabled,username?,password?,udpEnabled?} | null`。HTTP 为非 TLS CONNECT 代理，仅 TCP；SOCKS5 固定 v5，UDP 默认 false，开启需代理支持 UDP ASSOCIATE。地址为域名/IPv4/IPv6，端口 1～65535；拒绝 URL、未知字段、错误认证组合和 HTTP UDP。POST 省略/null 使用默认出站，PATCH 省略保留、null 清除；对象完整提交非秘密字段，认证开启且密码省略保留原密码，首次认证必须提供非空密码。关闭认证清除凭据，显式空密码报错。
+
+DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地执行，入口连接落地的路径不变。TARGET_LINE 继承目标 DIRECT 出站，不允许自身配置；UPSTREAM_NODE/EXTERNAL 不叠加。切换不支持模式必须显式清除旧配置，复制保留加密配置且副本默认禁用。
+
+管理响应返回脱敏 `egressProxy`（无 password，增加 hasPassword）和 `effectiveEgress:{sourceLineId,nodeId,inherited,proxy}`，不返回原始密文；节点详情关联同样剥离密文。用户摘要与所有客户端订阅不返回出站设置或凭据。目标仍为域名时交给代理解析，不主动本地解析成 IP；不保证客户端已解析的 IP 可还原，也不承诺远端 DNS 的私网安全性。
+
+执行节点有指定出站时，节点高级覆盖不得接管 inbounds/outbounds/route/dns，线路保存/启用与节点覆盖更新均校验冲突。来源白名单/原私网拒绝优先于出站路由，不支持的 UDP 拒绝；代理断开、认证错误和出站配置损坏没有 DIRECT 兜底。保存仅代表提交配置，在线 WS 防抖下发、HTTP 下一轮拉取，Agent 预检及应用回执沿用原契约；应用失败仍保留 last-good，不宣称已切换或即时终止旧连接。目标线路配置版本纳入桥接拨测失效，旧结果不得写回。配置同步使用失效代数防止旧构建污染缓存，各防抖批次只结算本轮等待者。
+
 #### 证书管理
 - `GET /admin/certificates?page&pageSize&search`：分页查询证书，支持按名称、主题、签发者和 SAN 搜索；响应为 `{ data, total, page, pageSize }`，返回 SAN、签发者、有效期、状态（`VALID`/`EXPIRING`/`EXPIRED`/`NOT_YET_VALID`）和关联线路数，不返回 PEM 私钥。⭐
 - `GET /admin/certificates/:id`：查询证书详情，除列表字段外返回 `certificatePem` 与 `privateKeyPem` 明文，必须由管理员鉴权。⭐

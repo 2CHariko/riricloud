@@ -1,3 +1,4 @@
+import { assertEgressOverride, buildEgressRoute, canConfigureEgress } from '../common/line-egress';
 import { buildUpstreamOutbound } from '../common/upstream-connection';
 import { getUpstreamUnavailableReason, isMeteredUpstreamEntry, type UpstreamAvailabilityNode } from '../common/upstream-availability';
 import { readUpstreamRelayConnection } from '../common/upstream-relay-connection';
@@ -283,6 +284,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   private nextDeviceEnforcementCleanupAt = 0;
   private readonly taskResults = new Map<string, TaskResult>();
   private readonly configCache = new Map<string, ConfigSyncData>();
+  private configRevision = 0;
   private readonly mirrorSessions = new Map<string, MirrorSession>();
   private readonly pendingHeartbeats = new Map<string, PendingHeartbeat>();
   private readonly heartbeatRetryTimers = new Map<string, NodeJS.Timeout>();
@@ -641,7 +643,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       void this.drainHeartbeats(nodeId);
     });
     if (deviceTrackingChanged) {
-      this.configCache.delete(nodeId);
+      this.invalidateConfig(nodeId);
       void this.pushConfig(nodeId);
     }
   }
@@ -1694,7 +1696,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       data: { singboxLogMode: 'NORMAL', singboxLogModeUntil: null }
     }));
     for (const node of expired) {
-      this.configCache.delete(node.id);
+      this.invalidateConfig(node.id);
       void this.pushConfig(node.id);
       this.systemLogsService?.enqueue({
         nodeId: node.id,
@@ -1723,7 +1725,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       where: { id: nodeId },
       data: { singboxLogMode: level, singboxLogModeUntil: expiresAt }
     }));
-    this.configCache.delete(nodeId);
+    this.invalidateConfig(nodeId);
     const requested = await this.pushConfig(nodeId);
     this.systemLogsService?.enqueue({
       nodeId,
@@ -1743,7 +1745,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       where: { id: nodeId },
       data: { singboxLogMode: 'NORMAL', singboxLogModeUntil: null }
     }));
-    this.configCache.delete(nodeId);
+    this.invalidateConfig(nodeId);
     const requested = await this.pushConfig(nodeId);
     this.systemLogsService?.enqueue({
       nodeId,
@@ -1876,6 +1878,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       relayMode: string | null;
       protocolType: string;
       paramsJson: string;
+      egressProxyJson?: string | null;
       entryNodeId: string | null;
       entryPort: number | null;
       landingNodeId: string | null;
@@ -1945,6 +1948,15 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     const bindingsByLine = new Map<string, ProxyPoolBinding[]>();
     for (const binding of bindings) bindingsByLine.set(binding.lineId, [...(bindingsByLine.get(binding.lineId) ?? []), binding]);
     const proxyPoolRules: Array<Record<string, unknown>> = [];
+    const egressRules: Array<Record<string, unknown>> = [];
+    const applyEgress = (line: ConfigLine, businessInbounds: Array<Record<string, unknown>>) => {
+      if (line.egressProxyJson == null) return;
+      assertEgressOverride(node.configOverride, line.id);
+      const built = buildEgressRoute(line.id, line.egressProxyJson, businessInbounds);
+      if (built.outbound) outbounds.push(built.outbound);
+      egressRules.push(...built.rules);
+      if (built.invalid) this.logger.warn(`Invalid egress configuration rejected for line ${line.id}`);
+    };
     const authorizedUsers = new Map<string, InboundUserCredential>();
     const usersForLine = (line: Pick<ConfigLine, 'id' | 'tagsJson' | 'isPublic' | 'status'>): InboundUserCredential[] => {
       const lineUsers = entitledSubscriptions
@@ -2013,6 +2025,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
       if (line.type === 'DIRECT' && isEntry) {
         const tag = lineTags.direct ?? `line-${line.id}`;
+        const start = inbounds.length;
         inbounds.push(...buildServerInbounds({
           type: protocolType,
           tag,
@@ -2024,6 +2037,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           proxyPoolUsers: proxyPoolUsersForTag(tag),
           listenOptions
         }));
+        applyEgress(line, inbounds.slice(start));
         continue;
       }
 
@@ -2155,6 +2169,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           ? [this.internalRelayTransitUser()]
           : users;
         const landingTag = lineTags.landing ?? `line-${line.id}-landing`;
+        const start = inbounds.length;
         const isSelfNat = (node as { reachability?: string }).reachability === 'NAT';
         inbounds.push(...buildServerInbounds({
           type: protocolType,
@@ -2169,11 +2184,12 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         }));
         if (isSelfNat && !line.allowLanAccess) {
           relayRules.push({
-            inbound: [landingTag],
+            inbound: inbounds.slice(start).filter(i => i.type !== 'shadowtls').map(i => i.tag),
             ip_cidr: PRIVATE_CIDR_BLOCKS,
             outbound: 'block'
           });
         }
+        if (canConfigureEgress(line.type, line.relayMode)) applyEgress(line, inbounds.slice(start));
       }
     }
 
@@ -2282,7 +2298,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           }
         }
       },
-      ...((proxyPoolRules.length || relayRules.length) ? { route: { rules: [...proxyPoolRules, ...relayRules] } } : {})
+      ...((proxyPoolRules.length || relayRules.length || egressRules.length) ? { route: { rules: [...proxyPoolRules, ...relayRules, ...egressRules] } } : {})
     };
     if (node.configOverride) {
       singboxConfig = deepMerge(singboxConfig, JSON.parse(node.configOverride) as Record<string, unknown>);
@@ -2339,12 +2355,24 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   }
 
 
+  private invalidateConfig(nodeId?: string): void {
+    this.configRevision += 1;
+    if (nodeId) this.configCache.delete(nodeId); else this.configCache.clear();
+  }
+
   private async getDesiredConfigSync(nodeId: string): Promise<ConfigSyncData> {
-    const cached = this.configCache.get(nodeId);
-    if (cached) return cached;
-    const payload = await this.buildConfigSync(nodeId);
-    this.configCache.set(nodeId, payload);
-    return payload;
+    // 配置变更期间的旧构建不能重新污染缓存，WS 与 HTTP 共用此屏障。
+    while (true) {
+      const cached = this.configCache.get(nodeId);
+      if (cached) return cached;
+      const revision = this.configRevision;
+      const payload = await this.buildConfigSync(nodeId);
+      if (revision !== this.configRevision) continue;
+      const latest = this.configCache.get(nodeId);
+      if (latest) return latest;
+      this.configCache.set(nodeId, payload);
+      return payload;
+    }
   }
 
   private buildProtocolRelayOutbound(
@@ -2484,8 +2512,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   // 向指定节点推送配置（reload 触发）
   async pushConfig(nodeId: string): Promise<boolean> {
     try {
-      const payload = await this.buildConfigSync(nodeId);
-      this.configCache.set(nodeId, payload);
+      this.invalidateConfig(nodeId);
+      const payload = await this.getDesiredConfigSync(nodeId);
       const socket = this.sockets.get(nodeId);
       if (!socket) {
         const node = await this.prisma.node.findUnique({
@@ -2504,7 +2532,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
   // 用户增删/资格变动时向全部在线节点推送（协议约定见 docs/API_AND_PROTOCOLS.md §2.2）
   async pushConfigToAll(): Promise<number> {
-    this.configCache.clear();
+    this.invalidateConfig();
     const settings = await this.settingsService?.getSettings();
     const debounceMs = settings?.configSyncDebounceMs ?? 250;
     return new Promise((resolve) => {
@@ -2512,10 +2540,10 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       if (this.configPushTimer) clearTimeout(this.configPushTimer);
       this.configPushTimer = setTimeout(() => {
         this.configPushTimer = undefined;
+        const waiters = this.configPushWaiters.splice(0);
         void this.flushConfigToAll().then((count) => {
-          const waiters = this.configPushWaiters.splice(0);
           waiters.forEach((waiter) => waiter(count));
-        });
+        }).catch(() => waiters.forEach((waiter) => waiter(0)));
       }, debounceMs);
     });
   }
@@ -2931,7 +2959,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     this.sockets.clear();
     this.pendingTasks.clear();
     this.taskResults.clear();
-    this.configCache.clear();
+    this.invalidateConfig();
     this.mirrorSessions.clear();
     this.pendingHeartbeats.clear();
     this.versionConfirmations.clear();

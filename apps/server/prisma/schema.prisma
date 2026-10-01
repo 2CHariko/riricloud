@@ -275,6 +275,7 @@ model Line {
   relayMode               String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE | UPSTREAM_NODE
   protocolType            String    @default("VLESS") // ProtocolType
   paramsJson              String    @default("{}") // 协议专属参数 JSON
+  egressProxyJson         String? // 最终落地出站配置整段 AES-GCM 密文；null 使用默认出站
   entryNodeId             String?
   entryPort               Int?
   landingNodeId           String?

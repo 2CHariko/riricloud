@@ -22,6 +22,7 @@ import { LineInboundFields } from './line-inbound-fields';
 import { defaultLineFormValues, lineFormSchema, lineToFormValues, newLineFormValues, toLinePayload, type LineFormValues } from './line-form-schema';
 import type { ApiCertificate, ProtocolType, ApiUpstreamNode } from '@/lib/api';
 import { LineProxyPoolField } from './line-proxy-pool-field';
+import { egressToFormValues, hasEgressDraft, supportsOwnEgress, type EgressFormValues } from './line-egress-schema';
 
 interface LineFormDialogProps {
   open: boolean;
@@ -40,6 +41,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
   const { t } = useTranslation(['admin', 'common']);
   const [tab, setTab] = useState('inbound');
   const [confirmPayload, setConfirmPayload] = useState<LinePayload | null>(null);
+  const [pendingTopologyChange, setPendingTopologyChange] = useState<(() => void) | null>(null);
   const detail = useQuery({ queryKey: ['admin', 'line-detail', line?.id, open], queryFn: async () => (await api.get<{ line: AdminLine }>(`/admin/lines/${line!.id}`)).data.line, enabled: open && !!line, staleTime: 0, gcTime: 0, refetchOnWindowFocus: false });
   const ready = !line || (detail.isFetchedAfterMount && !!detail.data);
   const form = useForm<LineFormValues>({
@@ -56,6 +58,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
       setTab('inbound');
       const maxSort = lines.length ? Math.max(...lines.map((item) => item.sortOrder ?? 0)) : 0;
       setConfirmPayload(null);
+      setPendingTopologyChange(null);
       if (line && detail.data) {
         form.reset(lineToFormValues(detail.data));
       } else if (initialUpstreamNode) {
@@ -77,6 +80,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
     const next = defaultLineFormValues(protocolType);
     form.reset({
       ...next,
+      ...Object.fromEntries(Object.entries(current).filter(([key]) => key.startsWith('egress'))) as EgressFormValues,
       name: current.name,
       tag: current.tag,
       listen: current.listen,
@@ -107,7 +111,20 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
     });
   };
 
-  const changeType = (nextType: LineFormValues['type']) => {
+  const requestTopologyChange = (next: Pick<LineFormValues, 'type' | 'relayMode'>, apply: () => void) => {
+    if (!supportsOwnEgress(next) && hasEgressDraft(form.getValues())) {
+      setPendingTopologyChange(() => apply);
+    } else apply();
+  };
+
+  const changeRelayMode = (relayMode: NonNullable<LineFormValues['relayMode']>) => {
+    requestTopologyChange({ type: form.getValues('type'), relayMode }, () => {
+      form.setValue('relayMode', relayMode, { shouldDirty: true });
+      if (relayMode !== 'TARGET_LINE') form.setValue('targetLineId', '', { shouldDirty: true });
+    });
+  };
+
+  const applyType = (nextType: LineFormValues['type']) => {
     form.setValue('type', nextType, { shouldDirty: true });
     if (nextType === 'EXTERNAL') {
       form.setValue('isPublic', false, { shouldDirty: true });
@@ -121,6 +138,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
       form.setValue('targetLineId', '', { shouldDirty: true });
     }
   };
+  const changeType = (type: LineFormValues['type']) => requestTopologyChange({ type, relayMode: form.getValues('relayMode') }, () => applyType(type));
 
   const generateKeys = () => {
     realityKeypair.mutate(undefined, {
@@ -149,7 +167,9 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
           <DialogTitle>{line ? t('admin:lines.editLine') : t('admin:lines.createLine')}</DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form noValidate onSubmit={form.handleSubmit(submit)} className="space-y-4">
+          <form noValidate onSubmit={form.handleSubmit(submit, (errors) => {
+            if (Object.keys(errors).some((key) => key.startsWith('egress'))) setTab('advanced');
+          })} className="space-y-4">
             <FormField control={form.control} name="name" render={({ field }) => (
               <FormItem><FormLabel>{t('admin:lines.name')}</FormLabel><FormControl><Input disabled={!ready} placeholder={t('admin:lineForm.namePlaceholder')} {...field} /></FormControl><FormMessage /></FormItem>
             )} />
@@ -163,7 +183,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
                 <TabsTrigger value="advanced">{t('admin:lineForm.tabAdvanced')}</TabsTrigger>
               </TabsList>
               <TabsContent value="inbound" className="mt-4"><LineInboundFields form={form} nodes={nodes} certificates={certificates} onProtocolChange={changeProtocol} onGenerateKeys={generateKeys} keyPending={realityKeypair.isPending} /></TabsContent>
-              <TabsContent value="advanced" className="mt-4"><LineAdvancedFields form={form} nodes={nodes} lines={options.data?.data ?? []} currentLineId={line?.id} onTypeChange={changeType} /></TabsContent>
+              <TabsContent value="advanced" className="mt-4"><LineAdvancedFields form={form} nodes={nodes} lines={options.data?.data ?? []} currentLineId={line?.id} onTypeChange={changeType} onRelayModeChange={changeRelayMode} /></TabsContent>
             </Tabs>}
             </>}
             <DialogFooter>
@@ -174,6 +194,20 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
         </Form>
       </ResponsiveDialogContent>
       <AlertDialog open={!!confirmPayload} onOpenChange={(value) => !value && setConfirmPayload(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('admin:upstream.externalConfirm')}</AlertDialogTitle><AlertDialogDescription>{t('admin:upstream.externalRisk')} {t('admin:upstream.publicAllImpact')}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel><AlertDialogAction disabled={pending} onClick={() => { if (confirmPayload) onSubmit(confirmPayload); setConfirmPayload(null); }}>{t('common:actions.save')}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={!!pendingTopologyChange} onOpenChange={(value) => !value && setPendingTopologyChange(null)}>
+        <AlertDialogContent><AlertDialogHeader>
+          <AlertDialogTitle>{t('admin:lineForm.egress.clearTitle')}</AlertDialogTitle>
+          <AlertDialogDescription>{t('admin:lineForm.egress.clearDesc')}</AlertDialogDescription>
+        </AlertDialogHeader><AlertDialogFooter>
+          <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={() => {
+            const cleared = { ...egressToFormValues(), egressClearConfirmed: true };
+            for (const key of Object.keys(cleared) as Array<keyof EgressFormValues>) form.setValue(key, cleared[key], { shouldDirty: true });
+            pendingTopologyChange?.();
+            setPendingTopologyChange(null);
+          }}>{t('admin:lineForm.egress.clearAction')}</AlertDialogAction>
+        </AlertDialogFooter></AlertDialogContent>
+      </AlertDialog>
     </ResponsiveDialog>
   );
 }

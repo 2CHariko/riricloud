@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import i18n from '@/i18n/config';
 import { api, extractErrorMessage, type ApiLine, type LineStatus, type LineType, type ProtocolType, type RelayMode } from '@/lib/api';
 
+import type { EgressProxyPayload } from '@/lib/api';
 export type { ApiLine as AdminLine };
 
 interface LineAttributes {
@@ -18,6 +19,7 @@ interface LineAttributes {
 export interface ExternalLinePayload extends LineAttributes {
   type: 'EXTERNAL';
   upstreamNodeId: string;
+  egressProxy?: null;
 }
 
 export interface ManagedLinePayload extends LineAttributes {
@@ -26,6 +28,7 @@ export interface ManagedLinePayload extends LineAttributes {
   protocolType: ProtocolType;
   proxyPoolEnabled: boolean;
   params: Record<string, unknown>;
+  egressProxy?: EgressProxyPayload | null;
   relayMode?: RelayMode | null;
   targetLineId?: string | null;
   upstreamNodeId?: string | null;

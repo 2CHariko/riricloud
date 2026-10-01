@@ -8,13 +8,15 @@ import type { AdminNode } from '../../nodes/use-nodes';
 import type { AdminLine } from '../use-lines';
 import { FieldGrid, SelectField, SwitchField, TextField } from './line-form-controls';
 import { TARGET_LINE_PROTOCOLS, type LineFormValues } from './line-form-schema';
+import { LineEgressFields } from './line-egress-fields';
 
-export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeChange }: {
+export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeChange, onRelayModeChange }: {
   form: UseFormReturn<LineFormValues>;
   nodes: AdminNode[];
   lines: AdminLine[];
   currentLineId?: string;
   onTypeChange: (type: LineFormValues['type']) => void;
+  onRelayModeChange: (mode: NonNullable<LineFormValues['relayMode']>) => void;
 }) {
   const { t } = useTranslation(['admin']);
   const type = form.watch('type');
@@ -46,8 +48,7 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
   }));
   const changeRelayMode = (value: string) => {
     if (value !== 'BLIND_FORWARD' && value !== 'PROTOCOL_PROXY' && value !== 'TARGET_LINE' && value !== 'UPSTREAM_NODE') return;
-    form.setValue('relayMode', value, { shouldDirty: true });
-    if (value !== 'TARGET_LINE') form.setValue('targetLineId', '', { shouldDirty: true });
+    onRelayModeChange(value);
   };
   const changeTargetLine = (value: string) => {
     form.setValue('targetLineId', value, { shouldDirty: true });
@@ -148,6 +149,8 @@ export function LineAdvancedFields({ form, nodes, lines, currentLineId, onTypeCh
         </div>}
         {type === 'RELAY' && relayMode === 'UPSTREAM_NODE' && <UpstreamNodePicker form={form} />}
       </section>
+      <Separator />
+      <LineEgressFields form={form} nodes={nodes} lines={lines} />
 
       <Separator />
       <section className="space-y-3">
