@@ -43,6 +43,8 @@ RiriCloud 采用 shadcn/ui 的 **New York** 风格预设，以更紧凑的内边
 > **系统设置 · Agent 分发源配置**：设置页「Agent 运维」分组内的「项目 GitHub 仓库地址」（`SettingsInput`）与「GitHub 加速镜像列表」（`SettingsTextarea`，每行一个前缀代理 URL），为节点安装脚本的 GitHub Release 优先下载与镜像测速提供数据源，与「二进制分发基准 URL」同域展示。
 > **安装命令选择器 · 平台可用性提示**：选择器按当前 OS tab 与节点上报架构匹配 `agent-<os>-<arch>` 的主控二进制清单（`/admin/binaries/info`），可用时展示 success 绿色提示、缺失时展示 warning 琥珀色提示（安装脚本将回退 GitHub Release/镜像下载），不阻断安装。
 > **系统设置 · 数据库存储与碎片整理 (VACUUM)**：设置页「存储与日志」卡片与「历史观测数据清理」通用弹窗中集成 SQLite 数据库文件尺寸监控（实时展示业务主库 `riri.db`、观测库 `telemetry.db` 与总占用）及手动碎片整理与空间收缩（VACUUM）操作，清理或整理执行后即时反馈释放的物理磁盘字节数。
+> **异步端到端拨测**：上游与线路共用 `ProbeTaskDialog` / `useProbeTask`。提交消费 HTTP 202 回执，待处理状态每秒轮询，结果服务端分页；关闭/卸载只停止观察，不隐式取消，取消必须显式 DELETE，任务 ID 保留供重开。仅 schemaVersion=1 安全元信息用于延迟展示；显示 MASTER 视角、实际内核/版本/目标/路由和时间，Sing-box 回退使用 warning 并说明不等于 Mihomo 兼容。STALE、取消、跳过、环境不可用、不支持与真实网络失败必须区分。系统设置提供独立回退开关及内核画像；模板检查仅消费对应格式 `kernelCheck`，只有 executed=true、PASSED、FULL 才称完整通过。
+> 已完成、已取消和失败终态都刷新资源列表：批量任务取消或截止前可能已有前序批次写回，不能只按 COMPLETED 刷新。关闭弹窗仍不触发取消。
 
 ### 2.3 全局基础控件与微交互规范 (Scrollbar & Input Controls)
 

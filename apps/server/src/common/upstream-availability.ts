@@ -45,8 +45,10 @@ export function getUpstreamUnavailableReason(node: UpstreamAvailabilityNode, now
 }
 
 export function isMeteredUpstreamEntry(protocolType: string, params: Record<string, unknown>): boolean {
-  if (['DIRECT', 'SHADOWTLS', 'MIXED'].includes(protocolType)) return false;
+  if (['DIRECT', 'SHADOWTLS'].includes(protocolType)) return false;
   if (params.usersEnabled === false || params.users_enabled === false) return false;
+  // 三种密码入口使用同一鉴权实现；缺省关闭鉴权，必须显式开启才能归属用户流量。
+  if (['MIXED', 'SOCKS', 'HTTP'].includes(protocolType)) return params.usersEnabled === true;
   if (protocolType === 'SHADOWSOCKS') return params.mode === 'multi-user' && typeof params.method === 'string' && params.method.startsWith('2022-');
-  return ['VLESS', 'VMESS', 'TROJAN', 'HYSTERIA2', 'TUIC', 'NAIVE', 'SOCKS', 'HTTP'].includes(protocolType);
+  return ['VLESS', 'VMESS', 'TROJAN', 'HYSTERIA2', 'TUIC', 'NAIVE'].includes(protocolType);
 }

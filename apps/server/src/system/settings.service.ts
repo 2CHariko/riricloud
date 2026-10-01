@@ -104,6 +104,7 @@ export const SETTING_KEYS = {
   LINE_SPEEDTEST_INTERVAL_MINS: 'lineSpeedtestIntervalMins',
   LINE_SPEEDTEST_TARGET_URL: 'lineSpeedtestTargetUrl',
   LINE_SPEEDTEST_TIMEOUT_MS: 'lineSpeedtestTimeoutMs',
+  PROBE_SINGBOX_FALLBACK_ENABLED: 'probeSingboxFallbackEnabled',
   SYSTEM_TIMEZONE: 'systemTimezone',
   SMTP_ENABLED: 'smtpEnabled',
   SMTP_HOST: 'smtpHost',
@@ -184,6 +185,7 @@ export interface SystemSettings {
   lineSpeedtestIntervalMins: number;
   lineSpeedtestTargetUrl: string;
   lineSpeedtestTimeoutMs: number;
+  probeSingboxFallbackEnabled: boolean;
   systemTimezone: string;
   smtpEnabled: boolean;
   smtpHost: string;
@@ -314,8 +316,9 @@ export const DEFAULTS: SystemSettings = {
   customHeadHtml: '',
   lineSpeedtestEnabled: true,
   lineSpeedtestIntervalMins: 30,
-  lineSpeedtestTargetUrl: 'http://cp.cloudflare.com/generate_204',
+  lineSpeedtestTargetUrl: 'https://cp.cloudflare.com/generate_204',
   lineSpeedtestTimeoutMs: 3000,
+  probeSingboxFallbackEnabled: true,
   systemTimezone: 'Asia/Shanghai',
   smtpEnabled: false,
   smtpHost: '',
@@ -396,6 +399,7 @@ const DESCRIPTIONS: Record<keyof SystemSettings, string> = {
   lineSpeedtestIntervalMins: '线路自动测速执行周期（分钟）',
   lineSpeedtestTargetUrl: '线路测速测试目标 URL',
   lineSpeedtestTimeoutMs: '线路测速单次超时阈值（毫秒）',
+  probeSingboxFallbackEnabled: '是否允许能力白名单内的 Sing-box 兼容拨测（不对网络/环境失败回退）',
   systemTimezone: '系统统一时区',
   smtpEnabled: '是否启用 SMTP 发信服务',
   smtpHost: 'SMTP 服务器地址',
@@ -575,6 +579,7 @@ export class SettingsService implements OnModuleInit {
       lineSpeedtestIntervalMins: this.readInteger(map, 'lineSpeedtestIntervalMins', 1, 1440),
       lineSpeedtestTargetUrl: this.readString(map, 'lineSpeedtestTargetUrl'),
       lineSpeedtestTimeoutMs: this.readInteger(map, 'lineSpeedtestTimeoutMs', 500, 30000),
+      probeSingboxFallbackEnabled: this.readBoolean(map, 'probeSingboxFallbackEnabled'),
       systemTimezone: this.readTimezone(map, 'systemTimezone'),
       smtpEnabled: this.readBoolean(map, 'smtpEnabled'),
       smtpHost: this.readString(map, 'smtpHost'),

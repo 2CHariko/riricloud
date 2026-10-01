@@ -116,7 +116,9 @@ describe('AgentService per-line authorization', () => {
       { ...base, id: 'expired', upstreamNode: { ...upstream, subscription: { ...upstream.subscription, userInfoExpireAt: new Date(0) } } },
       { ...base, id: 'missing', upstreamNode: { ...upstream, presenceStatus: 'MISSING' } },
       { ...base, id: 'shared-ss', protocolType: 'SHADOWSOCKS', paramsJson: JSON.stringify({ method: 'aes-256-gcm', password: 'shared' }) },
-      { ...base, id: 'unauth', protocolType: 'SOCKS', paramsJson: JSON.stringify({ usersEnabled: false }) }
+      { ...base, id: 'unauth', protocolType: 'SOCKS', paramsJson: JSON.stringify({ usersEnabled: false }) },
+      { ...base, id: 'unauth-mixed', protocolType: 'MIXED', paramsJson: JSON.stringify({ usersEnabled: false }) },
+      { ...base, id: 'missing-auth-mixed', protocolType: 'MIXED', paramsJson: '{}' }
     ], landingLines: [] });
     prisma.subscription.findMany.mockResolvedValue([]);
     const result = await new AgentService(prisma as never).buildConfigSync('node-1');
@@ -124,7 +126,7 @@ describe('AgentService per-line authorization', () => {
     expect(JSON.stringify(result)).not.toContain('external-secret');
   });
 
-  it.each(['SOCKS', 'HTTP', 'NAIVE'] as const)('密码协议 %s 客户端用户名和真实入站完全一致', async (protocolType) => {
+  it.each(['MIXED', 'SOCKS', 'HTTP', 'NAIVE'] as const)('密码协议 %s 客户端用户名和真实入站完全一致', async (protocolType) => {
     const localLine = { ...line('password-line', true, '[]'), protocolType, paramsJson: JSON.stringify({ usersEnabled: true, ...(protocolType === 'NAIVE' ? { tls: { mode: 'tls', enabled: true, certificatePath: '/cert', keyPath: '/key' } } : {}) }) };
     const upstream = { status: 'ACTIVE', presenceStatus: 'PRESENT', protocolType: 'TROJAN', serverHost: 'up.example.com', serverPort: 443, paramsJson: encryptSecret(JSON.stringify({ password: 'up-secret' })), subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null } };
     prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: 'entry.example.com', status: 'ONLINE', entryLines: [{ ...localLine, type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNode: upstream }], landingLines: [] });
@@ -134,6 +136,9 @@ describe('AgentService per-line authorization', () => {
     expect(inbound.users[0].username).toBe(formatAuthUserName(userOne, 'password-line'));
     expect(inbound.users[0].username).not.toContain(':');
     expect(parseTrafficCredential(inbound.users[0].username)).toEqual({ rawCredential: userOne.email, lineId: 'password-line' });
+    expect(inbound.users).toHaveLength(2);
+    expect(inbound.users.some((item) => item.username.startsWith('pk_'))).toBe(false);
+    expect((config.singboxConfig.experimental as { v2ray_api: { stats: { users: string[] } } }).v2ray_api.stats.users).toContain(inbound.users[0].username);
     const source = { id: localLine.id, name: 'Password line', protocolType, params: JSON.parse(localLine.paramsJson), serverHost: 'entry.example.com', serverPort: 24443 };
     const credentials = { ...userOne, credential: userOne.password };
     expect(JSON.parse(buildSingboxJson(credentials, [source])).outbounds.find((out: { tag: string }) => out.tag === source.name).username).toBe(inbound.users[0].username);

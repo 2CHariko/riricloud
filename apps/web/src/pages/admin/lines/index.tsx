@@ -23,7 +23,8 @@ import { useAdminNodes } from '../nodes/use-nodes';
 import { useAdminCertificates } from '../certificates/use-certificates';
 import { LineFormDialog } from './components/line-form-dialog';
 import { LineSpeedtestDialog } from './components/line-speedtest-dialog';
-import { LineLatencyChip } from '@/components/shared/line-latency-chip';
+import { ProbeMeasurementChip } from '@/components/shared/probe-result';
+import { ProbeTaskDialog } from '@/components/shared/probe-task-dialog';
 import { usePublicSettings } from '@/lib/public-settings';
 import { formatSpeedLimit, getSpeedTierBadgeClass } from '@/lib/speed-tier';
 import { useAdminLines, useLineMutations, type AdminLine } from './use-lines';
@@ -41,6 +42,7 @@ export default function AdminLinesPage() {
   const [editing, setEditing] = React.useState<AdminLine | null>(null);
   const [deleting, setDeleting] = React.useState<AdminLine | null>(null);
   const [speedtestingLine, setSpeedtestingLine] = React.useState<AdminLine | null>(null);
+  const [batchProbeOpen, setBatchProbeOpen] = React.useState(false);
   const [initialUpstreamNode, setInitialUpstreamNode] = React.useState<ApiUpstreamNode | null>(null);
   const location = useLocation();
   React.useEffect(() => {
@@ -89,7 +91,7 @@ export default function AdminLinesPage() {
   const { data: certificates } = useAdminCertificates();
   const { data: publicSettings } = usePublicSettings();
   const unitConversion = publicSettings?.speedLimitUnitConversionEnabled !== false;
-  const { create, update, remove, duplicate, testResolve, batchStatus, reorder, speedtest, speedtestAll } = useLineMutations();
+  const { create, update, remove, duplicate, testResolve, batchStatus, reorder } = useLineMutations();
   const lines = data?.data ?? [];
   const allSelected = lines.length > 0 && lines.every((line) => selected.has(line.id));
   const busy = create.isPending || update.isPending;
@@ -156,12 +158,12 @@ export default function AdminLinesPage() {
         <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
           <Button
             variant="outline"
-            disabled={speedtestAll.isPending || !lines.length}
-            onClick={() => speedtestAll.mutate()}
+            disabled={!lines.length}
+            onClick={() => setBatchProbeOpen(true)}
             className="w-full sm:w-auto"
           >
-            <Activity className={cn('size-4', speedtestAll.isPending && 'animate-spin text-primary')} />
-            {speedtestAll.isPending ? t('admin:lines.speedtestingAll') : t('admin:lines.speedtestAll')}
+            <Activity className="size-4" />
+            {t('admin:probes.batchTitle')}
           </Button>
           <Button className="w-full sm:w-auto" onClick={openCreate}><Plus />{t('admin:lines.createLine')}</Button>
         </div>
@@ -199,8 +201,8 @@ export default function AdminLinesPage() {
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs space-y-1 text-xs">
                           <p className="font-semibold">{t('admin:lines.latencyHelpTitle')}</p>
-                          <p>{t('admin:lines.latencyHelpDesc')}</p>
-                          <p className="text-primary text-[11px]">{t('admin:lines.latencyHelpClick')}</p>
+                          <p>{t('admin:probes.description')}</p>
+                          <p className="text-primary text-[11px]">{t('admin:probes.closeHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -222,20 +224,14 @@ export default function AdminLinesPage() {
                     </TableCell>
                     <TableCell><div className="flex max-w-40 flex-wrap gap-1">{Boolean(line.speedLimitMbps) && <Badge variant="outline" className={cn('gap-1', getSpeedTierBadgeClass(line.speedLimitMbps, publicSettings?.speedLimitColorTiers))}><Zap className="size-3" />{formatSpeedLimit(line.speedLimitMbps, unitConversion)}</Badge>}{line.tags.map((item) => <Badge key={item} variant="secondary">#{item}</Badge>)}<Badge variant="outline">{line.trafficRate}x</Badge></div></TableCell>
                     <TableCell>
-                      <LineLatencyChip
-                        latencyMs={line.lastLatencyMs}
-                        status={line.lastTestStatus}
-                        message={line.lastTestMessage}
-                        testedAt={line.lastTestedAt}
-                        onClick={() => setSpeedtestingLine(line)}
-                      />
+                      <ProbeMeasurementChip value={line.lastProbe} onClick={() => setSpeedtestingLine(line)} />
                     </TableCell>
                     <TableCell><div className="flex flex-col items-start gap-1"><Badge variant={line.status === 'ACTIVE' ? 'default' : 'secondary'}>{line.status === 'ACTIVE' ? t('admin:lines.statusActive') : t('admin:lines.statusDisabled')}</Badge>{!line.isPublic && <span className="text-xs text-muted-foreground">{t('admin:lines.privateLine')}</span>}</div></TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
                         <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.moveUp')} disabled={index === 0 || reorder.isPending} onClick={() => move(line, -1)}><ArrowUp /></IconButton>
                         <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.moveDown')} disabled={index === lines.length - 1 || reorder.isPending} onClick={() => move(line, 1)}><ArrowDown /></IconButton>
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.instantSpeedtest')} tooltip={t('admin:lines.instantSpeedtestTitle')} disabled={speedtest.isPending && speedtest.variables === line.id} onClick={() => setSpeedtestingLine(line)}><Activity className={cn('size-4', speedtest.isPending && speedtest.variables === line.id && 'animate-spin text-primary')} /></IconButton>
+                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:probes.title')} tooltip={t('admin:probes.title')} onClick={() => setSpeedtestingLine(line)}><Activity className="size-4" /></IconButton>
                         <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.testResolve')} disabled={testResolve.isPending} onClick={() => testResolve.mutate(line.id)}><Zap /></IconButton>
                         <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.duplicateLine')} disabled={duplicate.isPending} onClick={() => duplicate.mutate(line.id)}><Copy /></IconButton>
                         <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.editLine')} onClick={() => openEdit(line)}><Pencil /></IconButton>
@@ -254,6 +250,7 @@ export default function AdminLinesPage() {
       <ServerPagination page={page} pageSize={20} total={data?.total ?? 0} onPageChange={setPage} />
       <LineFormDialog open={formOpen} createExternal={createExternal} onOpenChange={(open) => { setFormOpen(open); if (!open) setInitialUpstreamNode(null); }} line={editing} initialUpstreamNode={initialUpstreamNode} nodes={nodes ?? []} lines={lines} certificates={certificates?.data ?? []} pending={busy} onSubmit={(payload) => editing ? update.mutate({ id: editing.id, ...payload }, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } }) : create.mutate(payload, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } })} />
       <LineSpeedtestDialog open={!!speedtestingLine} onOpenChange={(open) => !open && setSpeedtestingLine(null)} line={speedtestingLine} />
+      <ProbeTaskDialog open={batchProbeOpen} onOpenChange={setBatchProbeOpen} request={{ key: 'lines:all', endpoint: '/admin/lines/speedtest-all' }} title={t('admin:probes.batchTitle')} />
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -275,7 +272,7 @@ export default function AdminLinesPage() {
         </div>
         <div className="flex items-center gap-1.5 opacity-85">
           <Activity className="h-3.5 w-3.5 shrink-0" />
-          <span>{t('admin:lines.footerSpeedtestNote')}</span>
+          <span>{t('admin:probes.description')}</span>
         </div>
       </div>
     </PageContainer>

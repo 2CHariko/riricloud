@@ -1,5 +1,4 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
-import * as net from 'node:net';
 import type { Prisma, UpstreamSubscription, UpstreamNode } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentGatewayService } from '../agent-gateway/agent-gateway.service';
@@ -16,9 +15,11 @@ import { QueryUpstreamNodeDto } from './dto/query-upstream-node.dto';
 import { ExportUpstreamNodesDto } from './dto/export-upstream-nodes.dto';
 import type { UpstreamNodeStatus } from '../common/constants';
 import type { ParseResult, ParsedUpstreamNode, UpstreamUserInfo } from './upstream.types';
+import { readLastProbe } from '../probe/probe-result';
+import { nodeProbeVersion, probeHash } from '../probe/probe-resource.service';
 
 type NodeWithRelations = UpstreamNode & {
-  subscription?: { id: string; name: string; status: string } | null;
+  subscription?: Pick<UpstreamSubscription, 'id' | 'name' | 'status' | 'updatedAt' | 'userInfoUsedBytes' | 'userInfoTotalBytes' | 'userInfoExpireAt'> | null;
   relayLines?: Array<{ id: string; name: string; status: string }>;
 };
 type SyncSummary = { success: true; created: number; updated: number; missing: number; nodeCount: number; format: string; diagnostics: ParseResult['diagnostics']; userInfo: { uploadBytes: string | null; downloadBytes: string | null; usedBytes: string | null; totalBytes: string | null; expireAt: string | null } | null };
@@ -247,7 +248,8 @@ export class UpstreamService implements OnModuleInit, OnModuleDestroy {
           paramsJson: seal(JSON.stringify(node.params)), rawConfigJson: seal(JSON.stringify(node.rawConfig)), tagsJson: JSON.stringify(node.tags), presenceStatus: 'PRESENT', missingSince: null };
         if (old) {
           if (old.configHash !== node.configHash || old.presenceStatus !== 'PRESENT' || old.sourceKey !== data.sourceKey) {
-            await tx.upstreamNode.update({ where: { id: old.id }, data }); counts.updated++;
+            await tx.upstreamNode.update({ where: { id: old.id }, data: { ...data, lastProbeJson: null, latencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null } }); counts.updated++;
+            await tx.line.updateMany({ where: { upstreamNodeId: old.id }, data: { lastProbeJson: null, lastLatencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null } });
           }
           if (old.connectionHash !== node.connectionHash || old.presenceStatus !== 'PRESENT') notify = true;
         } else { await tx.upstreamNode.create({ data: { subscriptionId: sub.id, ...data, status: 'ACTIVE' } }); counts.created++; notify = true; }
@@ -255,7 +257,7 @@ export class UpstreamService implements OnModuleInit, OnModuleDestroy {
       if (missing.length) {
         for (let offset = 0; offset < missing.length; offset += PAGE_BATCH) {
           const ids = missing.slice(offset, offset + PAGE_BATCH).map((node) => node.id);
-          await tx.upstreamNode.updateMany({ where: { id: { in: ids } }, data: { presenceStatus: 'MISSING', missingSince: new Date() } });
+          await tx.upstreamNode.updateMany({ where: { id: { in: ids } }, data: { presenceStatus: 'MISSING', missingSince: new Date(), lastProbeJson: null, latencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null } });
           await tx.line.updateMany({ where: { upstreamNodeId: { in: ids } }, data: { status: 'DISABLED' } });
         }
       }
@@ -296,7 +298,7 @@ export class UpstreamService implements OnModuleInit, OnModuleDestroy {
       where.id = { in: ids };
     }
     const [rows, total] = await Promise.all([
-      this.prisma.upstreamNode.findMany({ where, include: { subscription: { select: { id: true, name: true, status: true } }, relayLines: { select: { id: true, name: true, status: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: filteredTotal === undefined ? (page - 1) * pageSize : 0, take: pageSize }),
+      this.prisma.upstreamNode.findMany({ where, include: { subscription: { select: { id: true, name: true, status: true, updatedAt: true, userInfoUsedBytes: true, userInfoTotalBytes: true, userInfoExpireAt: true } }, relayLines: { select: { id: true, name: true, status: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: filteredTotal === undefined ? (page - 1) * pageSize : 0, take: pageSize }),
       filteredTotal ?? this.prisma.upstreamNode.count({ where })
     ]);
     return { data: rows.map((node) => this.toNodeView(node)), total, page, pageSize };
@@ -308,7 +310,7 @@ export class UpstreamService implements OnModuleInit, OnModuleDestroy {
       const updated = await this.prisma.$transaction(async (tx) => {
         const current = await tx.upstreamNode.findUnique({ where: { id } });
         if (!current) throw new NotFoundException('上游节点不存在');
-        const result = await tx.upstreamNode.update({ where: { id }, data: { status } });
+        const result = await tx.upstreamNode.update({ where: { id }, data: { status, lastProbeJson: null, latencyMs: null, lastTestedAt: null, lastTestStatus: null, lastTestMessage: null } });
         if (status === 'DISABLED') await tx.line.updateMany({ where: { upstreamNodeId: id }, data: { status: 'DISABLED' } });
         return result;
       });
@@ -316,56 +318,6 @@ export class UpstreamService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async probeNode(id: string) {
-    const node = await this.findNodeOrThrow(id);
-    return this.serial(node.subscriptionId, async () => {
-      const current = await this.prisma.upstreamNode.findUnique({ where: { id }, include: { subscription: true } });
-      if (!current) throw new NotFoundException('上游节点不存在');
-      const unavailable = getUpstreamUnavailableReason(current);
-      const result = unavailable ? { latencyMs: null, status: 'NOT_APPLICABLE', message: '上游资源不可用' } : ['TUIC', 'HYSTERIA2'].includes(current.protocolType) ? { latencyMs: null, status: 'NOT_APPLICABLE', message: 'UDP-only 协议不适用 TCP 探针' } : await this.measureTcpLatency(current.serverHost, current.serverPort);
-      const updated = await this.prisma.upstreamNode.update({ where: { id }, data: { latencyMs: result.latencyMs, lastTestedAt: new Date(), lastTestStatus: result.status, lastTestMessage: result.message } });
-      return { probe: { ...result, perspective: 'MASTER_TCP' }, node: this.toNodeView(updated) };
-    });
-  }
-  async probeAll(subscriptionId?: string) {
-    const where: Prisma.UpstreamNodeWhereInput = { status: 'ACTIVE', ...(subscriptionId ? { subscriptionId } : {}) };
-    const results: Array<{ id: string; latencyMs: number | null; status: string }> = [];
-    let cursor: string | undefined;
-    while (!this.stopping) {
-      const nodes = await this.prisma.upstreamNode.findMany({ where, select: { id: true }, orderBy: { id: 'asc' }, take: PAGE_BATCH, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
-      for (let i = 0; i < nodes.length; i += 10) await Promise.all(nodes.slice(i, i + 10).map(async (node) => {
-        try { const { probe } = await this.probeNode(node.id); results.push({ id: node.id, latencyMs: probe.latencyMs, status: probe.status }); }
-        catch { results.push({ id: node.id, latencyMs: null, status: 'ERROR' }); }
-      }));
-      if (nodes.length < PAGE_BATCH) break;
-      cursor = nodes[nodes.length - 1].id;
-    }
-    return { total: results.length, tested: results.filter((result) => result.status !== 'NOT_APPLICABLE').length, results, perspective: 'MASTER_TCP' };
-  }
-  private async measureTcpLatency(host: string, port: number): Promise<{ latencyMs: number | null; status: string; message: string | null }> {
-    // 与拉取相同的地址门禁，避免管理员导入节点借 TCP 探针访问私网。
-    const { lookup } = await import('node:dns/promises');
-    const { isPublicUpstreamAddress } = await import('./upstream-fetch');
-    const controller = new AbortController(); this.controllers.add(controller);
-    let timeout: NodeJS.Timeout | undefined;
-    try {
-      const addresses = await Promise.race([
-        net.isIP(host) ? Promise.resolve([{ address: host }]) : lookup(host, { all: true }),
-        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error()), 3000); })
-      ]);
-      if (timeout) clearTimeout(timeout);
-      if (!addresses.length || addresses.some(({ address }) => !isPublicUpstreamAddress(address))) return { latencyMs: null, status: 'ERROR', message: '端点不属于公共网络' };
-      return await new Promise((resolve) => {
-        const start = Date.now(), socket = new net.Socket();
-        const abort = () => finish('ERROR');
-        const finish = (status: string) => { socket.removeAllListeners(); socket.destroy(); controller.signal.removeEventListener('abort', abort); resolve({ latencyMs: status === 'SUCCESS' ? Date.now() - start : null, status, message: status === 'SUCCESS' ? null : 'TCP 连接失败或超时' }); };
-        controller.signal.addEventListener('abort', abort, { once: true });
-        socket.setTimeout(3000); socket.once('connect', () => finish('SUCCESS')); socket.once('timeout', () => finish('TIMEOUT')); socket.once('error', () => finish('ERROR'));
-        if (controller.signal.aborted) abort(); else socket.connect(port, addresses[0].address);
-      });
-    } catch { return { latencyMs: null, status: 'ERROR', message: '端点解析失败或超时' }; }
-    finally { if (timeout) clearTimeout(timeout); this.controllers.delete(controller); }
-  }
 
   async exportNodes(dto: ExportUpstreamNodesDto): Promise<{ contentType: string; body: string; count: number }> {
     const where: Prisma.UpstreamNodeWhereInput = { status: 'ACTIVE', presenceStatus: 'PRESENT' };
@@ -414,10 +366,13 @@ export class UpstreamService implements OnModuleInit, OnModuleDestroy {
     };
   }
   private toNodeView(node: NodeWithRelations) {
+    const source = node.subscription;
+    const available = node.status === 'ACTIVE' && node.presenceStatus === 'PRESENT' && source?.status === 'ACTIVE' && (!source.userInfoExpireAt || source.userInfoExpireAt.getTime() > Date.now()) && !(source.userInfoTotalBytes !== null && source.userInfoTotalBytes > 0n && source.userInfoUsedBytes !== null && source.userInfoUsedBytes >= source.userInfoTotalBytes);
+    const lastProbe = readLastProbe(node.lastProbeJson, available, probeHash(nodeProbeVersion({ ...node, subscription: source ?? null })));
     return { id: node.id, subscriptionId: node.subscriptionId, subscription: node.subscription ? { id: node.subscription.id, name: node.subscription.name, status: node.subscription.status } : null,
       name: node.name, protocolType: node.protocolType, serverHost: node.serverHost, serverPort: node.serverPort, tags: tagsOf(node.tagsJson),
       sourceKey: node.sourceKey, presenceStatus: node.presenceStatus, missingSince: node.missingSince?.toISOString() ?? null,
-      latencyMs: node.latencyMs, lastTestedAt: node.lastTestedAt?.toISOString() ?? null, lastTestStatus: node.lastTestStatus, lastTestMessage: node.lastTestMessage,
+      lastProbe, latencyMs: lastProbe?.latencyMs ?? null, lastTestedAt: lastProbe?.testedAt ?? null, lastTestStatus: lastProbe?.status ?? null, lastTestMessage: lastProbe?.message ?? null,
       status: node.status, relayLines: node.relayLines?.map((line) => ({ id: line.id, name: line.name, status: line.status })) ?? [],
       createdAt: node.createdAt.toISOString(), updatedAt: node.updatedAt.toISOString() };
   }

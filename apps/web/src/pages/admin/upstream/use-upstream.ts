@@ -98,44 +98,12 @@ export function useAdminUpstreamMutations() {
     }
   });
 
-  const probeNodeMutation = useMutation({
-    mutationFn: upstreamApi.probeNode,
-    onSuccess: (res) => {
-      const probe = res.data.probe;
-      if (probe.status === 'SUCCESS') {
-        toast.success(t('admin:upstream.probeSuccess', { latency: probe.latencyMs ?? 0 }));
-      } else if (probe.status === 'TIMEOUT') {
-        toast.warning(t('admin:upstream.probeTimeout'));
-      } else if (probe.status === 'NOT_APPLICABLE') {
-        toast.info(t('admin:upstream.probeNotApplicable'));
-      } else {
-        toast.error(t('admin:upstream.probeError', { error: probe.message || '' }));
-      }
-      void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-    },
-    onError: (err) => {
-      toast.error(extractErrorMessage(err));
-    }
-  });
-
-  const probeAllMutation = useMutation({
-    mutationFn: upstreamApi.probeAll,
-    onSuccess: (res) => {
-      toast.success(t('admin:upstream.allTested', { total: res.data.tested }));
-      void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-    },
-    onError: (err) => {
-      toast.error(extractErrorMessage(err));
-    }
-  });
 
   return {
     createMutation,
     updateMutation,
     deleteMutation,
     syncMutation,
-    setNodeStatusMutation,
-    probeNodeMutation,
-    probeAllMutation
+    setNodeStatusMutation
   };
 }

@@ -26,7 +26,10 @@ const { UpstreamParserService } = load('upstream/upstream-parser.service');
 const { UpstreamController } = load('upstream/upstream.controller');
 const { LinesService } = load('lines/lines.service');
 const { LinesController } = load('lines/lines.controller');
-const { LineSpeedtestService } = load('lines/line-speedtest.service');
+const { ProbeTaskService } = load('probe/probe-task.service');
+const { ProbeResourceService } = load('probe/probe-resource.service');
+const { ProbeService } = load('probe/probe.service');
+const { ClientKernelsService } = load('client-kernels/client-kernels.service');
 const { SubscriptionService } = load('subscription/subscription.service');
 const { SubscriptionController } = load('subscription/subscription.controller');
 const { UserSubscriptionController } = load('subscription/user-subscription.controller');
@@ -92,7 +95,7 @@ async function main() {
         { provide: SubscriptionService, useValue: subscription },
         { provide: UsersService, useValue: users },
         { provide: PlansService, useValue: plans },
-        { provide: LineSpeedtestService, useValue: { testLine: async () => { throw new Error('Use native isolated checks'); }, testAllActiveLines: async () => ({ total: 0 }) } },
+        { provide: ProbeTaskService, useValue: { start: async () => { throw new Error('Use native isolated checks'); } } },
         JwtStrategy
       ]
     }).compile();
@@ -206,10 +209,23 @@ async function main() {
     await request('POST', `/admin/upstream/${sourceId}/sync`, {}, adminToken, 201);
     const httpPort = await port();
     await request('POST', '/admin/lines', { name: 'http-relay', type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNodeId: nodeId, entryNodeId: entry.id, entryPort: httpPort, protocolType: 'HTTP', params: { usersEnabled: true, tls: { enabled: false, mode: 'none' } }, tags: ['TEST'] }, adminToken, 201);
+    const mixedPort = await port();
+    const mixed = (await request('POST', '/admin/lines', { name: 'mixed-relay', type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNodeId: nodeId, entryNodeId: entry.id, entryPort: mixedPort, protocolType: 'MIXED', params: { usersEnabled: true }, status: 'DISABLED', tags: ['TEST'] }, adminToken, 201)).json().line;
+    await request('PATCH', `/admin/lines/${mixed.id}`, { status: 'ACTIVE' });
+    await request('POST', '/admin/lines/batch-status', { ids: [mixed.id], status: 'DISABLED' }, adminToken, 201);
+    await request('POST', '/admin/lines/batch-status', { ids: [mixed.id], status: 'ACTIVE' }, adminToken, 201);
+    await request('PATCH', `/admin/lines/${mixed.id}`, { params: { usersEnabled: false } }, adminToken, 400);
+    for (const params of [{}, { usersEnabled: false }]) await request('POST', '/admin/lines', { name: 'bad-mixed-relay', type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNodeId: nodeId, entryNodeId: entry.id, protocolType: 'MIXED', params }, adminToken, 400);
     await request('POST', '/admin/lines', { name: 'bad-shared-ss', type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNodeId: nodeId, entryNodeId: entry.id, protocolType: 'SHADOWSOCKS', params: { method: '2022-blake3-aes-128-gcm', mode: 'shared' } }, adminToken, 400);
     const finalClient = JSON.parse((await request('GET', `/sub/${sub.subscriptionToken}?type=singbox`, undefined, null)).text);
     const httpOutbound = finalClient.outbounds.find((item) => item.type === 'http');
     assert.ok(httpOutbound); assert.ok(!httpOutbound.username.includes(':'));
+    const mixedOutbound = finalClient.outbounds.find((item) => item.tag === 'mixed-relay');
+    assert.equal(mixedOutbound.type, 'socks');
+    const { formatAuthUserName, parseTrafficCredential } = load('common/inbound');
+    assert.equal(mixedOutbound.username, formatAuthUserName(user, mixed.id));
+    assert.deepEqual(parseTrafficCredential(mixedOutbound.username), { rawCredential: user.email, lineId: mixed.id });
+    assert.ok((await request('GET', '/user/lines', undefined, userToken)).json().lines.some((line) => line.id === mixed.id));
     console.log('PASS: HTTP JWT/RBAC, schema, encrypted storage, two line types, authorization, safe summaries, three formats, source disable and parameter sync');
     if (!fs.existsSync(native)) throw new Error('Native Sing-box binary unavailable; HTTP checks passed but native verification blocked');
     function check(name, config) { const file = configFile(name, config); const checked = spawnSync(native, ['check', '-c', file], { encoding: 'utf8', timeout: 15000, env: { ...process.env, ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS: 'true' } }); assert.equal(checked.status, 0, `${name}: ${checked.stderr}`); return file; }
@@ -224,6 +240,7 @@ async function main() {
     await waitPort(sourcePort, start(serverFile));
     await waitPort(entryPort, start(relayFile));
     await waitPort(httpPort, children.at(-1));
+    await waitPort(mixedPort, children.at(-1));
     const target = http.createServer((req, res) => { res.writeHead(204); res.end(); }); servers.push(target); const targetPort = await listen(target);
     for (const name of ['external', 'relay', 'http-relay']) {
       const proxyPort = await port();
@@ -235,6 +252,39 @@ async function main() {
       assert.equal(code, '204');
       console.log(`PASS: native ${name} proxy request HTTP 204`);
     }
+    // 同一 mixed 入站分别使用 HTTP CONNECT 与 SOCKS5；错误密码不能变成代理成功。
+    for (const scheme of ['http', 'socks5h']) {
+      for (const valid of [true, false]) {
+        const credentials = `${mixedOutbound.username}:${valid ? mixedOutbound.password : 'wrong-fixture-password'}`;
+        const response = await new Promise((resolve, reject) => {
+          const curl = spawn('curl', ['--silent', '--max-time', '5', '--noproxy', '', '--proxy', `${scheme}://127.0.0.1:${mixedPort}`, '--proxy-user', credentials, ...(scheme === 'http' ? ['--proxytunnel'] : []), '--output', process.platform === 'win32' ? 'NUL' : '/dev/null', '--write-out', '%{http_code}', `http://127.0.0.1:${targetPort}/generate_204`]);
+          let output = ''; curl.stdout.on('data', (chunk) => output += chunk); curl.on('error', reject); curl.on('close', (status) => resolve({ status, code: output }));
+        });
+        if (valid) { assert.equal(response.status, 0); assert.equal(response.code, '204'); }
+        else assert.notEqual(response.code, '204');
+      }
+    }
+    const mixedInbound = (await gateway.buildConfigSync(entry.id)).singboxConfig.inbounds.find((item) => item.type === 'mixed');
+    assert.ok(mixedInbound.users.some((item) => item.username === mixedOutbound.username));
+    assert.ok(!mixedInbound.users.some((item) => item.username.startsWith('pk_')));
+    console.log('PASS: authenticated MIXED relay create/edit/batch-enable, user/line attribution, same-port HTTP CONNECT/SOCKS5 and wrong-password rejection');
+    const clientKernels = new ClientKernelsService();
+    const mihomoProbe = new ProbeService(clientKernels);
+    mihomoProbe.targetPolicy.target = async (value) => ({ id: value.id, url: new URL(value.url), address: '127.0.0.1', expectedStatus: value.expectedStatus });
+    mihomoProbe.targetPolicy.connection = async (value) => value;
+    const probeResources = new ProbeResourceService(prisma);
+    const httpLine = await prisma.line.findFirst({ where: { name: 'http-relay' } });
+    const ids = [ext.id, relay.id, httpLine.id, mixed.id];
+    const sequence = probeResources.reserve('LINE', ids);
+    for (const id of ids) {
+      const snapshot = await probeResources.snapshot('LINE', id, sequence);
+      assert.ok(snapshot);
+      const result = (await mihomoProbe.executeBatch([snapshot.request], { id: 'fixture', url: `http://127.0.0.1:${targetPort}/generate_204`, expectedStatus: 204 }, 3000, 'MIHOMO_ONLY'))[0];
+      assert.equal(result.status, 'SUCCESS', `Mihomo line ${id}: ${result.errorCode}`);
+      assert.equal(result.engine, 'MIHOMO');
+    }
+    console.log('PASS: Mihomo clients through external, VLESS relay, HTTP-auth relay and MIXED/SOCKS relay actual data paths');
+    await clientKernels.onModuleDestroy();
     assert.ok(notifications > 0);
     assert.ok(singularFile);
     console.log('PASS: native Sing-box checks and isolated direct/relay data paths');

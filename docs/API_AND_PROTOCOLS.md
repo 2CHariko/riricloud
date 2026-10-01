@@ -124,13 +124,14 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `GET /admin/lines?page&pageSize&search&type&status&tag`：分页查询线路，可按名称/地址、类型、启停状态和标签筛选；响应包含 `tag`、`listen`、`protocolType`、脱敏后的 `params`、`certificateId`/`certificate` 简要关联、`targetLineId`/`targetLine` 目标摘要、`topology`（入口/落地节点与端口）、最终生效的 `serverHost/serverPort`、原始 `endpointOverrides` 以及测速快照（`lastLatencyMs`、`lastTestedAt`、`lastTestStatus`、`lastTestMessage`）。旧客户端仍可读取只读 `targetInbound` 摘要。⭐
 - `GET /admin/lines/:id`：查询线路详情及入口/落地节点关联、协议参数、证书简要信息、端点解析结果与最新测速快照。⭐
 - `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, upstreamNodeId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`relayMode` 支持 `BLIND_FORWARD`、`PROTOCOL_PROXY`、`TARGET_LINE` 与 `UPSTREAM_NODE`；当为 `UPSTREAM_NODE` 时落地目标指向已导入的外部上游节点（`upstreamNodeId` 必填），入口 VPS 自动生成对应 Outbound 并纳管入口流量计费。同节点端口冲突校验按实际传输层（TCP/UDP）重叠判定：`SHADOWSOCKS`、`DIRECT` 与 `BLIND_FORWARD` 盲转发入口均按 TCP+UDP 双栈占用校验，禁止与同节点同端口的 TCP 或 UDP（`HYSTERIA2`/`TUIC`）线路冲突。其余参数与约束见下文。⭐
+- `UPSTREAM_NODE` 入口支持开启逐用户鉴权的 `MIXED`、`HTTP` 和 `SOCKS`：必须显式设置 `params.usersEnabled=true`，缺省或关闭时创建/编辑/启用拒绝；共享校验同时用于用户线路筛选与 Agent 下发。MIXED 在同一端口承接 HTTP CONNECT/SOCKS5，使用套餐/额外授权用户及内部探针凭据，不注入独立直连代理池 `pk_` 凭据；客户端输出以 SOCKS5 接入，用户名可还原用户和 lineId，入口流量沿原账务路径归属。无鉴权入口及共享 SS 密码仍不可作为计费上游入口。
 - **EXTERNAL 外部直发线路**：创建请求 `{ name, type: 'EXTERNAL', upstreamNodeId, tags?, level?, sortOrder?, isPublic?, status? }`，默认 `DISABLED`、`isPublic=false`。没有 entryNodeId/entryPort/证书/监听/本地倍率或限速设置；协议、端点、连接从上游动态解析。返回入口与 `topology.entry` 为 null，不返回外部秘密。DIRECT/RELAY 必须保留真实入口。公开启用会被 ALL 套餐包含；用户实际获取需通过既有资格和线路授权。
 - `PATCH /admin/lines/:id`：部分更新线路，字段同创建请求。⭐ 保存后触发全量 Agent 配置推送防抖。
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
 - `POST /admin/lines/:id/test`：解析并返回最终对外端点、入口/落地节点与端口，不建立真实连接。⭐
-- `POST /admin/lines/:id/speedtest`：对单条线路执行即时端到端测速（要求全链路 100% 跑通并经 Sing-box 代理收到目标 HTTP 204/200 响应才判定为测速成功；若任一阶段失败或超时，整体状态记为 `ERROR` 或 `TIMEOUT` 且延迟置为 `null`，不进行 TCP 握手降级误报；使用内部专用探针凭据且不计入账单；前端客户端为单条测速配置 45s 超时预算以完整接收阶段诊断报告），响应 `{ lineId, lineName, latencyMs, status, message, testedAt, mode, topology, stages }`，并持久化到 Line 最新快照；其中 `stages` 包含多阶段耗时与状态（`master_ready` 主控探针准备、`entry_handshake` 入口网络握手、`relay_transit` 中继转发准备、`target_http` 目标端到端 HTTP 204/200 探测），支持在管理前端以弹窗展示完整的链路测试流程与异常诊断。⭐
-- `POST /admin/lines/speedtest-all`：受控并发（限制并发度 4）批量测试所有已启用的线路（前端客户端配置 120s 超时预算），响应 `{ total, success, failed }`。⭐
+- `POST /admin/lines/:id/speedtest`：创建真实整线路端到端拨测任务，HTTP 202 `{taskId,state,total}`，可选 `{policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY'}`；默认 Mihomo 客户端使用系统专用探针凭据，不计用户账单。通过 `/admin/probe-tasks` 轮询/取消，不再返回旧同步 topology/stages 结果；TCP 检查不能代替成功。
+- `POST /admin/lines/speedtest-all`：同样返回 HTTP 202，匹配全部启用线路，统一全局连接/进程限额；前端不用 120 秒挂起请求，任务结果分页与状态异步获取。
 - `POST /admin/lines/batch-status`：批量启用/禁用线路。⭐ 请求 `{ ids: UUID[], status: "ACTIVE"|"DISABLED" }`。
 - `PATCH /admin/lines/reorder`：批量调整排序。⭐ 请求 `{ items: [{ id, sortOrder }] }`。
 
@@ -149,13 +150,24 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `PUT /admin/upstream/:id`：按合并后来源类型验证。TEXT 未提交 content 则保持原文，不接受空文本替换；可切换 ACTIVE/DISABLED。状态变化提交后清配置缓存，源禁用立即停止其直发与中继，重新启用不复活此前自动禁用的线路。
 - `DELETE /admin/upstream/:id`：显式删除源并级联删除节点，在事务中停用关联 Line、清空引用，提交后通知 Agent。
 - `POST /admin/upstream/:id/sync`：同源串行完整同步，响应提供 `success,nodeCount,format,created,updated,missing,diagnostics{recognized,duplicates,skipped},userInfo`；元信息字节值字符串化。网络/解析失败保留 last-good，不以部分结果删除节点；歧义身份拒绝提交；节点缺失保留引用并停用关联线路，重现不自动启用。AUTO 不写成固定格式，参数变化提交后刷新 WS/HTTP 配置。
-- `POST /admin/upstream/probe-all?subscriptionId`：有限并发遍历有效资源，不静默限为前 200 个；subscriptionId 经 UUID 校验。
+- `POST /admin/upstream/probe-all?subscriptionId`：创建全量匹配资源的真实端到端任务，响应 HTTP 202 `{ taskId,state,total }`；可选 body `{ policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY' }`，默认前者；subscriptionId 经 UUID 校验。单任务超过 10000 个资源明确拒绝，不静默截断。
 - `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status`：真实服务端分页与 tag 筛选，total 为筛选总数；返回 presenceStatus/sourceKey/关联线路等安全摘要，不包含 params/rawConfigJson。旧 isDirectSub 参数不支持。
 - `PUT /admin/upstream/nodes/:nodeId/status`：DTO 验证 `{ status: 'ACTIVE'|'DISABLED' }`；禁用节点停用关联线路并刷新配置。
-- `POST /admin/upstream/nodes/:nodeId/probe`：仅 Master TCP 可达性，响应 `{ probe:{latencyMs,status,message},node }`；Hysteria2/TUIC 返回 NOT_APPLICABLE，不冒充协议握手或测速成功。真实可用性通过线路端到端代理请求验证。
+- `POST /admin/upstream/nodes/:nodeId/probe`：同样返回 HTTP 202 拨测任务，不再返回同步 TCP probe/node。Master 使用独立 Mihomo 客户端和真实上游凭据访问指定目标，UDP 协议也做真实拨测；无能力/环境标识为 UNSUPPORTED/ENVIRONMENT_UNAVAILABLE，不用 TCP 值冒充端到端延迟。
 - `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：管理员导出明确的规范化 URI 或 Sing-box outbound JSON；通过同一连接编译器保留 TLS/Reality/Transport/plugin，不能表示的协议组合报明确错误，不以含有 `://` 的任意 JSON 当原始 URI。
 - `GET /admin/upstream/:id/sync-status`：返回 QUEUED/FETCHING/PARSING/COMMITTING/IDLE 阶段及最近同步/成功时间、状态和脱敏诊断；不返回连接秘密。
 - **BREAKING CHANGE**：删除 `/nodes/:nodeId/direct-sub`、isDirectSub 字段和 fingerprint。直接分发通过 EXTERNAL Line 授权；不提供旧接口、转换或旧数据回填。
+
+#### 统一客户端拨测任务 (`/admin/probe-tasks`)
+
+- `GET /admin/probe-tasks/:taskId`：状态 QUEUED/RUNNING/COMPLETED/CANCELED/FAILED、total/completed/success/failed/skipped、阶段及时间；任务状态内存保留，完成 15 分钟后过期，重启后不可恢复。
+- `GET /admin/probe-tasks/:taskId/results?page&pageSize`：分页安全结果，pageSize 1~200。结果含 subjectType/id、status/errorCode、实际 engine/version、fallbackReason、mihomoCompatibility、measurement=PROXY_HTTP_DELAY、perspective=MASTER、routeKind、targetId/targetHost、testedAt/durationMs/latencyMs、configHash/applied；不含连接参数、凭据、控制 Secret 或原始日志。
+- `DELETE /admin/probe-tasks/:taskId`：幂等请求取消；完成态保持不变。关闭前端窗口只停止轮询，不自动取消服务器任务。
+- `GET /admin/client-kernels/status`：管理员查看 Mihomo/Sing-box 可执行性、版本及兼容依赖画像，不输出秘密。
+- 状态 SUCCESS/TIMEOUT/ERROR/UNSUPPORTED/ENVIRONMENT_UNAVAILABLE/CANCELED/STALE/SKIPPED 分开；失败延迟为 null，环境或取消不更改业务启停。资源配置/关联状态变更后旧结果 STALE，不能覆盖新配置。单资源重复任务去重，最多 20 个等待任务、单管理员 2 活跃任务、全局 4 连接/2 内核进程；任务 30 分钟截止，结果分页。
+- 回退只在能力白名单明确不支持 Mihomo 时生效；`probeSingboxFallbackEnabled=false` 或 MIHOMO_ONLY 禁止回退。Mihomo 超时、鉴权/配置/环境错误不触发回退；Sing-box 兼容成功不代表 Mihomo 主客户端验证通过。
+- 测量均为真实代理请求延迟，不是带宽/丢包/ICMP RTT。上游/EXTERNAL 路径 Master→上游→目标，自建/中继路径 Master→入口→实际出口→目标；结果不能互相代替。默认目标 HTTPS generate_204，严格核验预期 HTTP 状态、目标证书、不跟随重定向，临时内核不读取上游策略组/规则。
+
 
 #### 系统设置
 - `GET /admin/settings`：读取全量设置。⭐ 响应包含 `docs/DATA_MODELS.md` §SystemSetting 列出的全部强类型字段（含 SMTP、邮箱验证、CAPTCHA、统一时区 `systemTimezone`、速率色彩阶梯 `speedLimitColorTiers` 与单位换算 `speedLimitUnitConversionEnabled`、存储日志策略、结构化公告列表 `siteAnnouncementsJson`、首页配置 `landingEnabled` / `landingHero*` / `landingShow*` / `landingCustom*Json`、多设备限制 `deviceLimitEnabled`（默认 `true`）与在线活跃窗口 `deviceOnlineWindowSecs`（默认 60 秒）等）；`smtpPass` 与 `turnstileSecretKey` 有值时均返回 `********`。存储日志策略包括 `trafficHourlyRetentionDays`（默认 90）、`nodeRateRetentionDays`（默认 30）、`logsRetentionDays`（默认 7）、`logsMaxCount`（默认 100000）、`logsMinIngestLevel`（默认 `INFO`）、`agentLogMaxSizeMb`（默认 50）和 `agentLogMaxFiles`（默认 5）。
@@ -202,7 +214,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `GET /admin/subscription-templates/:id`：查询模板详情。⭐
 - `POST /admin/subscription-templates`：创建模板。⭐ 请求含 `proxyGroups?`（支持 `all` 动态节点展开、`DIRECT`/`REJECT` 与策略组引用）、`ruleSets?`、`dnsConfig?`、`customInjectYaml?`、`customInjectJson?`、`isDefault?`。
 - `PATCH /admin/subscription-templates/:id`：部分更新模板；YAML/JSON 覆写在服务端校验语法。⭐
-- `POST /admin/subscription-templates/preview`：渲染模板草稿。⭐ 请求 `{ format: "clash"|"singbox", template: { proxyGroups?, ruleSets?, dnsConfig?, customInjectYaml?, customInjectJson? } }`；优先使用当前可用线路，无可用线路时回退内置多协议 Mock 节点池。服务端会同时并发执行 Sing-box 与 Mihomo (Clash Meta) 双内核真实验证诊断，响应包含 `content`、`stats{totalNodes,matchedNodes,proxyGroupsCount,rulesCount}`、`warnings[]`、`singboxCheck{ executed, passed, message?, kernelVersion? }` 以及 `mihomoCheck{ executed, passed, message?, kernelVersion? }`。⭐
+- `POST /admin/subscription-templates/preview`：请求 `{ format:'clash'|'singbox',template:{proxyGroups?,ruleSets?,dnsConfig?,customInjectYaml?,customInjectJson?} }`；Clash 默认只执行 Mihomo 验证，Sing-box JSON 执行明确兼容验证，不再无条件同时生成和校验两种格式。响应 `{format,content,stats,warnings,kernelCheck}`；kernelCheck 含 engine/engineVersion、status=PASSED/FAILED/UNAVAILABLE/UNSUPPORTED/EXTERNAL_RESOURCES_REQUIRED、executed、scope=FULL/PARTIAL、diagnostics。内核缺失不能 passed，缺 GeoIP/provider/本地证书等依赖明确报资源要求，不通过替换规则假装完整配置已验证。旧 singboxCheck/mihomoCheck 字段删除。
 - `POST /admin/subscription-templates/:id/duplicate`：复制模板并命名为 `${name} (副本)`；副本重置 `isDefault=false` 与 `isBuiltin=false`。⭐
 - `DELETE /admin/subscription-templates/:id`：删除非默认、非内嵌且未被套餐使用的模板；内嵌默认模板只能通过 `PATCH` 修改，删除返回 `409`。⭐
 

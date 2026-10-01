@@ -25,14 +25,20 @@ import { ReorderLinesDto } from './dto/reorder-lines.dto';
 import { UpdateLineDto } from './dto/update-line.dto';
 import { SettingsService } from '../system/settings.service';
 import { isLineAuthorized } from '../common/line-access';
+import { readLastProbe, safeProbeResult } from '../probe/probe-result';
+import { lineProbeVersion } from '../probe/probe-resource.service';
+import type { ProbeResult } from '../probe/probe.types';
+import { buildUpstreamOutbound } from '../common/upstream-connection';
 
-const nodeSummary = { select: { id: true, name: true, serverHost: true, status: true, isLocal: true, reachability: true } } as const;
+const nodeSummary = { select: { id: true, name: true, serverHost: true, status: true, isLocal: true, reachability: true, configOverride: true } } as const;
 const certificateSummary = {
-  select: { id: true, name: true, subject: true, issuer: true, sansJson: true, validFrom: true, validTo: true }
+  select: { id: true, name: true, subject: true, issuer: true, sansJson: true, validFrom: true, validTo: true, updatedAt: true }
 } as const;
 const targetLineSummary = {
   select: {
     id: true,
+    updatedAt: true,
+    paramsJson: true,
     name: true,
     type: true,
     protocolType: true,
@@ -46,6 +52,7 @@ const targetLineSummary = {
     serverPort: true,
     serverName: true,
     host: true,
+    certificate: { select: { id: true, updatedAt: true } },
     entryNode: nodeSummary
   }
 } as const;
@@ -60,9 +67,11 @@ const upstreamNodeSummary = {
     latencyMs: true,
     lastTestStatus: true,
     subscriptionId: true,
+    configHash: true,
+    connectionHash: true,
     paramsJson: true,
     presenceStatus: true,
-    subscription: { select: { id: true, name: true, status: true, userInfoUsedBytes: true, userInfoTotalBytes: true, userInfoExpireAt: true } }
+    subscription: { select: { id: true, name: true, status: true, updatedAt: true, userInfoUsedBytes: true, userInfoTotalBytes: true, userInfoExpireAt: true } }
   }
 } as const;
 const lineInclude = { entryNode: nodeSummary, landingNode: nodeSummary, targetLine: targetLineSummary, certificate: certificateSummary, upstreamNode: upstreamNodeSummary } as const;
@@ -162,7 +171,7 @@ export class LinesService {
   async update(id: string, dto: UpdateLineDto) {
     const current = await this.findRaw(id);
     const prepared = await this.prepare(dto, current);
-    const line = await this.prisma.line.update({ where: { id }, data: prepared as Prisma.LineUncheckedUpdateInput, include: lineInclude });
+    const line = await this.prisma.line.update({ where: { id }, data: { ...prepared as Prisma.LineUncheckedUpdateInput, lastProbeJson: null, lastLatencyMs: null, lastTestedAt: null, lastTestStatus: null, lastTestMessage: null }, include: lineInclude });
     void this.agentGateway.pushConfigToAll();
     return { line: this.toView(line) };
   }
@@ -215,11 +224,15 @@ export class LinesService {
     if (dto.status === 'ACTIVE') {
       for (const id of dto.ids) {
         const line = await this.findRaw(id);
-        if (line.type === 'EXTERNAL' || line.relayMode === 'UPSTREAM_NODE') await this.assertUpstreamAvailable(line.upstreamNodeId);
+        if (line.type === 'EXTERNAL') await this.assertUpstreamAvailable(line.upstreamNodeId);
+        if (line.relayMode === 'UPSTREAM_NODE') {
+          const upstream = await this.assertUpstreamAvailable(line.upstreamNodeId);
+          try { buildUpstreamOutbound(readUpstreamConnection(upstream), 'validate-agent'); } catch { throw new BadRequestException('上游节点不支持 Sing-box 中继出站'); }
+        }
         if (line.relayMode === 'UPSTREAM_NODE' && !isMeteredUpstreamEntry(line.protocolType, this.parseObject(line.paramsJson))) throw new BadRequestException('上游中继入口必须支持用户鉴权与流量归属');
       }
     }
-    const result = await this.prisma.line.updateMany({ where: { id: { in: dto.ids } }, data: { status: dto.status } });
+    const result = await this.prisma.line.updateMany({ where: { id: { in: dto.ids } }, data: { status: dto.status, lastProbeJson: null, lastLatencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null } });
     void this.agentGateway.pushConfigToAll();
     return { updated: result.count, status: dto.status };
   }
@@ -282,16 +295,18 @@ export class LinesService {
           serverHost: view.serverHost, serverPort: view.serverPort, serverName: view.serverName, host: view.host,
           endpointOverrideEnabled: view.endpointOverrideEnabled, endpointOverrides: view.endpointOverrides,
           trafficRate: view.trafficRate, speedLimitMbps: view.speedLimitMbps, tags: view.tags, level: view.level,
+          lastProbe: view.lastProbe,
           ...(line.type === 'EXTERNAL' && line.upstreamNode ? { externalConnection: readUpstreamConnection(line.upstreamNode) } : {})
         };
       });
   }
 
-  toUserSummary(line: Pick<SubLine, 'id' | 'name' | 'type' | 'protocolType' | 'serverHost' | 'serverPort' | 'tags' | 'level' | 'trafficRate' | 'speedLimitMbps'> & { status?: string }) {
+  toUserSummary(line: Pick<SubLine, 'id' | 'name' | 'type' | 'protocolType' | 'serverHost' | 'serverPort' | 'tags' | 'level' | 'trafficRate' | 'speedLimitMbps'> & { status?: string; lastProbe?: ProbeResult | null }) {
     const external = line.type === 'EXTERNAL';
     return {
       id: line.id, name: line.name, type: line.type, protocolType: line.protocolType,
       serverHost: line.serverHost, serverPort: line.serverPort, status: line.status,
+      lastProbe: safeProbeResult(line.lastProbe),
       tags: line.tags ?? [], level: line.level,
       trafficRate: external ? 0 : line.trafficRate,
       speedLimitMbps: external ? null : line.speedLimitMbps,
@@ -399,7 +414,8 @@ export class LinesService {
       if (relayMode === 'UPSTREAM_NODE') {
         upstreamNodeId = input.upstreamNodeId !== undefined ? input.upstreamNodeId : current?.upstreamNodeId ?? null;
         if (!upstreamNodeId) throw new BadRequestException('上游节点中继线路必须指定上游节点');
-        await this.assertUpstreamAvailable(upstreamNodeId);
+        const upstream = await this.assertUpstreamAvailable(upstreamNodeId);
+        try { buildUpstreamOutbound(readUpstreamConnection(upstream), 'validate-agent'); } catch { throw new BadRequestException('上游节点不支持 Sing-box 中继出站'); }
         if (!isMeteredUpstreamEntry(protocolType, params)) throw new BadRequestException('上游中继入口必须支持用户鉴权与流量归属');
         landingNodeId = null;
         landingPort = null;
@@ -803,13 +819,16 @@ export class LinesService {
     const serverHost = external ? line.upstreamNode?.serverHost ?? '' : line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode?.serverHost ?? '';
     const serverPort = external ? line.upstreamNode?.serverPort ?? 0 : line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort ?? 0;
     const params = external ? {} : sanitizeInboundParams(this.sanitizeCorruptParams(this.parseObject(line.paramsJson)));
+    const available = line.status === 'ACTIVE' && (!line.entryNode || line.entryNode.status !== 'DISABLED') && (!line.landingNode || line.landingNode.status !== 'DISABLED') && (line.relayMode !== 'TARGET_LINE' || line.targetLine?.status === 'ACTIVE') && ((!external && line.relayMode !== 'UPSTREAM_NODE') || Boolean(line.upstreamNode && !getUpstreamUnavailableReason(line.upstreamNode)));
+    const lastProbe = readLastProbe(line.lastProbeJson, available, lineProbeVersion(line));
     const upstreamNode = line.upstreamNode ? { id: line.upstreamNode.id, name: line.upstreamNode.name, protocolType: line.upstreamNode.protocolType, serverHost: line.upstreamNode.serverHost, serverPort: line.upstreamNode.serverPort, status: line.upstreamNode.status, presenceStatus: line.upstreamNode.presenceStatus, subscription: { id: line.upstreamNode.subscription.id, name: line.upstreamNode.subscription.name } } : null;
+    const safeNode = <T extends { configOverride?: string | null }>(node: T | null) => node ? { ...node, configOverride: undefined } : null;
     const isNatLanding = line.landingNode?.reachability === 'NAT';
     const hasLandingOverride = line.type === 'RELAY' && !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
     const landing = line.type === 'RELAY'
       ? (line.relayMode === 'TARGET_LINE' && line.targetLine
           ? {
-              node: line.targetLine.entryNode,
+              node: safeNode(line.targetLine.entryNode),
               host: hasLandingOverride
                 ? line.landingServerHost!
                 : (line.targetLine.endpointOverrideEnabled && line.targetLine.serverHost
@@ -837,7 +856,7 @@ export class LinesService {
               }
             : line.landingNode && line.landingPort
             ? {
-                node: line.landingNode,
+                node: safeNode(line.landingNode),
                 host: hasLandingOverride ? line.landingServerHost! : line.landingNode.serverHost,
                 port: hasLandingOverride && line.landingServerPort ? line.landingServerPort : line.landingPort
               }
@@ -846,6 +865,15 @@ export class LinesService {
     const { upstreamNode: _upstreamNode, ...safeLine } = line;
     return {
       ...safeLine,
+      entryNode: safeNode(line.entryNode),
+      landingNode: safeNode(line.landingNode),
+      lastProbeJson: undefined,
+      lastProbe,
+      targetLine: line.targetLine ? { ...line.targetLine, paramsJson: undefined, entryNode: safeNode(line.targetLine.entryNode) } : null,
+      lastLatencyMs: lastProbe?.latencyMs ?? null,
+      lastTestedAt: lastProbe?.testedAt ?? null,
+      lastTestStatus: lastProbe?.status ?? null,
+      lastTestMessage: lastProbe?.message ?? null,
       upstreamNodeId: line.upstreamNodeId ?? null,
       upstreamSummary: upstreamNode,
       protocolType: (external ? line.upstreamNode?.protocolType ?? line.protocolType : line.protocolType) as ProtocolType,
@@ -867,7 +895,7 @@ export class LinesService {
       },
       tags: this.parseTags(line.tagsJson),
       topology: {
-        entry: line.entryNode ? { node: line.entryNode, port: line.entryPort } : null,
+        entry: line.entryNode ? { node: safeNode(line.entryNode), port: line.entryPort } : null,
         landing
       },
       targetInbound: landing?.node ? {

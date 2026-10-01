@@ -1,6 +1,6 @@
 import { Activity, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { LineLatencyChip } from '@/components/shared/line-latency-chip';
+import { ProbeMeasurementChip } from '@/components/shared/probe-result';
 import { cn } from '@/lib/utils';
 import { usePublicSettings } from '@/lib/public-settings';
 import { formatSpeedLimit, getSpeedTierBadgeClass } from '@/lib/speed-tier';
@@ -44,12 +44,7 @@ export function LineCard({ line, className }: LineCardProps) {
             {speedText}
           </Badge>
         )}
-        <LineLatencyChip
-          latencyMs={line.lastLatencyMs}
-          status={line.lastTestStatus}
-          message={line.lastTestMessage}
-          testedAt={line.lastTestedAt}
-        />
+        <ProbeMeasurementChip value={line.lastProbe} />
       </div>
       {!line.capabilities.trafficMetered && <p className="text-xs text-muted-foreground">{t('lineCapabilities.unmetered')}</p>}
       {!line.capabilities.localLimitsSupported && <p className="text-xs text-muted-foreground">{t('lineCapabilities.noLocalLimits')}</p>}

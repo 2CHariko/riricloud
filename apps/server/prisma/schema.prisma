@@ -310,6 +310,7 @@ model Line {
   lastTestedAt            DateTime? // 最近一次测速时间
   lastTestStatus          String? // 最近测速状态：SUCCESS | TIMEOUT | ERROR
   lastTestMessage         String? // 最近测速诊断详情
+  lastProbeJson           String? // schemaVersion=1 的安全端到端拨测摘要，不含连接秘密
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
@@ -721,6 +722,7 @@ model UpstreamNode {
   lastTestedAt    DateTime?
   lastTestStatus  String?              // SUCCESS | TIMEOUT | ERROR
   lastTestMessage String?
+  lastProbeJson   String?              // 实际内核/路径/目标/配置版本与结果摘要
   status          String               @default("ACTIVE") // ACTIVE | DISABLED
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt

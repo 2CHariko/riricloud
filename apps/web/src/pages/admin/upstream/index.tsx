@@ -18,6 +18,7 @@ import { formatDateTime } from '@/lib/utils';
 import { useAdminUpstreams, useAdminUpstreamMutations } from './use-upstream';
 import { UpstreamFormDialog, UpstreamFormSubmitValues } from './components/upstream-form-dialog';
 import { UpstreamNodesSheet } from './components/upstream-nodes-sheet';
+import { ProbeTaskDialog } from '@/components/shared/probe-task-dialog';
 
 export default function AdminUpstreamPage() {
   const { t } = useTranslation(['admin', 'common']);
@@ -29,6 +30,7 @@ export default function AdminUpstreamPage() {
   const [editing, setEditing] = React.useState<ApiUpstreamSubscription | null>(null);
   const [pool, setPool] = React.useState<ApiUpstreamSubscription | null>(null);
   const [deleting, setDeleting] = React.useState<ApiUpstreamSubscription | null>(null);
+  const [probeAllOpen, setProbeAllOpen] = React.useState(false);
   const { data, isLoading, isError } = useAdminUpstreams({ page, pageSize: 20, search: search.trim() || undefined, status: status === 'ALL' ? undefined : status });
   const { createMutation, updateMutation, deleteMutation, syncMutation } = useAdminUpstreamMutations();
   const submit = (values: UpstreamFormSubmitValues) => editing
@@ -45,6 +47,7 @@ export default function AdminUpstreamPage() {
       <Input className="max-w-sm" placeholder={t('admin:upstream.searchPlaceholder')} value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
       <div className="flex gap-2">
         <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent>{['ALL', 'ACTIVE', 'DISABLED'].map((v) => <SelectItem key={v} value={v}>{v === 'ALL' ? t('admin:upstream.statusAll') : v === 'ACTIVE' ? t('admin:upstream.statusActive') : t('admin:upstream.statusDisabled')}</SelectItem>)}</SelectContent></Select>
+        <Button variant="outline" onClick={() => setProbeAllOpen(true)}>{t('admin:upstream.probeAll')}</Button>
         <Button onClick={() => { setEditing(null); setFormOpen(true); }}><Plus className="size-4" />{t('admin:upstream.addSubscription')}</Button>
       </div>
     </div>
@@ -71,6 +74,7 @@ export default function AdminUpstreamPage() {
     <ServerPagination page={page} pageSize={20} total={data?.total ?? 0} onPageChange={setPage} pending={isLoading} />
     <UpstreamFormDialog open={formOpen} onOpenChange={setFormOpen} current={editing} onSubmit={submit} isPending={createMutation.isPending || updateMutation.isPending} />
     <UpstreamNodesSheet key={pool?.id ?? 'closed'} open={!!pool} onOpenChange={(v) => !v && setPool(null)} subscription={pool} onCreateRelayLine={(node) => createLine(node, false)} onCreateExternalLine={(node) => createLine(node, true)} />
+    <ProbeTaskDialog open={probeAllOpen} onOpenChange={setProbeAllOpen} request={{ key: 'upstream:all:all', endpoint: '/admin/upstream/probe-all' }} title={t('admin:upstream.probeAll')} />
     <AlertDialog open={!!deleting} onOpenChange={(v) => !v && setDeleting(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('admin:upstream.deleteTitle', { name: deleting?.name ?? '' })}</AlertDialogTitle><AlertDialogDescription>{t('admin:upstream.deleteDesc')}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel><AlertDialogAction disabled={deleteMutation.isPending} onClick={() => deleting && deleteMutation.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}>{t('common:actions.delete')}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </PageContainer>;
 }

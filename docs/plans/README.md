@@ -19,6 +19,7 @@
 
 | 规划名称 | 目标版本 | 创建日期 | 任务进度 |
 | :--- | :--- | :--- | :--- |
+| [双内核职责解耦与统一端到端拨测](./mihomo-client-probe-separation.md) | `下一次 MINOR 发布` | 2026-10-01 | 11/12 (91%)；Windows/WSL/Linux/Docker/Naive 完成，macOS/其他架构原生待补 |
 | [无公网 IP 主机（NAT/家宽）作为落地节点与反向穿透隧道全链路实现](./nat-landing-node-reverse-tunnel.md) | `v0.10.0` | 2026-09-13 | 34/36 (94%) |
 | [实时节点镜像站与 Agent 流式代理](./node-mirror-site-proxy.md) | `v0.7.2+` | 2026-09-09 | 93/123 (76%) |
 | [公开线路与中继落地凭据安全整改 TODO（2026-09-08）](./security-audit-public-relay-credentials.md) | `v0.7.2+` | 2026-09-08 | 0/58 (0%) |

@@ -9,7 +9,8 @@ import {
   Query,
   ParseUUIDPipe,
   Res,
-  Header
+  Header,
+  HttpCode
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -22,13 +23,16 @@ import { QueryUpstreamNodeDto } from './dto/query-upstream-node.dto';
 import { SetNodeStatusDto } from './dto/set-node-status.dto';
 import { ExportUpstreamNodesDto } from './dto/export-upstream-nodes.dto';
 import { ProbeUpstreamDto } from './dto/probe-upstream.dto';
+import { ProbeTaskService } from '../probe/probe-task.service';
+import { StartProbeDto } from '../probe/probe-task.dto';
+import { CurrentUser } from '../auth/current-user.decorator';
 
 @ApiTags('Admin Upstream Subscriptions')
 @ApiBearerAuth()
 @Roles('ADMIN')
 @Controller('admin/upstream')
 export class UpstreamController {
-  constructor(private readonly upstreamService: UpstreamService) {}
+  constructor(private readonly upstreamService: UpstreamService, private readonly tasks: ProbeTaskService) {}
 
   @Get()
   @ApiOperation({ summary: '分页查询上游订阅列表' })
@@ -53,9 +57,10 @@ export class UpstreamController {
   }
 
   @Post('probe-all')
-  @ApiOperation({ summary: '对所有或指定订阅的在线节点执行并发连通性测速' })
-  probeAll(@Query() query: ProbeUpstreamDto) {
-    return this.upstreamService.probeAll(query.subscriptionId);
+  @HttpCode(202)
+  @ApiOperation({ summary: '创建上游节点端到端探针任务' })
+  probeAll(@Query() query: ProbeUpstreamDto, @Body() dto: StartProbeDto, @CurrentUser() user: { id: string }) {
+    return this.tasks.start(user.id, 'UPSTREAM_NODE', { subscriptionId: query.subscriptionId }, dto.policy);
   }
 
   @Get(':id')
@@ -105,8 +110,9 @@ export class UpstreamController {
   }
 
   @Post('nodes/:nodeId/probe')
-  @ApiOperation({ summary: '单节点连通性握手测速' })
-  probeNode(@Param('nodeId', ParseUUIDPipe) nodeId: string) {
-    return this.upstreamService.probeNode(nodeId);
+  @HttpCode(202)
+  @ApiOperation({ summary: '创建单节点端到端探针任务' })
+  probeNode(@Param('nodeId', ParseUUIDPipe) nodeId: string, @Body() dto: StartProbeDto, @CurrentUser() user: { id: string }) {
+    return this.tasks.start(user.id, 'UPSTREAM_NODE', { id: nodeId }, dto.policy);
   }
 }

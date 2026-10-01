@@ -74,7 +74,7 @@ describe('上游事务与秘密回归（无数据库）', () => {
     prisma.line.updateMany.mockClear();
     await service.sync('source');
     expect(prisma.upstreamNode.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'old' }, data: expect.objectContaining({ presenceStatus: 'PRESENT', missingSince: null }) }));
-    expect(prisma.line.updateMany).not.toHaveBeenCalled();
+    expect(prisma.line.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lastProbeJson: null }) }));
   });
   it('歧义拒绝在事务中进行节点写入', async () => {
     const { service, prisma } = setup();
@@ -212,17 +212,12 @@ describe('上游事务与秘密回归（无数据库）', () => {
     const clash = await service.exportNodes({ format: 'clash' });
     expect(clash.body).toContain('ws-opts:');
   });
-  it('UDP-only 探针标记 Master TCP 不适用且遍历 200 条以后的页面', async () => {
-    const { service, prisma, sub } = setup();
-    sub.userInfoUsedBytes = null as never;
-    const node = { id: 'node', subscriptionId: 'source', protocolType: 'HYSTERIA2', serverHost: 'example.com', serverPort: 443, paramsJson: encryptSecret('{"password":"p"}'), status: 'ACTIVE', presenceStatus: 'PRESENT', subscription: sub, tagsJson: '[]', createdAt: new Date(), updatedAt: new Date() };
-    prisma.upstreamNode.findUnique.mockResolvedValue(node);
-    prisma.upstreamNode.update.mockImplementation(async ({ data }) => ({ ...node, ...data }));
-    const result = await service.probeNode('node');
-    expect(result.probe).toMatchObject({ status: 'NOT_APPLICABLE', perspective: 'MASTER_TCP' });
-    prisma.upstreamNode.findMany.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ id: `n${i}` })) as never).mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ id: `n${100 + i}` })) as never).mockResolvedValueOnce([{ id: 'n200' }] as never);
-    const all = await service.probeAll();
-    expect(all.total).toBe(201);
-    expect(all.tested).toBe(0);
+  it('删除同步 TCP 探针，旧延迟不再作为协议成功展示', async () => {
+    const { service, prisma } = setup();
+    expect(service).not.toHaveProperty('probeNode');
+    expect(service).not.toHaveProperty('measureTcpLatency');
+    prisma.upstreamNode.findMany.mockResolvedValue([{ id: 'n', subscriptionId: 'source', tagsJson: '[]', lastProbeJson: null, latencyMs: 10, lastTestStatus: 'SUCCESS', createdAt: new Date(), updatedAt: new Date() }] as never);
+    const result = await service.listNodes({});
+    expect(result.data[0]).toMatchObject({ lastProbe: null, latencyMs: null, lastTestStatus: null });
   });
 });

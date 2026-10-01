@@ -101,6 +101,12 @@ LOGIN_RESPONSE_FILE=""
 say() { printf '\033[1;36m[dev-e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[dev-e2e]\033[0m %s\n' "$*" >&2; exit 1; }
 
+if [ -z "${MIHOMO_BINARY_PATH:-}" ]; then
+  say "准备本机 Mihomo 客户端拨测内核（固定版本/校验值）…"
+  MIHOMO_BINARY_PATH="$(node scripts/prepare-client-kernels.mjs)" || die "Mihomo 客户端资源准备失败"
+fi
+export MIHOMO_BINARY_PATH
+
 E2E_VERSION_RESOURCE_OVERRIDE=""
 if [ "$E2E_SYNC_RESOURCES" = "1" ]; then
   E2E_VERSION_RESOURCE_OVERRIDE="${E2E_RESOURCE_VERSION:-}"

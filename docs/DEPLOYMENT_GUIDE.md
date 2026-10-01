@@ -62,7 +62,7 @@ pnpm build:agent -- --target linux/amd64 --release  # 指定平台，发布模�
 两个 Dockerfile 的 Agent 编译阶段统一使用 digest 固定的 Go 1.26 基础镜像，必须与 `apps/agent/go.mod` 的 `go 1.26.0` 保持一致或更高；构建不依赖 `GOTOOLCHAIN=auto` 在线下载额外工具链。
 
 在解耦架构下，**Docker Compose 默认同时拉起 `master` 与 `agent`（Master-Local 本机节点）两个独立容器**：
-- **Master 容器**：专注控制平面与 Web 面板，仅暴露 3000 端口，不再以子进程托管 Agent；在构建期会将当前宿主平台的 `riri-agent`、定制 Sing-box（含 `libcronet.so`）按 manifest 登记的版本化布局打入 `/app/binaries/`（静态分发基线仓，不再复制旧的平铺路径副本），并将 `sing-box` 内核放置于 `/usr/local/bin/sing-box`、`mihomo` 内核放置于 `/usr/local/bin/mihomo`（并通过环境变量 `MIHOMO_BINARY_PATH=/usr/local/bin/mihomo` 声明路径）供服务端 `LineSpeedtestService` 与 `TemplatesService` 执行精准的端到端线路代理测速和 Sing-box / Mihomo 双内核真实验证诊断。即便宿主机挂载空白 data 目录，主控也能开箱即用对外提供 Agent 二进制与内核的下载和升级分发。
+- **Master 容器**：专注控制平面与 Web 面板，仅暴露 3000 端口，不托管业务 Agent；Sing-box 服务端分发基线仍保留，独立客户端 Mihomo 放置于 `/usr/local/bin/mihomo`，Sing-box 兼容客户端位于 `/usr/local/bin/sing-box`。ClientKernelsService 统一版本/路径画像，ProbeService 默认 Mihomo 真实端到端，模板按对应格式验证，不无条件执行双内核。客户端内核只作受管临时子进程，不暴露控制/代理端口到公网。
 - **Agent 容器（Master-Local）**：独立容器运行，镜像通过 `AGENT_IMAGE`（默认 `riricloud/agent:latest`）注入；采用 `network_mode: host` 与 `NET_ADMIN` 能力直接监听宿主机网络，并通过 `MASTER_LOCAL_AGENT_TOKEN` 环境变量与 Master 服务端完成 Token 预置与生命周期对接。
 
 Docker 构建、镜像导出和 Compose 运行均应在 Linux shell 执行；Windows 开发环境必须使用 WSL（且 WSL 内须安装原生 Linux `node` 与 `pnpm`，严禁调用 Windows `node.exe`），PowerShell/Git Bash 不直接承担 Docker 操作：
@@ -602,4 +602,22 @@ Master 下发的 Sing-box 配置默认将 `experimental.clash_api.external_contr
 
 自建中继只允许可归属用户的鉴权入口，用户流量按入口线路倍率计费；共享 SS/关闭用户鉴权不能作为受控上游中继入口。EXTERNAL 为共享外部凭据分发，不计本地用量、不执行本地设备/速率限制，停止分发或用户到期不能撤回已保存的凭据；需要独立停权时使用自建入口中继。
 
-裸节点测速是 **Master TCP 可达性**，Hysteria2/TUIC 等 UDP-only 返回不适用，不应据此判断协议可用或停用资源。使用线路的 Sing-box 端到端代理请求验证真实可用性。定向回归：`node --test scripts/upstream-upgrade-preflight.test.cjs scripts/upstream-migration.test.cjs`；测试在内存 SQLite 执行，不操作现有业务库。
+裸节点与全部线路现在均由 Master 的独立 Mihomo 客户端访问目标进行真实代理拨测，Hysteria2/TUIC 不再返回 TCP 不适用；只在严格目标响应与 HTTPS 证书验证通过时记录端到端延迟，失败不自动停用资源。定向回归：`node --test scripts/upstream-upgrade-preflight.test.cjs scripts/upstream-migration.test.cjs scripts/client-probe-migration.test.cjs`；测试在隔离 SQLite 执行，不操作现有业务库。
+
+## 11. Mihomo 主客户端拨测部署
+
+Mihomo 固定 1.19.30，官方五平台资产与 SHA-256 在 `scripts/client-kernel-assets.json`。准备命令 `node scripts/prepare-client-kernels.mjs --target <platform>` 输出 `artifacts/binaries/mihomo/1.19.30/<platform>/mihomo[.exe]` 并验证归档、文件头、架构与二进制摘要；`--archive` 可读取离线官方归档，但不能跳过校验。Docker 构建、Master Linux amd64/arm64 发行包和本地 E2E 共用清单，不在运行时下载。开发支持 windows-amd64、darwin-amd64/arm64、linux-amd64/arm64；不把 Mihomo 放进 Agent 或作为 Agent 升级目标。
+
+`MIHOMO_BINARY_PATH` / `SINGBOX_BINARY_PATH` 显式覆盖错误时明确环境不可用，不静默寻找另一个内核掩盖配置错误。常规解析优先环境路径、发行包版本目录、系统安装位置、开发 artifacts，并读取真实版本；缺资源不是“节点连接失败”。主拨测统一全局 4 连接/2 进程，临时目录私有、回环控制 Secret、禁 TUN/GeoIP/provider 自动下载；取消或异常应退出并清理。Sing-box 回退需要自身协议及运行依赖，Naive/Cronet 缺失不可伪称通过。
+
+上游与线路单/批量拨测返回 202 taskId，通过任务 API 查看进度、分页结果和取消；请求不等待整批网络操作。完成结果内存保留 15 分钟，重启后任务消失但资源 lastProbe 摘要保留。结果标实际内核/版本、Master 视角、链路与目标；Sing-box 兼容成功不等于 Mihomo 主客户端已验证。网络/鉴权/配置/环境失败不自动换内核，不自动停用业务资源。
+
+默认目标 HTTPS generate_204，严格响应状态与证书验证；已有显式 HTTP 目标保留但不提供目标 TLS 验证。目标只能公共地址、禁止任意请求传入 URL/认证、重定向不跟随；上游节点公共端点和目标实际 IP 固定，Host/SNI 保留。自建受控入口可以本机/私网，不提供生产用户私网绕过开关。固定 Mihomo delay API 对 500/302 返回数字，因此项目使用其 mixed 代理和标准 HTTP 客户端的严格请求，不直接把 delay 当成功。
+
+新增 `20261001010000_client_probe_metadata` 仅增加 lastProbeJson 并清除旧派生延迟/状态，不清来源、节点、线路、用户或账务。此迁移不要求清库；之前上游破坏性迁移的前置要求仍独立适用。内核/模板验证缺 GeoIP、规则/provider 或本地证书资源时显示 EXTERNAL_RESOURCES_REQUIRED，不篡改规则后标 FULL 通过。
+
+回归：`node --test scripts/client-kernels.test.mjs scripts/client-probe-migration.test.cjs`；真实任务/内核隔离验收 `node scripts/client-probe-integration.cjs`（HTTPS fixture 与测试 CA 可在 scratch 准备）；中继链路 `node scripts/upstream-integration.cjs`。上述脚本新建临时库并清理，不操作默认 E2E/dev 业务库。
+
+Windows 本机六门禁/隔离 E2E 已通过；本机 WSL2 Debian 13 amd64 已补验系统 Node20、Node22 Linux 测试容器、Mihomo 1.19.30/Sing-box 1.14.0 + Cronet，原生测试 83 项通过，真实 HTTP/TLS、JWT/RBAC、任务/STALE、EXTERNAL/VLESS/HTTP 中继及 Naive HTTP/2 CONNECT + padding 链路通过。正式 Master/Agent 镜像构建、双标签离线导出/摘要/重载，以及 Linux Master 发行包装配/解压后独立启动通过；生产 Master、隔离双库迁移/管理员引导、Cookie、内核画像、真实 Agent/Sing-box、异步 202/取消及格式对应模板检查均验证。所有运行使用临时库/数据目录，不操作现有部署；非 root 原生 Agent 须将 `RIRICLOUD_DATA_DIR` 指向可写目录。
+
+WSL 验证发现并修复 `docker-build.sh export` 引用未定义 HOST_UNAME（Linux-only 脚本不需要 Windows 路径转换），补 `node --test scripts/docker-export.test.mjs`；发现 Mihomo listener 早于 Running 的冷启动竞态，增加仅回环数据面就绪屏障，不访问目标或计入延迟，业务路由无 DIRECT 兜底；端口就绪轮询显式移除 abort listener。发布前其他平台仍须原生补验：Linux arm64/macOS 目前仅资产摘要/文件头通过，未实测原生运行；Naive 本轮未测 HTTP/3。视觉验证按需且仅限 Antigravity。

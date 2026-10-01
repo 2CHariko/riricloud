@@ -1,14 +1,23 @@
 import { validate } from 'class-validator';
-import { PATH_METADATA } from '@nestjs/common/constants';
+import { PATH_METADATA, HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { UpstreamController } from './upstream.controller';
 import { SetNodeStatusDto } from './dto/set-node-status.dto';
 import { ExportUpstreamNodesDto } from './dto/export-upstream-nodes.dto';
 import { ProbeUpstreamDto } from './dto/probe-upstream.dto';
 import { QueryUpstreamNodeDto } from './dto/query-upstream-node.dto';
 import { CreateUpstreamDto } from './dto/create-upstream.dto';
+import { StartProbeDto, ProbeResultsQueryDto } from '../probe/probe-task.dto';
 
 async function invalid(object: object) { expect((await validate(object, { whitelist: true, forbidNonWhitelisted: true })).length).toBeGreaterThan(0); }
 describe('上游新 DTO 和破坏性路由', () => {
+  it('探针路由固定返回 HTTP202，策略与分页拒绝未知字段和超限', async () => {
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, UpstreamController.prototype.probeNode)).toBe(202);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, UpstreamController.prototype.probeAll)).toBe(202);
+    expect(await validate(new StartProbeDto())).toHaveLength(0);
+    await invalid(Object.assign(new StartProbeDto(), { policy: 'TCP' }));
+    await invalid(Object.assign(new StartProbeDto(), { targetUrl: 'http://private' }));
+    await invalid(Object.assign(new ProbeResultsQueryDto(), { pageSize: 201 }));
+  });
   it('彻底删除直发开关路由和字段', async () => {
     const routes = Object.getOwnPropertyNames(UpstreamController.prototype).map((name) => Reflect.getMetadata(PATH_METADATA, Object.getOwnPropertyDescriptor(UpstreamController.prototype, name)?.value));
     expect(routes).not.toContain('nodes/:nodeId/direct-sub');

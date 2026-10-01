@@ -1,11 +1,11 @@
 import { buildUpstreamOutbound, buildUpstreamUri, buildUpstreamClashProxy, type UpstreamConnection } from '../common/upstream-connection';
+import { bindManagedConnection } from './compilers/managed-connection';
 import { formatAuthUserName } from '../common/inbound';
 import { parseDocument, stringify } from 'yaml';
 import type {
   HttpParams,
   Hysteria2Params,
   InboundMultiplexConfig,
-  InboundTransport,
   MixedParams,
   NaiveParams,
   ShadowtlsParams,
@@ -660,58 +660,6 @@ function shadowtlsInnerPassword(params: ShadowtlsParams): string {
   return normalizeShadowsocksPassword(params.inner.method, params.inner.password);
 }
 
-function buildClashTransportOptions(
-  transport: InboundTransport | undefined,
-  hostOverride?: string | null
-): Record<string, unknown> | undefined {
-  const client = buildClientTransport(transport, hostOverride);
-  if (!client || typeof client.type !== 'string') return undefined;
-
-  const path = typeof client.path === 'string' && client.path ? client.path : '/';
-  const headers = client.headers && typeof client.headers === 'object' && !Array.isArray(client.headers)
-    ? client.headers
-    : undefined;
-
-  if (client.type === 'ws') {
-    const options: Record<string, unknown> = { path };
-    if (headers) options.headers = headers;
-    if (typeof client.max_early_data === 'number') options['max-early-data'] = client.max_early_data;
-    if (typeof client.early_data_header_name === 'string') options['early-data-header-name'] = client.early_data_header_name;
-    return { 'ws-opts': options };
-  }
-
-  if (client.type === 'grpc') {
-    return { 'grpc-opts': { 'grpc-service-name': typeof client.service_name === 'string' ? client.service_name : '' } };
-  }
-
-  if (client.type === 'http') {
-    return { 'http-opts': { path, ...(headers ? { headers } : {}) } };
-  }
-
-  if (client.type === 'httpupgrade') {
-    const options: Record<string, unknown> = { path };
-    if (typeof client.host === 'string' && client.host) options.host = client.host;
-    if (headers) options.headers = headers;
-    return { 'httpupgrade-opts': options };
-  }
-
-  return undefined;
-}
-
-function buildClashSmux(multiplex?: InboundMultiplexConfig): Record<string, unknown> | undefined {
-  if (!multiplex || !multiplex.enabled) return undefined;
-  const smux: Record<string, unknown> = { enabled: true };
-  if (multiplex.protocol) smux.protocol = multiplex.protocol;
-  // 规范互斥：max-connections 与 max-streams 互斥
-  if (multiplex.maxConnections) {
-    smux['max-connections'] = multiplex.maxConnections;
-  } else if (multiplex.maxStreams) {
-    smux['max-streams'] = multiplex.maxStreams;
-  }
-  if (multiplex.minStreams) smux['min-streams'] = multiplex.minStreams;
-  if (multiplex.padding !== undefined) smux.padding = multiplex.padding;
-  return smux;
-}
 
 // 输出条目名：单入站节点用节点名，多入站节点追加 tag 区分；再全局去重保证 Clash proxy 名唯一
 export function entryLabels(nodes: SubscriptionSource[]): string[] {
@@ -992,215 +940,14 @@ export function buildUriList(user: SubUser, nodes: SubscriptionSource[]): string
 
 function buildClashProxy(user: SubUser, entry: SubEntry): Record<string, unknown> {
   if (entry.line?.externalConnection) return buildUpstreamClashProxy(entry.line.externalConnection, entry.label);
-  const serverHost = endpointHost(entry);
-  const port = endpointPort(entry);
-  let proxy: Record<string, unknown> = {};
-
-  switch (entry.inbound.type) {
-    case 'VLESS':
-    case 'VLESS_REALITY' as ProtocolType: {
-      const p = entry.inbound.params as unknown as VlessParams;
-      const transport = p.transport?.type || 'tcp';
-      const tls = p.tls;
-
-      proxy = {
-        name: entry.label,
-        type: 'vless',
-        server: serverHost,
-        port,
-        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
-        network: transport === 'httpupgrade' ? 'ws' : transport,
-        udp: true
-      };
-
-      const isDirectTcpTls = (!p.transport || p.transport.type === 'tcp') && Boolean(tls && tls.enabled && tls.mode !== 'none');
-      if (p.flow && isDirectTcpTls) {
-        proxy.flow = p.flow;
-      }
-
-      if (tls && tls.enabled) {
-        proxy.tls = true;
-        const serverName = effectiveServerName(entry, tls.serverName);
-        if (serverName) proxy.servername = serverName;
-        if (tls.insecure) proxy['skip-cert-verify'] = true;
-        if (tls.alpn) proxy.alpn = [...tls.alpn];
-
-        const rawReality = tls.reality as unknown as { enabled?: boolean; publicKey?: string; public_key?: string; shortId?: string; short_id?: string; shortIds?: string[]; serverNames?: string[] } | undefined;
-        if ((tls.mode === 'reality' || Boolean(rawReality?.enabled || rawReality?.publicKey || rawReality?.public_key)) && rawReality) {
-          proxy.servername = effectiveServerName(entry, tls.serverName || rawReality.serverNames?.[0]);
-          proxy['client-fingerprint'] = (tls as unknown as { clientFingerprint?: string }).clientFingerprint || REALITY_CLIENT_DEFAULTS.fp;
-          proxy['reality-opts'] = {
-            'public-key': rawReality.publicKey || rawReality.public_key || '',
-            'short-id': rawReality.shortIds?.[0] ?? rawReality.shortId ?? rawReality.short_id ?? ''
-          };
-        }
-      }
-
-      Object.assign(proxy, buildClashTransportOptions(p.transport, effectiveTransportHost(entry)));
-      const smux = buildClashSmux(p.multiplex);
-      if (smux) proxy.smux = smux;
-      break;
-    }
-
-    case 'VMESS': {
-      const p = entry.inbound.params as unknown as VmessParams;
-      const transport = p.transport?.type || 'tcp';
-      const tls = p.tls;
-
-      proxy = {
-        name: entry.label,
-        type: 'vmess',
-        server: serverHost,
-        port,
-        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
-        alterId: p.alterId || 0,
-        cipher: 'auto',
-        network: transport === 'httpupgrade' ? 'ws' : transport,
-        udp: true
-      };
-
-      if (tls && tls.enabled) {
-        proxy.tls = true;
-        const serverName = effectiveServerName(entry, tls.serverName);
-        if (serverName) proxy.servername = serverName;
-        if (tls.insecure) proxy['skip-cert-verify'] = true;
-        if (tls.alpn) proxy.alpn = [...tls.alpn];
-      }
-
-      Object.assign(proxy, buildClashTransportOptions(p.transport, effectiveTransportHost(entry)));
-      const smux = buildClashSmux(p.multiplex);
-      if (smux) proxy.smux = smux;
-      break;
-    }
-
-    case 'TROJAN': {
-      const p = entry.inbound.params as unknown as TrojanParams;
-      const transport = p.transport?.type || 'tcp';
-      const tls = p.tls;
-
-      proxy = {
-        name: entry.label,
-        type: 'trojan',
-        server: serverHost,
-        port,
-        password: (p as unknown as { password?: string }).password || user.credential,
-        udp: true,
-        network: transport === 'httpupgrade' ? 'ws' : transport
-      };
-
-      const serverName = effectiveServerName(entry, tls?.serverName);
-      if (serverName) proxy.sni = serverName;
-      if (tls?.insecure) proxy['skip-cert-verify'] = true;
-      if (tls?.alpn) proxy.alpn = [...tls.alpn];
-
-      Object.assign(proxy, buildClashTransportOptions(p.transport, effectiveTransportHost(entry)));
-      const smux = buildClashSmux(p.multiplex);
-      if (smux) proxy.smux = smux;
-      break;
-    }
-
-    case 'HYSTERIA2': {
-      const p = entry.inbound.params as unknown as Hysteria2Params;
-      proxy = {
-        name: entry.label,
-        type: 'hysteria2',
-        server: serverHost,
-        port,
-        password: (p as unknown as { password?: string }).password || user.credential,
-        sni: effectiveServerName(entry, p.tls?.serverName) || '',
-        'skip-cert-verify': p.tls?.insecure ?? false,
-        alpn: p.tls?.alpn ? [...p.tls.alpn] : ['h3'],
-        ...(p.upMbps && p.upMbps > 0 ? { up: `${p.upMbps} Mbps` } : {}),
-        ...(p.downMbps && p.downMbps > 0 ? { down: `${p.downMbps} Mbps` } : {})
-      };
-      const rawObfs = (p as unknown as { obfs?: unknown; obfsPassword?: string }).obfs;
-      const rawObfsPassword = (p as unknown as { obfsPassword?: string }).obfsPassword;
-      if (rawObfs && typeof rawObfs === 'object' && (rawObfs as { password?: string }).password) {
-        proxy.obfs = (rawObfs as { type?: string }).type || 'salamander';
-        proxy['obfs-password'] = (rawObfs as { password: string }).password;
-      } else if (typeof rawObfs === 'string' && rawObfs && rawObfsPassword) {
-        proxy.obfs = rawObfs;
-        proxy['obfs-password'] = rawObfsPassword;
-      }
-      break;
-    }
-
-    case 'SHADOWSOCKS': {
-      const p = entry.inbound.params as unknown as ShadowsocksParams;
-      const password = p.mode === 'multi-user'
-        ? buildShadowsocksClientPassword(p.method, p.password || '', user.credential, user.uuid)
-        : normalizeShadowsocksPassword(p.method, p.password || '');
-      proxy = {
-        name: entry.label,
-        type: 'ss',
-        server: serverHost,
-        port,
-        cipher: p.method,
-        password,
-        udp: true,
-        ...(p.udpOverTcp ? { 'udp-over-tcp': true } : {})
-      };
-      const smux = p.udpOverTcp ? undefined : buildClashSmux(p.multiplex);
-      if (smux) proxy.smux = smux;
-      break;
-    }
-
-    case 'SHADOWTLS': {
-      const p = entry.inbound.params as unknown as ShadowtlsParams;
-      proxy = {
-        name: entry.label,
-        type: 'ss',
-        server: serverHost,
-        port,
-        cipher: p.inner.method,
-        password: shadowtlsInnerPassword(p),
-        udp: true,
-        plugin: 'shadow-tls',
-        'client-fingerprint': REALITY_CLIENT_DEFAULTS.fp,
-        'plugin-opts': {
-          host: shadowtlsHandshakeHost(entry, p),
-          password: user.credential,
-          version: 3
-        }
-      };
-      break;
-    }
-
-    case 'TUIC': {
-      const p = entry.inbound.params as unknown as TuicParams;
-      proxy = {
-        name: entry.label,
-        type: 'tuic',
-        server: serverHost,
-        port,
-        uuid: (p as unknown as { uuid?: string }).uuid || user.uuid,
-        password: (p as unknown as { password?: string }).password || user.credential,
-        sni: effectiveServerName(entry, p.tls?.serverName) || '',
-        'skip-cert-verify': p.tls?.insecure ?? false,
-        alpn: p.tls?.alpn ? [...p.tls.alpn] : ['h3'],
-        'congestion-controller': p.congestionControl || 'bbr',
-        'udp-relay-mode': 'native'
-      };
-      break;
-    }
-
-    case 'SOCKS':
-    case 'MIXED':
-    case 'HTTP': {
-      const tls = entry.inbound.params.tls as { enabled?: boolean; serverName?: string; insecure?: boolean } | undefined;
-      proxy = { name: entry.label, type: entry.inbound.type === 'HTTP' ? 'http' : 'socks5', server: serverHost, port, udp: true };
-      if (entry.inbound.params.usersEnabled !== false) Object.assign(proxy, { username: formatAuthUserName(user, entry.line?.id), password: user.credential });
-      if (tls?.enabled) Object.assign(proxy, { tls: true, sni: effectiveServerName(entry, tls.serverName), 'skip-cert-verify': tls.insecure ?? false });
-      break;
-    }
-
-    default:
-      return {};
-  }
-
-  if (entry.line?.speedLimitMbps && entry.line.speedLimitMbps > 0 && Object.keys(proxy).length > 0) {
-    proxy['bandwidth-limit'] = `${entry.line.speedLimitMbps} Mbps`;
-  }
+  if (entry.inbound.type === 'DIRECT') return {};
+  const connection = bindManagedConnection({
+    protocolType: entry.inbound.type, serverHost: endpointHost(entry), serverPort: endpointPort(entry),
+    params: entry.inbound.params, lineId: entry.line?.id,
+    serverName: effectiveServerName(entry), host: effectiveTransportHost(entry)
+  }, user);
+  const proxy = buildUpstreamClashProxy(connection, entry.label);
+  if (entry.line?.speedLimitMbps && entry.line.speedLimitMbps > 0) proxy['bandwidth-limit'] = `${entry.line.speedLimitMbps} Mbps`;
   return proxy;
 }
 

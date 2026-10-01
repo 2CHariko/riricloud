@@ -79,9 +79,7 @@ CRONET_VERSION="${CRONET_VERSION:-v150.0.7871.63-2}"
 SINGBOX_SHA256="${SINGBOX_SHA256:-87baf6852e37941cbe40bdd94bec81c957c88a56751cecd6bbf0e6108bc69398}"
 CRONET_SHA256_AMD64="${CRONET_SHA256_AMD64:-c3949c6ad64e1d8fcd1e3b1fae4e302b2e553d769665a4bd7576483564c3f026}"
 CRONET_SHA256_ARM64="${CRONET_SHA256_ARM64:-8f13a6186aca498d37ee5e1f410282f587d663995aca60d6bf29a2d4f5536f2b}"
-MIHOMO_VERSION="${MIHOMO_VERSION:-1.19.30}"
-MIHOMO_SHA256_AMD64="${MIHOMO_SHA256_AMD64:-cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84}"
-MIHOMO_SHA256_ARM64="${MIHOMO_SHA256_ARM64:-58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069}"
+MIHOMO_VERSION="$(node "$RIRI_ROOT/scripts/prepare-client-kernels.mjs" --target linux-amd64 --field version)"
 ARTIFACT_ROOT="${RIRICLOUD_ARTIFACT_DIR:-$RIRI_ROOT/artifacts}"
 
 if [ -n "${DOCKER_PLATFORM:-}" ]; then
@@ -130,9 +128,6 @@ build_images() {
     --build-arg "SINGBOX_SHA256=$SINGBOX_SHA256" \
     --build-arg "CRONET_SHA256_AMD64=$CRONET_SHA256_AMD64" \
     --build-arg "CRONET_SHA256_ARM64=$CRONET_SHA256_ARM64" \
-    --build-arg "MIHOMO_VERSION=$MIHOMO_VERSION" \
-    --build-arg "MIHOMO_SHA256_AMD64=$MIHOMO_SHA256_AMD64" \
-    --build-arg "MIHOMO_SHA256_ARM64=$MIHOMO_SHA256_ARM64" \
     --tag "$MASTER_VERSION_IMAGE" \
     --tag "$MASTER_LATEST_IMAGE" \
     --file Dockerfile .
@@ -206,9 +201,6 @@ export_images() {
   master_digest="$(sha256sum "$master_archive" | awk '{print $1}')"
   agent_digest="$(sha256sum "$agent_archive" | awk '{print $1}')"
   local manifest_node_path="$manifest_file"
-  if [[ "$HOST_UNAME" =~ ^(MINGW|MSYS|CYGWIN) ]] && command -v cygpath >/dev/null 2>&1; then
-    manifest_node_path="$(cygpath -w "$manifest_file")"
-  fi
 
   "$NODE_BIN" -e '
     const fs = require("fs");

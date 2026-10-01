@@ -4,9 +4,10 @@ import { LinesController } from './lines.controller';
 import { LinesService } from './lines.service';
 import { LineSpeedtestService } from './line-speedtest.service';
 import { SystemModule } from '../system/system.module';
+import { ProbeModule } from '../probe/probe.module';
 
 @Module({
-  imports: [AgentGatewayModule, SystemModule],
+  imports: [AgentGatewayModule, SystemModule, ProbeModule],
   controllers: [LinesController],
   providers: [LinesService, LineSpeedtestService],
   exports: [LinesService, LineSpeedtestService]

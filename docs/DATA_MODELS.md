@@ -1163,7 +1163,7 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 | `connectionHash` / `configHash` | 全长 SHA-256 规范化完整连接特征和配置变化哈希；不是业务 ID，也不使用随机密文计算 |
 | `presenceStatus` / `missingSince` | PRESENT / MISSING 与缺失时间；独立于管理员启用状态 |
 | `tagsJson` | 地区标签数组，用于资源筛选；Line 自身标签用于套餐授权 |
-| `latencyMs` / `lastTestedAt` / `lastTestStatus` / `lastTestMessage` | Master TCP 可达性快照，UDP-only 返回 NOT_APPLICABLE，不等于代理协议认证成功 |
+| `latencyMs` / `lastTestedAt` / `lastTestStatus` / `lastTestMessage` | 只镜像新端到端拨测摘要；没有有效 lastProbeJson 时不展示旧 TCP 数字 |
 | `status` | 管理员 ACTIVE / DISABLED；同步不覆盖 |
 
 ### 11.2 业务不变量与授权
@@ -1183,3 +1183,15 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 ### 11.4 破坏性结构升级
 
 删除 `fingerprint`、`isDirectSub`，不保留兼容接口或旧数据回填。新增迁移 `20260930190000_upstream_breaking_refactor` 保留非上游业务记录，但要求旧上游域为空；部署脚本在任何双库迁移前只读检查，SQL 本身也在持久结构变化前拒绝旧上游记录。维护者先备份并明确处理旧源、节点及关联线路，再重新导入；程序不自动清理。回退必须配套恢复数据库备份，详见部署指南。
+
+## 12. 统一客户端测量摘要
+
+Line 与 UpstreamNode 新增 `lastProbeJson String?`，保存 schemaVersion=1 的安全结果，API 输出 `lastProbe` 白名单对象：实际内核/版本、回退原因、主要客户端兼容性、Master 视角、链路类型、测试目标 ID/host、时间、耗时、延迟、状态/原因码、配置 hash/applied。禁止保存连接秘密、完整含凭据 URL、原始内核日志或控制 Secret。
+
+迁移 `20261001010000_client_probe_metadata` 只新增列，并将旧延迟/状态/诊断/时间置空；不删除来源、节点、线路、用户、余额或流量，不要求清库。旧未标内核/目标的 TCP 或兼容结果不能冒充端到端测量，新版以 schemaVersion 与资源配置版本确认有效性。
+
+拨测读取不可变短快照，在来源同步锁外执行；结果在短事务中再次验证连接/线路/关联来源和节点状态、配置 hash、更新时间与最新任务提交序列，条件 updateMany 写入。资源删除、失效、缺失、轮换或重绑后的旧结果为 STALE，不覆盖新配置。同资源旧任务晚结束不能覆盖新任务。环境不可用、取消和不支持不更改业务启停；测速失败不自动禁用资源。
+
+任务只在 Master 内存保留，完成 15 分钟后清理、最多保留 50 个完成任务；重启丢失任务但保留资源最后有效测量。不新增数据库任务表或外部队列。系统新增 `probeSingboxFallbackEnabled`（默认 true），仅允许能力白名单兼容执行；既有 lineSpeedtestTargetUrl/Timeout 作为统一节点/线路拨测设置，默认目标 HTTPS generate_204，已有显式设置保留。
+
+线路探针版本还纳入关联证书的 `id/updatedAt`，包括 TARGET_LINE 的实际证书依赖；同 ID 更新 PEM 后，旧结果展示为 STALE，运行中旧结果不能写回。快照及列表只加载证书版本元信息，不为该验证读取或返回私钥。

@@ -1,3 +1,4 @@
+import type { ProbeResult } from '@/lib/probe-types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, extractErrorMessage } from '@/lib/api';
@@ -36,6 +37,7 @@ export interface UserLine {
   protocolType: string;
   trafficRate: number;
   speedLimitMbps?: number | null;
+  lastProbe?: ProbeResult | null;
   lastLatencyMs?: number | null;
   lastTestedAt?: string | null;
   lastTestStatus?: string | null;

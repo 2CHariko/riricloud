@@ -423,7 +423,7 @@ const user = {
     step1Title: '复制订阅链接',
     step1Desc: '在我的订阅中复制专属的通用多格式订阅链接。',
     step2Title: '导入客户端',
-    step2Desc: '在 Clash Meta、Sing-box 或 Shadowrocket 中粘贴订阅链接。',
+    step2Desc: '优先使用 Clash / Mihomo 客户端导入；Sing-box 为兼容格式，亦保留 Shadowrocket 等通用客户端。',
     step3Title: '选择线路并连接',
     step3Desc: '更新配置后选择延迟较低的可用线路开启代理。',
     footerTip: '公开可用的线路会由系统自动同步至客户端，无需手动填写服务器与端口。',

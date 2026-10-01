@@ -1,3 +1,4 @@
+import type { ProbePolicy, ProbeResult, ProbeTaskAccepted } from '@/lib/probe-types';
 import axios, { AxiosError } from 'axios';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
@@ -121,6 +122,7 @@ export interface ApiLine {
   sortOrder: number;
   isPublic: boolean;
   status: LineStatus;
+  lastProbe?: ProbeResult | null;
   lastLatencyMs?: number | null;
   lastTestedAt?: string | null;
   lastTestStatus?: 'SUCCESS' | 'TIMEOUT' | 'ERROR' | null;
@@ -232,6 +234,7 @@ export interface ApiUpstreamNode {
   serverHost: string;
   serverPort: number;
   tags: string[];
+  lastProbe?: ProbeResult | null;
   latencyMs: number | null;
   lastTestedAt: string | null;
   lastTestStatus: 'SUCCESS' | 'TIMEOUT' | 'ERROR' | 'NOT_APPLICABLE' | null;
@@ -279,12 +282,8 @@ export const upstreamApi = {
     api.delete<{ deleted: boolean; id: string }>(`/admin/upstream/${id}`),
   sync: (id: string) =>
     api.post<UpstreamSyncResult>(`/admin/upstream/${id}/sync`),
-  probeAll: (subscriptionId?: string) =>
-    api.post<{ total: number; tested: number; results: Array<{ id: string; latencyMs: number | null; status: string }> }>(
-      '/admin/upstream/probe-all',
-      undefined,
-      { params: subscriptionId ? { subscriptionId } : undefined }
-    ),
+  probeAll: (subscriptionId?: string, policy: ProbePolicy = 'MIHOMO_PREFERRED') =>
+    api.post<ProbeTaskAccepted>('/admin/upstream/probe-all', { policy }, { params: subscriptionId ? { subscriptionId } : undefined }),
   listNodes: (params?: {
     page?: number;
     pageSize?: number;
@@ -297,10 +296,8 @@ export const upstreamApi = {
     api.get<{ data: ApiUpstreamNode[]; total: number; page: number; pageSize: number }>('/admin/upstream/nodes', { params }),
   setNodeStatus: (nodeId: string, status: UpstreamNodeStatus) =>
     api.put<{ node: ApiUpstreamNode }>(`/admin/upstream/nodes/${nodeId}/status`, { status }),
-  probeNode: (nodeId: string) =>
-    api.post<{ probe: { latencyMs: number | null; status: string; message: string | null }; node: ApiUpstreamNode }>(
-      `/admin/upstream/nodes/${nodeId}/probe`
-    ),
+  probeNode: (nodeId: string, policy: ProbePolicy = 'MIHOMO_PREFERRED') =>
+    api.post<ProbeTaskAccepted>(`/admin/upstream/nodes/${nodeId}/probe`, { policy }),
   exportNodes: (params?: { nodeIds?: string; subscriptionId?: string; format?: 'uri' | 'json' }) =>
     api.get<string>('/admin/upstream/nodes/export', { params, responseType: 'text' })
 };

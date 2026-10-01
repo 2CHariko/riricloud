@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
 import { BatchLineStatusDto } from './dto/batch-line-status.dto';
@@ -7,7 +7,9 @@ import { QueryLineDto } from './dto/query-line.dto';
 import { ReorderLinesDto } from './dto/reorder-lines.dto';
 import { UpdateLineDto } from './dto/update-line.dto';
 import { LinesService } from './lines.service';
-import { LineSpeedtestService } from './line-speedtest.service';
+import { ProbeTaskService } from '../probe/probe-task.service';
+import { StartProbeDto } from '../probe/probe-task.dto';
+import { CurrentUser } from '../auth/current-user.decorator';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -16,7 +18,7 @@ import { LineSpeedtestService } from './line-speedtest.service';
 export class LinesController {
   constructor(
     private readonly linesService: LinesService,
-    private readonly speedtestService: LineSpeedtestService
+    private readonly tasks: ProbeTaskService
   ) {}
 
   @Get()
@@ -65,13 +67,15 @@ export class LinesController {
   }
 
   @Post('speedtest-all')
-  speedtestAll() {
-    return this.speedtestService.testAllActiveLines();
+  @HttpCode(202)
+  speedtestAll(@Body() dto: StartProbeDto, @CurrentUser() user: { id: string }) {
+    return this.tasks.start(user.id, 'LINE', {}, dto.policy);
   }
 
   @Post(':id/speedtest')
-  speedtest(@Param('id', ParseUUIDPipe) id: string) {
-    return this.speedtestService.testLine(id);
+  @HttpCode(202)
+  speedtest(@Param('id', ParseUUIDPipe) id: string, @Body() dto: StartProbeDto, @CurrentUser() user: { id: string }) {
+    return this.tasks.start(user.id, 'LINE', { id }, dto.policy);
   }
 
   @Post('batch-status')

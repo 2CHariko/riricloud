@@ -31,7 +31,7 @@ describe('upstream connection consumers', () => {
     expect(() => buildUpstreamClashProxy({ ...connection, protocolType: 'NAIVE', params: { username: 'a', password: 'b', tls: { mode: 'tls' } } }, 'naive')).toThrow(/Clash/);
   });
   it.each(['VLESS', 'VMESS', 'TROJAN', 'HYSTERIA2', 'TUIC', 'SHADOWSOCKS', 'SOCKS', 'HTTP', 'NAIVE'])('exports protocol %s with real external credentials', (protocolType) => {
-    const resource = { protocolType, serverHost: 'example.com', serverPort: 443, params: { uuid: connection.params.uuid, username: 'external-user', password: 'external:password', method: 'aes-256-gcm', ...(!['SHADOWSOCKS', 'SOCKS'].includes(protocolType) ? { tls: { mode: 'tls', serverName: 'sni.example.com', alpn: ['h3'], insecure: true } } : {}), ...(['VLESS', 'VMESS', 'TROJAN'].includes(protocolType) ? { transport: { type: 'grpc', serviceName: 'external-service' } } : {}) } };
+    const resource = { protocolType, serverHost: 'example.com', serverPort: 443, params: { uuid: connection.params.uuid, username: 'external-user', password: 'external:password', method: 'aes-256-gcm', ...(!['SHADOWSOCKS', 'SOCKS'].includes(protocolType) ? { tls: { mode: 'tls', serverName: 'sni.example.com', ...(protocolType !== 'NAIVE' ? { alpn: ['h3'], insecure: true } : {}) } } : {}), ...(['VLESS', 'VMESS', 'TROJAN'].includes(protocolType) ? { transport: { type: 'grpc', serviceName: 'external-service' } } : {}) } };
     const outbound = buildUpstreamOutbound(resource, 'proxy');
     if (!['SHADOWSOCKS', 'SOCKS'].includes(protocolType)) expect(JSON.stringify(outbound)).toContain('sni.example.com');
     const uri = buildUpstreamUri(resource, '外部连接');

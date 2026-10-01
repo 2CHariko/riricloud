@@ -334,6 +334,14 @@ cp "$SINGBOX_SRC" "$MASTER_DIR/binaries/singbox/$SINGBOX_RESOURCE_VERSION/$TARGE
 cp "$CRONET_SRC" "$MASTER_DIR/binaries/singbox/$SINGBOX_RESOURCE_VERSION/$TARGET_NORM/libcronet.so"
 chmod +x "$MASTER_DIR/binaries/singbox/$SINGBOX_RESOURCE_VERSION/$TARGET_NORM/sing-box"
 
+echo "  -> 准备主客户端 Mihomo 固定资源..."
+"$NODE_BIN" "$RIRI_ROOT/scripts/prepare-client-kernels.mjs" --target "$TARGET_NORM" --output-root "$(to_node_path "$ARTIFACT_ROOT/binaries/mihomo")"
+MIHOMO_VERSION="$("$NODE_BIN" "$RIRI_ROOT/scripts/prepare-client-kernels.mjs" --target "$TARGET_NORM" --field version)"
+mkdir -p "$MASTER_DIR/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM"
+cp "$ARTIFACT_ROOT/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/mihomo" "$MASTER_DIR/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/mihomo"
+cp "$ARTIFACT_ROOT/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/manifest.json" "$MASTER_DIR/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/manifest.json"
+chmod +x "$MASTER_DIR/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/mihomo"
+
 echo "  -> 生成内置二进制资源 manifest..."
 "$NODE_BIN" -e '
   const fs = require("fs");

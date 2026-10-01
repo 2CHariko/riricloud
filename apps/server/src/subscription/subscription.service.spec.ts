@@ -364,7 +364,7 @@ describe('SubscriptionService', () => {
         sni: 'hy.example.com',
         'skip-cert-verify': false
       });
-      expect(hy2.up).toBe('100 Mbps');
+      expect(hy2.up).toBe(100);
 
       const ss = proxies.find((p: { type: string }) => p.type === 'ss');
       expect(ss).toMatchObject({
@@ -619,8 +619,8 @@ describe('SubscriptionService', () => {
       const yaml = parseYaml(res.body) as { proxies: Array<Record<string, unknown>> };
       expect(yaml.proxies[0].name).toBe('香港 01 [50M]');
       expect(yaml.proxies[0]['bandwidth-limit']).toBe('50 Mbps');
-      expect(yaml.proxies[0].up).toBe('50 Mbps');
-      expect(yaml.proxies[0].down).toBe('50 Mbps');
+      expect(yaml.proxies[0].up).toBe(50);
+      expect(yaml.proxies[0].down).toBe(50);
     });
 
     it('速率达到 1000M 及以上时自动换算为 1G / 2.5G 角标', async () => {

@@ -63,27 +63,15 @@ RUN --mount=type=cache,id=riricloud-go-mod,target=/go/pkg/mod,sharing=locked \
     -ldflags "-s -w -X main.Version=${agent_ver}" \
     -o /out/riri-agent .
 
-FROM golang:1.26-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81 AS mihomo-fetch
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS mihomo-fetch
 
 ARG TARGETARCH=amd64
-ARG MIHOMO_VERSION=1.19.30
-ARG MIHOMO_SHA256_AMD64=cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84
-ARG MIHOMO_SHA256_ARM64=58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069
-WORKDIR /tmp
-
-RUN --mount=type=cache,id=riricloud-mihomo-downloads,target=/tmp/mihomo-cache,sharing=locked \
-    apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gzip \
-    && rm -rf /var/lib/apt/lists/* \
-    && case "${TARGETARCH}" in amd64|arm64) ;; *) echo "unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; esac \
-    && mihomo_archive="/tmp/mihomo-cache/mihomo-linux-${TARGETARCH}-v${MIHOMO_VERSION}.gz" \
-    && if [ ! -s "$mihomo_archive" ]; then curl --fail --silent --show-error --location \
-      "https://github.com/MetaCubeX/mihomo/releases/download/v${MIHOMO_VERSION}/mihomo-linux-${TARGETARCH}-v${MIHOMO_VERSION}.gz" \
-      --output "${mihomo_archive}.tmp" && mv "${mihomo_archive}.tmp" "$mihomo_archive"; fi \
-    && mihomo_sha="$MIHOMO_SHA256_AMD64" \
-    && if [ "$TARGETARCH" = "arm64" ]; then mihomo_sha="$MIHOMO_SHA256_ARM64"; fi \
-    && printf '%s  %s\n' "$mihomo_sha" "$mihomo_archive" | sha256sum -c - \
-    && gzip -dc "$mihomo_archive" > /mihomo \
+WORKDIR /prepare
+COPY scripts/client-kernel-assets.json scripts/prepare-client-kernels.mjs ./scripts/
+RUN --mount=type=cache,id=riricloud-mihomo-downloads,target=/client-kernels,sharing=locked \
+    node scripts/prepare-client-kernels.mjs --target "linux-${TARGETARCH}" --output-root /client-kernels \
+    && version="$(node scripts/prepare-client-kernels.mjs --target "linux-${TARGETARCH}" --field version)" \
+    && cp "/client-kernels/${version}/linux-${TARGETARCH}/mihomo" /mihomo \
     && chmod 0755 /mihomo
 
 FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build

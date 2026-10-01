@@ -71,34 +71,6 @@ export interface LineQuery {
   tag?: string;
 }
 
-export interface SpeedTestStage {
-  id: 'master_ready' | 'entry_handshake' | 'relay_transit' | 'target_http';
-  name: string;
-  target: string;
-  status: 'SUCCESS' | 'FAILED' | 'SKIPPED';
-  latencyMs?: number | null;
-  message?: string;
-}
-
-export interface SpeedTestExecutionResult {
-  lineId: string;
-  lineName: string;
-  latencyMs: number | null;
-  status: 'SUCCESS' | 'TIMEOUT' | 'ERROR';
-  message: string;
-  testedAt: string;
-  mode: 'END_TO_END' | 'TCP_HANDSHAKE';
-  targetUrl: string;
-  protocolType: string;
-  topology: {
-    isRelay: boolean;
-    relayMode?: string | null;
-    masterHost: string;
-    entryNode: { id: string; name: string; host: string; port: number };
-    landingNode?: { id: string; name: string; host: string; port?: number | null } | null;
-  };
-  stages: SpeedTestStage[];
-}
 
 export function useAdminLines(query: LineQuery = {}) {
   return useQuery({
@@ -170,27 +142,7 @@ export function useLineMutations() {
     onSuccess: () => { toast.success(i18n.t('admin:lines.reorderSuccess')); invalidate(); },
     onError: (error: unknown) => onError(error, i18n.t('admin:lines.reorderFailed'))
   });
-  const speedtest = useMutation({
-    mutationFn: async (id: string) => (await api.post<SpeedTestExecutionResult>(`/admin/lines/${id}/speedtest`, {}, { timeout: 45_000 })).data,
-    onSuccess: (data) => {
-      if (data.status === 'SUCCESS') {
-        toast.success(i18n.t('admin:lines.speedtestSuccess', { latency: data.latencyMs ?? '—' }));
-      } else {
-        toast.error(i18n.t('admin:lines.speedtestFailed', { message: data.message }));
-      }
-      invalidate();
-    },
-    onError: (error: unknown) => onError(error, i18n.t('admin:lines.speedtestRequestFailed'))
-  });
-  const speedtestAll = useMutation({
-    mutationFn: async () => (await api.post<{ total: number; success: number; failed: number }>('/admin/lines/speedtest-all', {}, { timeout: 120_000 })).data,
-    onSuccess: (data) => {
-      toast.success(i18n.t('admin:lines.speedtestAllSuccess', { total: data.total, success: data.success, failed: data.failed }));
-      invalidate();
-    },
-    onError: (error: unknown) => onError(error, i18n.t('admin:lines.speedtestAllFailed'))
-  });
-  return { create, update, remove, duplicate, testResolve, batchStatus, reorder, speedtest, speedtestAll };
+  return { create, update, remove, duplicate, testResolve, batchStatus, reorder };
 }
 
 export function useRealityKeypair() {
