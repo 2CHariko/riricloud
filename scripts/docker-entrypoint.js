@@ -276,6 +276,7 @@ async function main() {
 
   process.env.TELEMETRY_DATABASE_URL = process.env.TELEMETRY_DATABASE_URL || 'file:/app/data/telemetry.db';
 
+  runNodeScript('/app/prisma/upstream-upgrade-preflight.js');
   runPrisma('migrate', 'deploy', '--schema=/app/prisma/telemetry/schema.prisma');
   runNodeScript('/app/prisma/migrate-telemetry-data.js');
   runPrisma('migrate', 'deploy');

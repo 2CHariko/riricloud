@@ -1,3 +1,5 @@
+import { ValidateNested } from 'class-validator';
+import { LineEgressProxyDto } from './line-egress-proxy.dto';
 import { Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -39,6 +41,12 @@ export class UpdateLineDto {
   @IsOptional()
   params?: Record<string, unknown>;
 
+  @ApiPropertyOptional({ type: LineEgressProxyDto, nullable: true, description: '省略保留、null 清除最终出站' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LineEgressProxyDto)
+  egressProxy?: LineEgressProxyDto | null;
+
   @ApiPropertyOptional({ enum: RELAY_MODES, nullable: true })
   @IsIn(RELAY_MODES)
   @IsOptional()
@@ -66,7 +74,7 @@ export class UpdateLineDto {
   @IsUUID()
   @IsOptional()
   targetLineId?: string | null;
-  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'UPSTREAM_NODE 中继模式引用的外部上游节点' })
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'EXTERNAL 与 UPSTREAM_NODE 中继必须引用有效的上游节点' })
   @IsUUID()
   @IsOptional()
   upstreamNodeId?: string | null;
@@ -141,6 +149,11 @@ export class UpdateLineDto {
   @IsBoolean()
   @IsOptional()
   allowLanAccess?: boolean;
+
+  @ApiPropertyOptional({ description: '显式接入标准代理池，仅支持 MIXED 直连或上游中继' })
+  @IsBoolean()
+  @IsOptional()
+  proxyPoolEnabled?: boolean;
 
   @ApiPropertyOptional({ enum: ['TCP_MUX', 'WIREGUARD'], nullable: true, description: '反向穿透隧道类型' })
   @IsIn(['TCP_MUX', 'WIREGUARD'])

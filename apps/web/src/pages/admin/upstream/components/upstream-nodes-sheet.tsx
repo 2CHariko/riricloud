@@ -1,295 +1,69 @@
-import * as React from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription
-} from '@/components/ui/sheet';
+import { Activity, Copy } from 'lucide-react';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from '@/components/ui/table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select';
-import {
-  Activity,
-  Copy,
-  Download,
-  GitBranch,
-  Search
-} from 'lucide-react';
-import {
-  ApiUpstreamSubscription,
-  ApiUpstreamNode,
-  upstreamApi
-} from '@/lib/api';
+import { Card, CardContent } from '@/components/ui/card';
+import { ServerPagination } from '@/components/shared/server-pagination';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ApiUpstreamSubscription, ApiUpstreamNode, upstreamApi } from '@/lib/api';
 import { useAdminUpstreamNodes, useAdminUpstreamMutations } from '../use-upstream';
+import { ProbeTaskDialog } from '@/components/shared/probe-task-dialog';
+import { ProbeMeasurementChip } from '@/components/shared/probe-result';
 
-export function UpstreamNodesSheet({
-  open,
-  onOpenChange,
-  subscription,
-  onCreateRelayLine
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  subscription?: ApiUpstreamSubscription | null;
-  onCreateRelayLine?: (node: ApiUpstreamNode) => void;
+export function UpstreamNodesSheet({ open, onOpenChange, subscription, onCreateRelayLine, onCreateExternalLine }: {
+  open: boolean; onOpenChange: (open: boolean) => void; subscription?: ApiUpstreamSubscription | null;
+  onCreateRelayLine?: (node: ApiUpstreamNode) => void; onCreateExternalLine?: (node: ApiUpstreamNode) => void;
 }) {
   const { t } = useTranslation(['admin', 'common']);
-  const [search, setSearch] = React.useState('');
-  const [protocolType, setProtocolType] = React.useState<string>('ALL');
-  const { data, isLoading } = useAdminUpstreamNodes({
-    subscriptionId: subscription?.id,
-    search: search.trim() || undefined,
-    protocolType: protocolType !== 'ALL' ? protocolType : undefined,
-    pageSize: 100
-  });
-
-  const {
-    setNodeDirectSubMutation,
-    probeNodeMutation,
-    probeAllMutation
-  } = useAdminUpstreamMutations();
-
-  const handleCopyLink = async (node: ApiUpstreamNode) => {
+  const [search, setSearch] = useState('');
+  const [protocol, setProtocol] = useState('ALL');
+  const [tag, setTag] = useState('');
+  const [page, setPage] = useState(1);
+  const { data, isLoading, isError } = useAdminUpstreamNodes({ subscriptionId: subscription?.id, page, pageSize: 20, search: search.trim() || undefined, protocolType: protocol === 'ALL' ? undefined : protocol, tag: tag.trim() || undefined }, open);
+  const { setNodeStatusMutation } = useAdminUpstreamMutations();
+  const [probeSelection, setProbeSelection] = useState<ApiUpstreamNode | 'ALL' | null>(null);
+  const copy = async (node?: ApiUpstreamNode) => {
     try {
-      const resp = await upstreamApi.exportNodes({ nodeIds: node.id, format: 'uri' });
-      await navigator.clipboard.writeText(resp.data);
-      toast.success(t('admin:upstream.copyLinkSuccess'));
-    } catch {
-      toast.error(t('common:actions.copyFailed'));
-    }
-  };
-
-  const handleExportAll = async () => {
-    if (!subscription) return;
-    try {
-      const resp = await upstreamApi.exportNodes({ subscriptionId: subscription.id, format: 'uri' });
-      await navigator.clipboard.writeText(resp.data);
+      const res = await upstreamApi.exportNodes({ nodeIds: node?.id, subscriptionId: node ? undefined : subscription?.id, format: 'uri' });
+      await navigator.clipboard.writeText(res.data);
       toast.success(t('admin:upstream.exportSuccess'));
-    } catch {
-      toast.error(t('common:actions.copyFailed'));
-    }
+    } catch { toast.error(t('common:actions.copyFailed')); }
   };
-
-  const nodes = data?.data ?? [];
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-4xl p-6 overflow-y-auto">
-        <SheetHeader className="mb-4">
-          <SheetTitle className="flex items-center gap-2">
-            <span>{subscription?.name || t('admin:upstream.nodesTitle')}</span>
-            <Badge variant="outline">{nodes.length}</Badge>
-          </SheetTitle>
-          <SheetDescription>{t('admin:upstream.nodesSubtitle')}</SheetDescription>
-        </SheetHeader>
-
-        {/* 顶部工具栏 */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2 flex-1 max-w-sm">
-            <div className="relative w-full">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder={t('admin:upstream.searchNodesPlaceholder')}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-8"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Select value={protocolType} onValueChange={setProtocolType}>
-              <SelectTrigger className="w-[120px]">
-                <SelectValue placeholder={t('admin:upstream.colProtocol')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">{t('admin:upstream.statusAll')}</SelectItem>
-                <SelectItem value="VLESS">VLESS</SelectItem>
-                <SelectItem value="VMESS">VMess</SelectItem>
-                <SelectItem value="HYSTERIA2">Hysteria 2</SelectItem>
-                <SelectItem value="TROJAN">Trojan</SelectItem>
-                <SelectItem value="SHADOWSOCKS">SS</SelectItem>
-                <SelectItem value="TUIC">TUIC</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => probeAllMutation.mutate(subscription?.id)}
-              disabled={probeAllMutation.isPending || nodes.length === 0}
-            >
-              <Activity className="h-4 w-4 mr-1" />
-              {t('admin:upstream.probeAll')}
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleExportAll}
-              disabled={nodes.length === 0}
-            >
-              <Download className="h-4 w-4 mr-1" />
-              {t('admin:upstream.exportUri')}
-            </Button>
-          </div>
-        </div>
-
-        {/* 节点表格 */}
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('admin:upstream.colNodeName')}</TableHead>
-                <TableHead>{t('admin:upstream.colProtocol')}</TableHead>
-                <TableHead>{t('admin:upstream.colServer')}</TableHead>
-                <TableHead>{t('admin:upstream.colLatency')}</TableHead>
-                <TableHead>{t('admin:upstream.colDirectSub')}</TableHead>
-                <TableHead className="text-right">{t('admin:upstream.colActions')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center">
-                    {t('common:actions.loading')}
-                  </TableCell>
-                </TableRow>
-              ) : nodes.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                    {t('admin:upstream.emptyNodesTitle')}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                nodes.map((node) => (
-                  <TableRow key={node.id}>
-                    <TableCell className="font-medium max-w-[200px]">
-                      <div className="flex flex-col gap-1">
-                        <span className="truncate" title={node.name}>
-                          {node.name}
-                        </span>
-                        <div className="flex flex-wrap gap-1">
-                          {node.tags.map((tag) => (
-                            <Badge key={tag} variant="secondary" className="text-[10px] px-1 py-0">
-                              {tag}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    </TableCell>
-
-                    <TableCell>
-                      <Badge variant="outline">{node.protocolType}</Badge>
-                    </TableCell>
-
-                    <TableCell className="text-xs text-muted-foreground font-mono">
-                      {node.serverHost}:{node.serverPort}
-                    </TableCell>
-
-                    <TableCell>
-                      {node.lastTestStatus === 'SUCCESS' && node.latencyMs !== null ? (
-                        <Badge
-                          variant="secondary"
-                          className={
-                            node.latencyMs < 100
-                              ? 'text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                              : node.latencyMs < 300
-                                ? 'text-amber-600 dark:text-amber-400 border-amber-500/30'
-                                : 'text-rose-600 dark:text-rose-400 border-rose-500/30'
-                          }
-                        >
-                          {node.latencyMs} ms
-                        </Badge>
-                      ) : node.lastTestStatus === 'TIMEOUT' ? (
-                        <Badge variant="outline" className="text-muted-foreground">
-                          {t('admin:upstream.probeTimeout')}
-                        </Badge>
-                      ) : node.lastTestStatus === 'ERROR' ? (
-                        <Badge variant="destructive">
-                          {t('common:status.failed')}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">{t('admin:upstream.never')}</span>
-                      )}
-                    </TableCell>
-
-                    <TableCell>
-                      <Switch
-                        checked={node.isDirectSub}
-                        onCheckedChange={(checked) =>
-                          setNodeDirectSubMutation.mutate({ nodeId: node.id, isDirectSub: checked })
-                        }
-                        title={
-                          node.isDirectSub
-                            ? t('admin:upstream.directSubEnabledDesc')
-                            : t('admin:upstream.directSubDisabledDesc')
-                        }
-                      />
-                    </TableCell>
-
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => probeNodeMutation.mutate(node.id)}
-                          title={t('admin:upstream.probeNode')}
-                          disabled={probeNodeMutation.isPending}
-                        >
-                          <Activity className="h-4 w-4" />
-                        </Button>
-
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handleCopyLink(node)}
-                          title={t('common:actions.copy')}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-
-                        {onCreateRelayLine && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-primary"
-                            onClick={() => onCreateRelayLine(node)}
-                            title={t('admin:upstream.createRelayLine')}
-                          >
-                            <GitBranch className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
+  return <><Sheet open={open} onOpenChange={onOpenChange}><SheetContent side="right" className="w-full sm:max-w-6xl p-6 overflow-y-auto space-y-4">
+    <SheetHeader><SheetTitle>{subscription?.name} · {data?.total ?? 0}</SheetTitle><SheetDescription>{t('admin:probes.description')}</SheetDescription></SheetHeader>
+    <div className="flex flex-wrap gap-2">
+      <Input className="max-w-xs" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder={t('admin:upstream.searchNodesPlaceholder')} />
+      <Input className="w-32" value={tag} onChange={(e) => { setTag(e.target.value); setPage(1); }} placeholder={t('admin:lines.filterTag')} />
+      <Select value={protocol} onValueChange={(v) => { setProtocol(v); setPage(1); }}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent>{['ALL', 'VLESS', 'VMESS', 'HYSTERIA2', 'TUIC', 'TROJAN', 'SHADOWSOCKS', 'SOCKS', 'HTTP', 'NAIVE'].map((v) => <SelectItem key={v} value={v}>{v === 'ALL' ? t('admin:upstream.statusAll') : v}</SelectItem>)}</SelectContent></Select>
+      <Button variant="outline" onClick={() => setProbeSelection('ALL')}>{t('admin:upstream.probeAll')}</Button>
+      <Button variant="outline" onClick={() => void copy()}>{t('admin:upstream.exportUri')}</Button>
+    </div>
+    <Card><CardContent className="min-w-0 p-0"><Table><TableHeader><TableRow>{(['colNodeName', 'colProtocol', 'colServer', 'colLatency', 'colStatus', 'relatedLines', 'colActions'] as const).map((k) => <TableHead key={k}>{t(`admin:upstream.${k}`)}</TableHead>)}</TableRow></TableHeader><TableBody>
+      {isLoading || isError || !data?.data.length ? <TableRow><TableCell colSpan={7}>{isLoading ? t('common:actions.loading') : isError ? t('common:status.failed') : t('admin:upstream.emptyNodesTitle')}</TableCell></TableRow> : data.data.map((node) => <TableRow key={node.id}>
+        <TableCell><p>{node.name}</p><div className="flex flex-wrap gap-1">{node.tags.map((item) => <Badge key={item} variant="secondary">{item}</Badge>)}</div></TableCell>
+        <TableCell>{node.protocolType}</TableCell><TableCell className="font-mono text-xs">{node.serverHost}:{node.serverPort}</TableCell>
+        <TableCell><ProbeMeasurementChip value={node.lastProbe} onClick={() => setProbeSelection(node)} /></TableCell>
+        <TableCell><Badge variant={node.presenceStatus === 'MISSING' ? 'destructive' : 'outline'}>{node.presenceStatus === 'MISSING' ? t('admin:upstream.missing') : t('admin:upstream.present')}</Badge><Switch aria-label={t('admin:upstream.statusActive')} checked={node.status === 'ACTIVE'} disabled={setNodeStatusMutation.isPending} onCheckedChange={(v) => setNodeStatusMutation.mutate({ nodeId: node.id, status: v ? 'ACTIVE' : 'DISABLED' })} /></TableCell>
+        <TableCell className="text-xs">{node.relayLines?.map((line) => <p key={line.id}>{line.name} · {line.status === 'ACTIVE' ? t('admin:upstream.statusActive') : t('admin:upstream.statusDisabled')}</p>)}</TableCell>
+        <TableCell><div className="flex flex-wrap gap-1">
+          <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:upstream.probeNode')} onClick={() => setProbeSelection(node)}><Activity /></IconButton>
+          <IconButton variant="ghost" size="icon-sm" aria-label={t('common:actions.copy')} onClick={() => void copy(node)}><Copy /></IconButton>
+          <Button variant="outline" size="sm" disabled={node.presenceStatus !== 'PRESENT' || node.status !== 'ACTIVE' || subscription?.status !== 'ACTIVE'} onClick={() => onCreateExternalLine?.(node)}>{t('admin:upstream.createExternalLine')}</Button>
+          <Button variant="outline" size="sm" disabled={node.presenceStatus !== 'PRESENT' || node.status !== 'ACTIVE' || subscription?.status !== 'ACTIVE'} onClick={() => onCreateRelayLine?.(node)}>{t('admin:upstream.createRelayLine')}</Button>
+        </div></TableCell>
+      </TableRow>)}
+    </TableBody></Table></CardContent></Card>
+    <ServerPagination page={page} pageSize={20} total={data?.total ?? 0} pending={isLoading} onPageChange={setPage} />
+  </SheetContent></Sheet>
+    {probeSelection && <ProbeTaskDialog key={probeSelection === 'ALL' ? `all:${subscription?.id}` : probeSelection.id} open={open} onOpenChange={(value) => !value && setProbeSelection(null)}
+      title={probeSelection === 'ALL' ? t('admin:upstream.probeAll') : `${t('admin:probes.title')} · ${probeSelection.name}`}
+      request={probeSelection === 'ALL' ? { key: `upstream:all:${subscription?.id ?? 'all'}`, endpoint: '/admin/upstream/probe-all', subscriptionId: subscription?.id } : { key: `upstream:${probeSelection.id}`, endpoint: `/admin/upstream/nodes/${probeSelection.id}/probe` }} />}
+  </>;
 }

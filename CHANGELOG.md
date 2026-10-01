@@ -13,18 +13,25 @@
 ## [Unreleased]
 
 ### Added
-- **上游订阅导入与多模式融合功能 (Upstream Subscriptions & Proxy Relay)**：
-  - 核心解析引擎：支持导入任意 Mihomo (Clash Meta) YAML、Sing-box JSON 及标准 URI 格式订阅，智能探测并归一化为统一的外部落地代理节点模型；
-  - 多模式落地支持：
-    1. 自建中转线路（`RELAY` + `UPSTREAM_NODE`）：指定自建公网 VPS 入口纳管外部上游节点，入口 Sing-box 原生构建对应 Outbound 与路由转发，100% 纳入入口物理流量监控与用户计费；
-    2. 客户端直连合并（`isDirectSub`）：允许管理员将候选池中的优质外部节点一键公开，自动合并入用户客户端订阅（免计系统配额）；
-    3. 直连代理池双模式：支持在直连代理池（ProxyKey）中挂载受控 MIXED 自动化代理，亦支持一键快捷导出/复制原始协议 URI 链接；
-  - 节点差异比对与失效联动治理：定时与手动同步时根据节点特征指纹（Fingerprint）稳定识别存量与新增节点，若上游删除已绑定的中转节点，系统自动将关联线路置为停用（DISABLED）并记录系统告警日志；
-  - 连通性测速与管理控制台：提供后台全自动定时更新、单节点/批量并发 TCP 握手测速、节点抽屉式管理与一键转自建中转向导。
+- **上游来源导入与统一线路交付**：支持 Clash YAML/JSON、Sing-box JSON 与 URI/Base64 严格提取代理资源；通过自建 `RELAY + UPSTREAM_NODE` 或授权 `EXTERNAL` 线路交付，外部直发默认禁用/非公开，用户详情与实际订阅使用同一套餐及额外授权集合。
+- **可靠同步与诊断**：源内串行、有限跨源并发、短事务差异提交；独立完整连接特征/配置哈希、唯一身份轮换、歧义拒绝、重复去重、缺失保留引用；参数变化同步 WS/HTTP 配置，网络或部分解析失败保持最后成功快照。管理界面提供分页、缺失状态、源启停、分钟更新周期、秘密按需编辑和直发风险确认。
+- **Mihomo 主客户端与异步端到端拨测**：客户端使用独立的 Mihomo/Sing-box 能力判断与编译器，Sing-box 保持服务端入站、鉴权、统计和中继；新增全局限额、任务进度/取消/结果分页、资源版本条件写回、安全测量元信息与管理员内核画像。Mihomo v1.19.30 官方资源通过统一清单固定版本、SHA-256 和平台魔数校验，联动本地、E2E、发行包及 Docker。
+- **代理池统一授权与MIXED上游中继**：新增显式线路开关，直出/中继复用有效套餐快照和额外授权，端点/导出/Agent共用每节点512个Key-Line绑定分配与容量反馈；来源白名单先拒绝后转发，逐线路身份注册统计、按实际倍率共享账户配额。前端逐Key端点、服务端v2导出驱动代码示例、TLS能力和200条选择边界一致。
+- **线路最终落地 HTTP/SOCKS5 出站**：直连与自建盲转发/协议中继可指定落地代理，桥接继承目标线路；整段配置 AES-GCM 加密、认证密码可保留/替换/清除，秘密仅下发执行节点，订阅不暴露代理配置。支持代理侧解析目标域名，SOCKS5 UDP 默认关闭、显式开启，HTTP 仅 TCP；代理故障无直连兜底。新增可空列保持旧数据/默认出口，提供 WARP 端点接入说明和真实内核链路/迁移回归。
 
 ### Changed
+- **BREAKING CHANGE — 上游无旧兼容重构**：删除 `isDirectSub`、旧 fingerprint 与 direct-sub API，不提供别名、转换或旧数据回填；新增 EXTERNAL 线路和可空入口契约、上游用量 API 改十进制字符串。旧上游域必须由维护者先备份并明确处理后重新导入，部署前置检查及 SQL 保护拒绝未处理的旧数据，程序不自动清库。外部直发不计本地流量、不执行本地速率/设备限制，也不能撤回已获得的共享凭据。
+- **BREAKING CHANGE — 拨测改为异步任务**：上游与线路单条/批量接口统一返回 HTTP 202 `{taskId,state,total}`，由任务 API 查询或取消；删除 TCP 连接成功和旧同步拓扑/阶段结果。只有真实代理 HTTP 请求满足目标状态码及 HTTPS 证书契约才产生 `PROXY_HTTP_DELAY`；Sing-box 回退仅限明确能力白名单并单独标识，网络/鉴权/启动/缺少内核不会静默回退。迁移只失效旧派生延迟，不删除业务资源；模板预览仅检查所选格式，缺失内核/外部资源/部分检查不标记完整通过。
+- **BREAKING CHANGE — 代理池登录与授权收紧**：裸pk_只保留Key标识，实际登录统一pk_line_线路专属冒号安全用户名；JSON导出v2，每端点凭据独立，旧脚本须重新导出。Key/密码/exportToken及账务/游标保留，迁移只加开关并回填原有效公开DIRECT/MIXED，不自动开放中继，不清现有数据库；公共代理池也遵守套餐线路权限。
 
 ### Fixed
+- 修复代理池多线路倍率归属、隐藏入口自动Key注入与容量静默截断；保存/分配/Agent共享覆盖后的有效上游连接校验，拒绝无效落地覆盖；套餐权限变更通知配置刷新，代理池测量仅消费版本安全的新摘要。补真实HTTP/SOCKS、来源IP、gRPC计费、撤销和迁移保留回归。
+- 修复 MIXED 上游中继入口被无条件拒绝：与 HTTP/SOCKS 统一要求显式开启逐用户鉴权，共享创建/编辑/启用/授权筛选/Agent 下发判断；关闭或缺省鉴权仍拒绝，不注入独立直连代理池凭据。补 MIXED 用户/线路标识及统计配置回归、隔离 API 创建与批量启用、同端口 HTTP CONNECT/SOCKS5 真实请求和错误密码拒绝。
+- 修复拨测 TLS 无响应握手的超时/取消结算与资源释放、同 ID/桥接目标证书更新后的旧结果失效、显式禁用 uTLS 被指纹配置重新启用，以及批量任务取消/截止后已保存结果未刷新列表的问题；均补复现回归。
+- 修复配置防抖旧批次提前结算新变更等待者、进行中的旧编译在失效后重新污染配置缓存的竞态，保证线路出站和凭据变更在 WS/HTTP 同步中使用新快照；补确定性复现及代理池撤销真实回归。指定出站同时拦截执行节点高级路由覆盖冲突，ShadowTLS 落地私网保护匹配实际内层业务入站。
+- 本机 WSL 补验 Linux 原生拨测、Naive/Cronet HTTP/2 真实链路、Docker 双镜像/离线交付和 Linux Master 发行包；修复离线导出未定义 `HOST_UNAME`、Mihomo listener 早于数据面 Running 的首请求竞态和启动轮询 abort listener 未移除，补冷启动/监听器/导出回归，业务失败不重试或换内核。
+- 修复 E2E 预检与迁移相对 SQLite URL 解析不一致：统一以正式 schema 目录规范化为绝对 URL，覆盖主库/遥测库、预检、种子、服务启动与本地 AgentToken helper；补路径回归，迁移失败文案不再将 P3018/CHECK 误判为写锁。
+- 修复上游 IPv6 URI、SS 含冒号密码/plugin、Clash JSON 和 Trojan TLS 默认解析，拒绝无效端口/不支持代理；导出统一保留 TLS/Reality/Transport。修复 BigInt 同步响应、文本编辑误清空、AUTO 被固定、上游中继复制及客户端用户名不一致。
 - **修复本地 E2E 启动失败与 Shadowsocks 密码派生回退**：
   - 修复 `apps/server/src/app.module.ts` 模块导入逗号缺失与模块内类型声明；
   - 补齐 `apps/server/prisma/migrations/20260930120000_upstream_subscriptions_and_nodes` 数据库迁移脚本，解决联调库 `dev-e2e.db` 执行 `prisma migrate deploy` 时的表结构同步阻断；
@@ -36,11 +43,14 @@
   - 修复 Agent 日志采集器 `Hook.Fire` 中 Go `error` 接口值被 JSON 序列化为空对象 `{}` 的问题，统一转换为可读错误字符串；
   - 将 Sing-box QUIC/Hysteria2 正常流关闭日志（`canceled by remote/local with error code 0`）识别为 `ACCESS` 并降级为 `INFO`，消除常规模式下的误报 WARN 噪音；
   - 升级主控端 `LinesService` 端口冲突校验为按 TCP/UDP 传输层重叠判定，将 `SHADOWSOCKS`、`DIRECT` 与 `BLIND_FORWARD` 盲转发入口均识别为 TCP+UDP 双栈占用，阻断与同节点同端口 `HYSTERIA2`/`TUIC` 的 UDP 绑定冲突；
-  - 调高前端单条线路测速（`45s`）与全量批量测速（`120s`）的客户端 HTTP 超时预算，防止高延迟或慢速回退链路在服务端返回完整阶段诊断报告前被前端提前中断。
+  - 历史同步测速的 HTTP 超时预算曾提高到 45/120 秒；现由异步任务回执与轮询替代，不再等待长连接返回阶段报告。
 - **修复上游节点中继（`UPSTREAM_NODE`）下发 Sing-box 配置时因 `alterId` 等驼峰字段触发 `sing-box check` 致命校验失败**：
   - 重构 `AgentGatewayService` 的 `UPSTREAM_NODE` 中继出站构建器（`buildUpstreamRelayOutbound`），不再将 `UpstreamNode.paramsJson` 内部驼峰结构直接浅拷贝至 Sing-box `outbounds`，而是按协议严格映射为 Sing-box 标准下划线出站结构（VMess `alter_id`、Hysteria2 `up_mbps`/`down_mbps`/`obfs`、TUIC `congestion_control`/`zero_rtt_handshake`、Reality `public_key`/`short_id`、uTLS `utls.fingerprint`、gRPC `service_name` 等），彻底消除 `json: unknown field "alterId"` 报错；
-  - 统一 `UpstreamParserService` 对 Sing-box JSON、Clash YAML 与 URI 订阅的节点参数归一化输出，并在 `inbound.ts` 与订阅编译器 `builders.ts` 中兼容驼峰与下划线双格式字段回退，存量已导入上游节点无需重新导入即可正常工作；
-  - 补齐 `LineSpeedtestService` 对 `UPSTREAM_NODE` 中继线路的落地拓扑解析与第三阶段（`relay_transit`）上游节点可用性校验。
+  - 统一新导入的 Sing-box JSON、Clash YAML 与 URI 连接模型，由共享编译器映射为 Sing-box 标准字段；本轮破坏性重构不再承诺存量上游数据兼容，需按部署指南备份、处理并重新导入。
+  - 上游中继拨测现统一为真实客户端经过入口与上游出口的端到端请求，不再输出旧第三阶段拓扑判定。
+
+### Security
+- 上游 URL、Header、源快照、归一化参数和原始配置整段 AES-GCM 加密；用户线路摘要采用白名单，不透传中继出口秘密。拉取限制公共地址/生产 HTTPS、绑定 DNS 拨号、防重定向泄密及响应超限；源禁用、节点缺失、已知到期/耗尽统一阻断交付与中继，受控中继拒绝不可用户计费的入口。
 
 
 ## [0.9.9] - 2026-09-29

@@ -148,6 +148,14 @@ sequenceDiagram
 - **独立端口管道设计**：系统为每条线路分配独立的端口管道（除桥接模式复用落地直连入站外）。这确保了不同线路的流量倍率（如直连 1.0x vs 中转 1.5x）在边缘 Agent 增量统计时精准隔离，且任何单条线路的启停或变更均不影响其他线路的生命周期与健康检测。
 - **配置推送与在线门禁**：保存线路后复用 250ms 防抖，自动为承担入口或落地角色的在线节点重新编译并下发 `config_sync`。中继线路在套餐订阅中要求中转入口节点与落地节点**同时在线**才会向客户端呈现并允许连通。
 
+### 3.2.1 线路最终落地 HTTP/SOCKS5 出站
+
+线路可持有独立加密的 egressProxyJson：DIRECT 在当前业务节点、自建 BLIND_FORWARD/PROTOCOL_PROXY 在解密后的落地节点生成 egress-out-<lineId> 与按实际业务 inbound 匹配的路由；ShadowTLS 匹配内层 SS Tag。入口的盲转发/协议中继 outbound 不变，秘密不下发入口。TARGET_LINE 的实际目标 DIRECT 入站天然使用目标出站，桥接源只读继承；外部直发/上游中继不叠加。
+
+来源白名单与已有私网拒绝先执行，再执行出站专属 UDP 拒绝和代理转发。HTTP CONNECT 仅 TCP，SOCKS5 默认拒绝 UDP、显式启用代理 UDP ASSOCIATE。保留域名目标交给代理解析，不注入全节点 resolve 或 final；未配置线路维持旧默认出站。代理故障没有直连 fallback，密文损坏生成拒绝业务规则而非忽略配置。执行节点高级覆盖接管 inbounds/outbounds/route/dns 时双向拦截，避免静默覆盖。
+
+WARP 是管理员部署在最终节点侧的外部代理端点，不成为 Master 基础设施依赖，不托管其生命周期、不改变 Agent 管理流量或系统默认路由。保存/启用通过原缓存失效、防抖、WS/HTTP 和 Agent 预检/回执同步。缓存失效代数屏障阻止进行中的旧编译重写新缓存；每轮防抖只结算自身等待者，避免资格或出站变更在轮询中被旧快照覆盖。
+
 
 ### 3.3 Sing-box 日志诊断时序
 
@@ -317,18 +325,18 @@ Master 将“应用发布”和“可分发二进制资源”拆成两条生命�
 
 ## 10. 直连代理池双轨架构（v0.9.0）
 
-RiriCloud 在同一套节点、线路与账务底座上并行承载**两条互不耦合的代理交付轨道**：
+RiriCloud 使用独立凭据的两条交付轨道，但共同复用线路授权、订阅资格及账务，不以共享配额替代套餐权限：
 
 | 维度 | 订阅轨道（客户端翻墙） | 直连代理池轨道（自动化环境） |
 | :--- | :--- | :--- |
 | 目标客户端 | Clash Meta / Sing-box / Shadowrocket | 爬虫框架、指纹浏览器、脚本与 CLI 工具 |
 | 协议 | VLESS+Reality、Hysteria2、TUIC、Trojan 等 | Sing-box `mixed` 单端口（SOCKS5 + HTTP CONNECT） |
-| 凭据 | 用户 `uuid` / `password` / 订阅 Token | 独立 `ProxyKey`：`pk_xxxx` 用户名 + 独立密码 |
+| 凭据 | 用户 uuid/password/订阅Token | 独立ProxyKey记录，实际登录为按线路派生的pk_line_用户名＋独立密码 |
 | 交付 | 多格式订阅链接与模板编译 | `IP:Port:User:Pass`、URI、JSON、免登录 RESTful 拉取 |
 | 准入控制 | 套餐线路匹配 + 邮箱核验 + 配额 | 同左，外加可选的来源 IP/CIDR 白名单 |
 | 计费 | `TrafficLog` → `User` / `Subscription` | 同一事务内额外累加 `ProxyKey.trafficUsedBytes` |
 
-两条轨道共用 `Line` 实体作为端点定义：管理员创建一条 `protocolType = MIXED` 的 `DIRECT` 线路，该线路的入口节点与端口即成为直连代理池端点，无需新增任何节点侧配置或第二个监听端口。
+线路仅在显式proxyPoolEnabled开启时参与代理池，支持DIRECT/MIXED本机直出及RELAY/UPSTREAM_NODE/MIXED受控上游出口；其他协议/中继不自动注入Key。独立ProxyPoolAccessModule只依赖Prisma/Settings/common，批量解析用户资格、套餐快照/额外授权、Key和线路状态，Agent与ProxyPoolModule共同消费，避免循环依赖和第二套权限规则。
 
 ```mermaid
 sequenceDiagram
@@ -344,7 +352,7 @@ sequenceDiagram
     Web->>Master: POST /api/v1/user/proxy-pool/keys
     Master->>DB: 写入 ProxyKey（pk_xxxx / 高熵密码 / exportToken）
     Master-->>Agent: config_sync（重建节点配置）
-    Agent->>Singbox: 重启内核，inbounds[].users 注入 pk_xxxx 与白名单 route.rules
+    Agent->>Singbox: 应用按Key-Line分配的派生用户名与优先白名单规则
 
     User->>Web: 选择节点与协议，导出多格式列表
     Web->>Master: GET /api/v1/user/proxy-pool/export?format=text|uri|json
@@ -352,7 +360,7 @@ sequenceDiagram
 
     loop 每 5~10 秒
         Agent->>Singbox: 查询 v2ray 累计用户流量
-        Agent->>Master: heartbeat（含 pk_xxxx 累计快照）
+        Agent->>Master: heartbeat（含pk_line_累计快照）
         Master->>DB: 同事务写 TrafficLog(proxyKeyId) + 累加 User/Subscription/ProxyKey
         alt 本批次触及配额或账号被停用
             Master-->>Agent: config_sync（剔除该账号全部凭据，快速熔断）
@@ -362,7 +370,49 @@ sequenceDiagram
 
 **关键架构约束**：
 
-1. **强制鉴权**：`mixed`/`socks`/`http` 入站在生成配置时一律启用用户认证。Sing-box 中 `users` 为空的这三类入站等价于开放代理，属于安全红线。
-2. **冒号安全的入站用户名**：HTTP CONNECT 的 Basic 认证按首个 `:` 切分用户名，因此代理池凭据使用裸 `pk_xxxx` 而非 `pk_xxxx::lineId` 复合形态；线路归属由节点级活动线路解析确定（详见 docs/API_AND_PROTOCOLS.md §5.1）。
-3. **白名单以逻辑路由规则表达**：`invert` 必须内嵌在 `logical/and` 子规则中，避免顶层反转误伤同入站的其他凭据与订阅用户。
-4. **零新增基础设施**：不引入额外数据库、缓存或守护进程；代理池与订阅共享同一 Agent 通道、同一 `config_sync` 热更新链路与同一 WAL 单写者事务模型。
+1. **统一绑定**：列表、登录/Token导出、Agent下发共用稳定Key-Line分配；每用户20Key，每节点512绑定，容量排除可见，不按UI排序改变分配。网络离线/应用状态与配置资格分开，不宣称即时撤销。
+2. **精确身份**：按线路登录编码规范Base64URL JSON[原Key,lineId]、保持冒号安全，统计解码并验证本节点入口，不按节点第一线路计费；旧裸Key停止新连接但旧累计游标保留。
+3. **安全路由**：IP白名单logical/and内层invert拒绝必须先于中继转发，按实际用户名/入站匹配；有效上游落地覆盖由保存、分配、Agent共享校验，出口失败无DIRECT回退。
+4. **零新增基础设施**：原Agent/WS/HTTP协议、内核统计和短事务/遥测路径复用；代理池Key不纳入订阅设备限制，不提供新增套餐级用户带宽承诺。
+
+## 5. 上游订阅与外部交付架构
+
+```text
+UpstreamSubscription（来源/调度/成功快照）
+    → UpstreamNode（稳定 UUID/加密连接/配置哈希/PRESENT-MISSING）
+    → Line（统一套餐/额外授权）
+        ├─ RELAY + UPSTREAM_NODE → 自建入口 → 外部出口
+        └─ EXTERNAL → 客户端直连外部出口
+    → 已授权资源集合 → 用户安全摘要 / 客户端编译 / Agent 配置
+```
+
+上游导入只提取代理节点，不合并来源中的 DNS、规则或策略组。取消 `isDirectSub` 与全局直接分发；EXTERNAL 不绑定真实或虚构的 Node，也不生成 Agent 监听。普通 DIRECT/RELAY 的入口节点/端口仍强制必填。EXTERNAL 默认私有且禁用，沿用套餐 ALL/TAGS/EXPLICIT 与额外授权。
+
+用户详情与客户端订阅复用同一资格和线路解析：用户无权益时仅显示订阅状态，不给连接资源；摘要采用字段白名单，不能展开含上游 `paramsJson/rawConfigJson` 的 Prisma 关联。EXTERNAL 客户端必须使用原上游凭据，中继客户端只能获得自己的入口凭据。外部直发不计本地流量、不执行本地限速或设备管理，本地停权不能撤回已交付的共享凭据；需要这些控制的管理员应使用有用户鉴权的自建中继入口。
+
+连接结构与通用校验集中于 proxy-connection，内核能力独立判定；Mihomo 客户端编译不再经 Sing-box outbound 生成。Sing-box 负责 Agent 入站/中继出口，Mihomo 客户端编译由订阅与拨测复用，Sing-box 客户端保留显式兼容执行器。来源/节点/PRESENT/期限/配额判定不混入某个内核的限制，消费端分别验证能力。
+
+同步以源串行化，跨源有限并发。远程拉取逐跳校验公共地址、绑定实际拨号 DNS、保留 Host/SNI，生产只用 HTTPS，并设置响应大小/总时长上限；跨 origin 不携带自定义秘密 Header。网络/严格解析在事务外，完整差异提交在短事务内，提交后再使配置缓存失效和推送。配置变化通知 WS 与 HTTP 两种 Agent 通道；仅名称变化不制造内核重启。
+
+匹配使用可靠源内 ID、完整连接特征、唯一名称加协议三层一对一规则；歧义拒绝整个快照，不按顺序猜测。缺失节点保留 UUID/引用、停用关联线路，重现不自动启用线路；错误/不完整解析不删除资源，网络失败保留 last-good。禁用源立即撤下相关中继与直接分发，巡检负责到期跨界失效。上游节点与线路统一真实端到端拨测，不再以裸 TCP 成功更新最终延迟。
+
+这是无旧兼容的破坏性升级：删除旧指纹与直发字段/接口、不自动转换或清理旧数据，部署前保护见 `docs/DEPLOYMENT_GUIDE.md`。
+
+## 6. 主客户端与异步拨测架构
+
+```text
+Line / UpstreamNode → 短配置快照 → 内核无关连接模型
+    ├─ Sing-box 服务端编译 → Agent 鉴权/统计/中继
+    ├─ Mihomo 客户端编译 → 主订阅 / 对应格式验证 / 默认拨测
+    └─ Sing-box 客户端编译 → 明确兼容格式 / 能力白名单回退
+ProbeTaskService → 全局连接/进程调度 → 临时执行器
+    → 严格目标 HTTP/TLS → 安全结果 → 版本/状态/序列条件写回
+```
+
+Mihomo 在 Master 上独立运行，不修改业务 Agent 内核。一次批次最多 32 个连接、UUID 内部名字和明确 listener→proxy 路由，随机回环控制 Secret，禁 TUN/策略自动切换/DIRECT 兜底/provider 下载。固定版本 delay API 对非预期 HTTP 状态过于宽松，因此使用同一 Mihomo 的 mixed 入站配合 Node 标准 HTTP CONNECT/TLS 客户端；实际目标 IP 固定、Host/SNI 保留、验证证书与状态、不跟随重定向。Sing-box 仅在能力白名单中显式兼容，不因主内核运行失败回退。
+
+启动屏障独立于真实测速：Mihomo 固定版本的 listener 可在 tunnel Running 前监听，直接拨业务目标可能被关连接。每批增加只访问随机令牌回环 HTTP 服务的独立自检 listener，确认数据面可处理后再执行指定代理；DIRECT 仅用于该自检，不作为业务兜底或成功结果，自检共享全局连接限额、取消和启动期限，结束清理监听。
+
+单/批量接口均快速返回 202 任务，状态与结果分页轮询，取消幂等。任务内存保留、重启后丢失；不新增外部任务服务。公平批次调度、全局 4 连接与 2 进程、单资源超时和任务总截止时间独立。任务网络不持上游来源锁；结果提交时校验版本和最新提交序列，旧快照标 STALE。异常/取消/服务停机均退出内核、等待退出并清私有配置，不能遗留秘密文件或监听。
+
+主要客户端模板按格式验证，不默认双内核互相否决。内核缺失明确 UNAVAILABLE，外部规则/GeoIP/证书等依赖缺失明确 EXTERNAL_RESOURCES_REQUIRED；FULL 与 PARTIAL 分开，禁止改写规则后宣称完整通过。固定资源由 Docker/发行包/本地准备共用清单，运行时默认不下载。

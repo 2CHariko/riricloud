@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { json } from '@codemirror/lang-json';
 import { yaml } from '@codemirror/lang-yaml';
-import { Copy, Eye, LoaderCircle, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
+import { Copy, Eye, LoaderCircle, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTemplatePreview, type TemplatePayload, type TemplatePreviewResponse, type KernelCheckResult } from '../use-templates';
 import { TemplateCodeEditor } from './template-code-editor';
+import { kernelCheckPassed } from '@/lib/probe-types';
 
 export function TemplatePreviewPanel({ template }: { template: TemplatePayload }) {
   const { t } = useTranslation(['admin', 'common']);
@@ -19,13 +20,12 @@ export function TemplatePreviewPanel({ template }: { template: TemplatePayload }
 
   useEffect(() => {
     preview.mutate({ format, template });
-    // The serialized draft is the intentional dependency: it refreshes the output as form fields change.
+    // 仅以序列化草稿为依赖，字段变化时刷新预览。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format, serializedTemplate]);
 
-  const result = preview.data;
-  const singboxCheck = result?.singboxCheck;
-  const mihomoCheck = result?.mihomoCheck;
+  const result = preview.isPending || preview.isError || preview.data?.format !== format ? undefined : preview.data;
+  const check = result?.kernelCheck;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -46,18 +46,13 @@ export function TemplatePreviewPanel({ template }: { template: TemplatePayload }
           <Badge variant="secondary">{t('admin:templatePreview.badgeProxyGroups', { count: result.stats.proxyGroupsCount })}</Badge>
           <Badge variant="secondary">{t('admin:templatePreview.badgeRules', { count: result.stats.rulesCount })}</Badge>
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
-            <KernelStatusBadge name="Sing-box" check={singboxCheck} />
-            <KernelStatusBadge name="Mihomo" check={mihomoCheck} />
+            <KernelStatusBadge check={check} />
           </div>
         </div>
       )}
 
-      {/* 若内核报错，展示详细日志卡片 */}
-      {singboxCheck?.executed && !singboxCheck.passed && singboxCheck.message && (
-        <KernelDiagnosticCard title={t('admin:templatePreview.singboxDiagnosticTitle')} message={singboxCheck.message} />
-      )}
-      {mihomoCheck?.executed && !mihomoCheck.passed && mihomoCheck.message && (
-        <KernelDiagnosticCard title={t('admin:templatePreview.mihomoDiagnosticTitle')} message={mihomoCheck.message} />
+      {check && check.diagnostics.length > 0 && (
+        <KernelDiagnosticCard title={t('admin:probes.kernelsTitle')} message={check.diagnostics.join('\n')} />
       )}
 
       <div className="min-h-[340px] min-w-0 flex-1 overflow-hidden rounded-md border bg-background shadow-sm">
@@ -85,40 +80,16 @@ export function TemplatePreviewPanel({ template }: { template: TemplatePayload }
   );
 }
 
-function KernelStatusBadge({
-  name,
-  check
-}: {
-  name: string;
-  check?: KernelCheckResult;
-}) {
+function KernelStatusBadge({ check }: { check?: KernelCheckResult }) {
   const { t } = useTranslation(['admin', 'common']);
   if (!check) return null;
-  return (
-    <Badge
-      variant={check.passed ? 'outline' : 'destructive'}
-      className="flex items-center gap-1 font-mono text-[11px]"
-    >
-      {check.executed ? (
-        check.passed ? (
-          <>
-            <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-            {t('admin:templatePreview.checkPassed', { name })}
-          </>
-        ) : (
-          <>
-            <AlertTriangle className="h-3 w-3" />
-            {t('admin:templatePreview.checkError', { name })}
-          </>
-        )
-      ) : (
-        <>
-          <Info className="h-3 w-3 text-muted-foreground" />
-          {t('admin:templatePreview.checkNotMounted', { name })}
-        </>
-      )}
-    </Badge>
-  );
+  const passed = kernelCheckPassed(check);
+  return <Badge variant={check.executed && check.status === 'FAILED' ? 'destructive' : 'outline'}
+    className={passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+    {check.engine === 'MIHOMO' ? t('admin:probes.engine.MIHOMO') : t('admin:templatePreview.singboxTab')} · {check.engineVersion ?? '—'} ·
+    {check.executed && check.scope === 'FULL' ? t(`admin:probes.check.${check.status}`) : !check.executed ? t('admin:probes.unexecuted') : t('admin:probes.partial')}
+    {(!check.executed || check.scope === 'PARTIAL') && check.status !== 'PASSED' && <> · {t(`admin:probes.check.${check.status}`)}</>}
+  </Badge>;
 }
 
 function KernelDiagnosticCard({

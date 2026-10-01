@@ -2,7 +2,7 @@ import { buildClashYaml, buildSingboxJson, type SubLine, type SubUser } from './
 import { parse } from 'yaml';
 
 describe('builders template proxy-groups resolution', () => {
-  const user: SubUser = { uuid: 'user-uuid-1', email: 'user@example.com', credential: 'user-pass' };
+  const user: SubUser = { uuid: 'a77cf184-4b56-41ee-962c-1357184acd77', email: 'user@example.com', credential: 'user-pass' };
   const mockNodes: SubLine[] = [
     {
       id: 'line-hk',
@@ -152,8 +152,8 @@ describe('builders template proxy-groups resolution', () => {
   it('按线路标签、协议和倍率执行 AND 过滤，并保留 fallback/load-balance 类型', () => {
     const nodes: SubLine[] = [
       { ...mockNodes[0], id: 'vip-vless', name: 'VIP 香港', protocolType: 'VLESS', tags: ['vip', 'gaming'], trafficRate: 1 },
-      { ...mockNodes[1], id: 'economy-hy2', name: '经济 日本', protocolType: 'HYSTERIA2', tags: ['economy'], trafficRate: 0.5 },
-      { ...mockNodes[1], id: 'premium-hy2', name: '高级 美国', protocolType: 'HYSTERIA2', tags: ['premium'], trafficRate: 2 }
+      { ...mockNodes[1], id: 'economy-hy2', name: '经济 日本', protocolType: 'HYSTERIA2', params: {}, tags: ['economy'], trafficRate: 0.5 },
+      { ...mockNodes[1], id: 'premium-hy2', name: '高级 美国', protocolType: 'HYSTERIA2', params: {}, tags: ['premium'], trafficRate: 2 }
     ];
     const config = parse(buildClashYaml(user, nodes, {
       proxyGroupsJson: JSON.stringify([

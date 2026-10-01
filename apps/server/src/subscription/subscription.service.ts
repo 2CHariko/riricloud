@@ -12,7 +12,6 @@ import {
 import { randomUUID } from 'node:crypto';
 import { AgentService } from '../agent-gateway/agent.service';
 import { LinesService } from '../lines/lines.service';
-import { isUserEntitled } from '../common/utils';
 import type { ProtocolType } from '../common/constants';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -152,10 +151,10 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
     const subscription = foundSubscription && foundSubscription.plan?.trafficResetMode
       ? (await this.ensureTrafficReset(foundSubscription)).subscription
       : foundSubscription;
-    const user = subscription?.user ?? (await this.prisma.user.findUnique({ where: { subscriptionToken: token } }));
-    if (!user) throw new NotFoundException('订阅不存在');
+    const user = subscription?.user;
+    if (!user || !subscription) throw new NotFoundException('订阅不存在');
 
-    if (subscription ? !this.isSubscriptionEntitled(subscription, user) : !isUserEntitled(user)) {
+    if (!this.isSubscriptionEntitled(subscription, user)) {
       throw new ForbiddenException('账号已过期、被禁用或超出流量配额');
     }
 
@@ -164,12 +163,7 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('系统已开启强制邮箱验证，请先在个人中心完成邮箱验证或更换可用邮箱后再获取订阅');
     }
 
-    const lines = subscription
-      ? await this.linesService.getAvailableForPlan(
-          subscription.plan ?? { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' },
-          this.getExtraLineIds(subscription)
-        )
-      : await this.linesService.getAvailableForPlan({ lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' });
+    const lines = await this.getLinesForSubscription(subscription);
 
     const plan = subscription?.plan;
     const planSpeedLimit = plan?.speedLimitMbps ?? null;
@@ -182,6 +176,7 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
         : appendBadgeSetting;
 
     const subscriptionSources: SubLine[] = lines.map((line) => {
+      if (line.type === 'EXTERNAL') return { id: line.id, name: line.name, type: line.type, protocolType: line.protocolType, serverHost: line.serverHost, serverPort: line.serverPort, tags: line.tags, level: line.level, externalConnection: line.externalConnection };
       const lineSpeedLimit = line.speedLimitMbps ?? null;
       let effectiveSpeed: number | null = null;
       if (planSpeedLimit && planSpeedLimit > 0 && lineSpeedLimit && lineSpeedLimit > 0) {
@@ -437,7 +432,7 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
     const rawSubscription = await delegate.findUnique({
       where: { userId },
       include: {
-        user: { select: { id: true, email: true, isActive: true, extraLineGrants: { select: { lineId: true } } } },
+        user: { select: { id: true, email: true, role: true, emailVerifiedAt: true, isActive: true, extraLineGrants: { select: { lineId: true } } } },
         plan: { include: { template: true } }
       }
     });
@@ -454,10 +449,13 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
     const current = subscription.plan?.trafficResetMode
       ? (await this.ensureTrafficReset(subscription)).subscription
       : subscription;
+    const settings = await this.settingsService?.getSettings();
+    const entitled = Boolean(current.user && this.isSubscriptionEntitled(current, current.user) && !(settings?.enforceEmailVerification && !current.user.emailVerifiedAt && current.user.role !== 'ADMIN'));
+    const lines = entitled ? (await this.getLinesForSubscription(current)).map((line) => this.linesService.toUserSummary(line)) : [];
     return {
       subscription: this.toView(current),
-      lines: await this.getLinesForSubscription(current),
-      nodes: await this.getLinesForSubscription(current),
+      lines,
+      nodes: lines,
       planClaims: await this.planPurchases?.listClaimsForUser(userId) ?? [],
       deviceManagement
     };
@@ -656,13 +654,14 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private render(format: SubscriptionFormat, lines: Array<SubLine | SubNode>, user: SubUser, template?: SubscriptionTemplateConfig): string {
-    switch (format) {
-      case 'clash':
-        return buildClashYaml(user, lines, template);
-      case 'singbox':
-        return buildSingboxJson(user, lines, template);
-      default:
-        return Buffer.from(buildUriList(user, lines).join('\n'), 'utf-8').toString('base64');
+    try {
+      switch (format) {
+        case 'clash': return buildClashYaml(user, lines, template);
+        case 'singbox': return buildSingboxJson(user, lines, template);
+        default: return Buffer.from(buildUriList(user, lines).join('\n'), 'utf-8').toString('base64');
+      }
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'Unsupported subscription configuration');
     }
   }
 
@@ -821,50 +820,10 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
 
   private async getLinesForSubscription(subscription: SubscriptionRecord) {
     const effective = applyPlanSnapshot(subscription) as SubscriptionRecord;
-    const directLines = await this.linesService.getAvailableForPlan(
+    return this.linesService.getAvailableForPlan(
       effective.plan ?? { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' },
       this.getExtraLineIds(subscription)
     );
-
-    let upstreamLines: Array<Awaited<ReturnType<LinesService['getAvailableForPlan']>>[number]> = [];
-    try {
-      const upstreamNodes = await this.prisma.upstreamNode.findMany({
-        where: {
-          isDirectSub: true,
-          status: 'ACTIVE',
-          subscription: { status: 'ACTIVE' }
-        }
-      });
-      upstreamLines = (upstreamNodes || []).map((node) => {
-        let params: Record<string, unknown> = {};
-        try {
-          params = JSON.parse(node.paramsJson || '{}');
-        } catch {
-          // ignore
-        }
-        let tags: string[] = [];
-        try {
-          tags = JSON.parse(node.tagsJson || '[]');
-        } catch {
-          // ignore
-        }
-        return {
-          id: node.id,
-          name: `[直连] ${node.name}`,
-          type: 'DIRECT',
-          protocolType: node.protocolType as unknown as ProtocolType,
-          serverHost: node.serverHost,
-          serverPort: node.serverPort,
-          params,
-          trafficRate: 0,
-          tags
-        } as unknown as Awaited<ReturnType<LinesService['getAvailableForPlan']>>[number];
-      });
-    } catch {
-      // ignore
-    }
-
-    return [...directLines, ...upstreamLines];
   }
 
   private async resolveTemplate(template?: SubscriptionTemplateConfig | null, templateId?: string) {

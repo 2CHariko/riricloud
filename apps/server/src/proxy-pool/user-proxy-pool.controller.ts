@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res, UnauthorizedException, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -8,11 +8,14 @@ import { CreateProxyKeyDto } from './dto/create-proxy-key.dto';
 import { QueryProxyPoolExportDto } from './dto/query-proxy-pool-export.dto';
 import { UpdateProxyKeyDto } from './dto/update-proxy-key.dto';
 import { ProxyPoolService } from './proxy-pool.service';
+import { QueryProxyPoolNodesDto } from './dto/query-proxy-pool-nodes.dto';
+import { ProxyPoolNoStoreInterceptor } from './proxy-pool-no-store.interceptor';
 
 // 直连代理池用户端：凭据管理、节点检索与多格式导出（契约见 docs/API_AND_PROTOCOLS.md §5）
 @ApiTags('user')
 @ApiBearerAuth()
 @Controller('user/proxy-pool')
+@UseInterceptors(ProxyPoolNoStoreInterceptor)
 export class UserProxyPoolController {
   constructor(private readonly proxyPoolService: ProxyPoolService) {}
 
@@ -58,10 +61,8 @@ export class UserProxyPoolController {
 
   @Get('nodes')
   @ApiOperation({ summary: '列出可用于直连代理池的 Mixed 节点端点' })
-  listEndpoints(@Query('lineIds') lineIds?: string) {
-    return this.proxyPoolService.listEndpoints(
-      lineIds ? lineIds.split(',').map((item) => item.trim()).filter(Boolean) : undefined
-    );
+  listEndpoints(@CurrentUser() user: { id: string }, @Query() query: QueryProxyPoolNodesDto) {
+    return this.proxyPoolService.listEndpoints(user.id, query);
   }
 
   // 免登录动态拉取：登录态 Cookie 或 ?token=<exportToken> 二选一（第三方爬虫框架定时同步）
@@ -85,6 +86,7 @@ export class UserProxyPoolController {
     res.setHeader('Content-Type', result.contentType);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Proxy-Pool-Excluded-Count', result.excludedCount ?? 0);
     return result.body;
   }
 }

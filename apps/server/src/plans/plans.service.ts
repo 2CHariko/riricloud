@@ -1,9 +1,10 @@
-import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { QueryPlanDto } from './dto/query-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
 import { LinesService } from '../lines/lines.service';
+import { AgentService } from '../agent-gateway/agent.service';
 
 type PlanViewInput = {
   id: string;
@@ -49,9 +50,11 @@ function parseCardConfig(value: unknown): Record<string, unknown> {
 
 @Injectable()
 export class PlansService {
+  private readonly logger = new Logger(PlansService.name);
   constructor(
     private readonly prisma: PrismaService,
-    @Optional() private readonly linesService?: LinesService
+    @Optional() private readonly linesService?: LinesService,
+    @Optional() private readonly agentService?: AgentService
   ) {}
 
   async create(dto: CreatePlanDto) {
@@ -98,6 +101,9 @@ export class PlansService {
     await this.get(id);
     await this.ensureTemplate(dto.templateId);
     const plan = await this.prisma.plan.update({ where: { id }, data: this.toUpdateData(dto) });
+    if ([dto.lineMatchMode, dto.lineTags, dto.lineIds, dto.deviceLimit].some(value => value !== undefined)) {
+      void this.agentService?.pushConfigToAll().catch(() => this.logger.warn('Plan configuration notification failed'));
+    }
     if (!plan.isPublic) {
       await (this.prisma as unknown as {
         systemSetting?: { deleteMany?: (args: Record<string, unknown>) => Promise<unknown> };
@@ -134,7 +140,8 @@ export class PlansService {
     const plan = await this.prisma.plan.findUnique({ where: { id } });
     if (!plan) throw new NotFoundException('套餐不存在');
     if (!this.linesService) throw new NotFoundException('线路服务不可用');
-    return this.linesService.getAvailableForPlan(plan);
+    const resources = await this.linesService.getAvailableForPlan(plan);
+    return resources.map((line) => this.linesService!.toUserSummary(line));
   }
 
   // 兼容旧管理端路径；返回内容已切换为线路。

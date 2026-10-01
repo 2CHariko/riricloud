@@ -37,14 +37,14 @@ import {
 import { PlanFormDialog } from './components/plan-form-dialog';
 import { useAdminPlans, usePlanMutations, type Plan } from './use-plans';
 import { useAdminTemplates } from '../templates/use-templates';
-import { useAdminLines } from '../lines/use-lines';
+import { useLineOptions } from '../lines/use-lines';
 import { formatBytes, formatYuan } from '@/lib/utils';
 
 export default function PlansPage() {
   const { t } = useTranslation(['admin', 'common']);
   const { data, isPending, isError } = useAdminPlans();
   const { data: templates } = useAdminTemplates();
-  const { data: lineData } = useAdminLines();
+  const { data: lineData } = useLineOptions();
   const { remove } = usePlanMutations();
 
   const [search, setSearch] = useState('');

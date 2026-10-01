@@ -13,6 +13,7 @@ describe('SubscriptionService', () => {
   const prisma = {
     user: { findUnique: jest.fn() },
     node: { findMany: jest.fn() },
+    subscription: { findUnique: jest.fn() },
     subscriptionTemplate: { findFirst: jest.fn(), findUnique: jest.fn() }
   };
   const settingsService = { getSettings: jest.fn() };
@@ -33,6 +34,10 @@ describe('SubscriptionService', () => {
   });
 
   beforeEach(() => {
+    prisma.subscription.findUnique.mockImplementation(async () => {
+      const user = await prisma.user.findUnique();
+      return user ? { id: 'sub', userId: user.id, status: 'ACTIVE', user, startedAt: new Date(), trafficLimitBytes: user.trafficLimitBytes, trafficUsedBytes: user.trafficUsedBytes, expireAt: user.expireAt, plan: { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' } } : null;
+    });
     linesService.getAvailableForPlan.mockImplementation(async () => {
       const nodes = await prisma.node.findMany();
       return nodes.flatMap((source: NodeFixture) => source.inbounds.map((inbound) => ({
@@ -359,7 +364,7 @@ describe('SubscriptionService', () => {
         sni: 'hy.example.com',
         'skip-cert-verify': false
       });
-      expect(hy2.up).toBe('100 Mbps');
+      expect(hy2.up).toBe(100);
 
       const ss = proxies.find((p: { type: string }) => p.type === 'ss');
       expect(ss).toMatchObject({
@@ -565,6 +570,12 @@ describe('SubscriptionService', () => {
     });
   });
 
+  it('无订阅时不使用用户镜像 Token 回退分发全部线路', async () => {
+    prisma.subscription.findUnique.mockResolvedValue(null);
+    prisma.user.findUnique.mockResolvedValue(activeUser);
+    await expect(service.getSubscription('legacy-token')).rejects.toThrow(NotFoundException);
+    expect(linesService.getAvailableForPlan).not.toHaveBeenCalled();
+  });
   describe('限速与节点角标', () => {
     it('按套餐与线路取最小值计算有效速率，并注入角标与 Hy2 参数', async () => {
       settingsService.getSettings.mockResolvedValue({ appendSubscriptionSpeedBadge: true });
@@ -608,8 +619,8 @@ describe('SubscriptionService', () => {
       const yaml = parseYaml(res.body) as { proxies: Array<Record<string, unknown>> };
       expect(yaml.proxies[0].name).toBe('香港 01 [50M]');
       expect(yaml.proxies[0]['bandwidth-limit']).toBe('50 Mbps');
-      expect(yaml.proxies[0].up).toBe('50 Mbps');
-      expect(yaml.proxies[0].down).toBe('50 Mbps');
+      expect(yaml.proxies[0].up).toBe(50);
+      expect(yaml.proxies[0].down).toBe(50);
     });
 
     it('速率达到 1000M 及以上时自动换算为 1G / 2.5G 角标', async () => {

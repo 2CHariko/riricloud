@@ -15,7 +15,7 @@ RiriCloud 在设计之初便秉持 **“开发敏捷、架构清晰、零运维�
 | **认证与密码** | **JWT (Passport) + bcryptjs + HttpOnly Cookie** | JWT 由 Passport 校验并通过 HttpOnly/SameSite Cookie 传递；bcryptjs 为 bcrypt 算法的纯 JS 实现（成本因子 ≥ 10），哈希产物与原生 bcrypt 兼容，免去 Windows/交叉编译环境的原生依赖问题 |
 | **敏感配置保护** | **Node.js `crypto` AES-256-GCM** | AgentToken、SMTP/Turnstile Secret、证书私钥与 Reality 私钥按应用层加密保存；AgentToken 额外保存 SHA-256 校验值，运行时仅在必要的 Agent 配置/发信链路中解密 |
 | **边缘节点 Agent** | **Go (Golang 1.26+) + Cobra + Bubble Tea + Lip Gloss + kardianos/service** | 单一静态二进制，内置跨平台 CLI、全屏控制台 GUI/TUI、服务生命周期和前台运行模式 |
-| **代理与诊断内核** | **Sing-box + Mihomo** | 核心代理协议驱动 (Sing-box) 与订阅模板双内核 (Sing-box / Mihomo) 真实验证诊断支持 |
+| **代理与诊断内核** | **Sing-box + Mihomo** | Sing-box 固定承担服务端入站、用户鉴权、统计及中继出口；Mihomo/Clash Meta 是主要客户端配置与真实端到端拨测/验证内核，Sing-box 客户端仅作明确能力白名单兼容回退 |
 
 ### 1.1 Linux 本地开发环境
 
@@ -111,3 +111,28 @@ Docker 与发行包中的 Sing-box 使用 `with_v2ray_api,with_utls,with_quic,wi
 | **内存与 CPU 开销** | 极低（Golang 原生精简架构） | 较低 |
 | **配置文件格式** | 结构规范、层级极简清晰的 JSON | 历史包袱略多，配置项较繁琐 |
 | **通用客户端生态** | Sing-box iOS/Android/Desktop 官方客户端、Clash Meta | v2rayN、v2rayNG、Shadowrocket |
+
+## 6. 客户端内核职责与资源基线
+
+主客户端 Mihomo 固定基线为 1.19.30，资产定义及官方 Release SHA-256 统一放在 `scripts/client-kernel-assets.json`，Docker、Master 发行包、本地准备与 E2E 共用；准备阶段校验归档与 ELF/PE/Mach-O 架构，运行时不自动下载或升级。Mihomo 不内嵌 Agent，也不改变服务端 Sing-box 技术栈。
+
+连接结构/通用校验不依赖具体内核；Mihomo 和 Sing-box 客户端各自校验能力并独立编译。保留 Sing-box JSON 与 URI/Base64 为兼容/辅助格式，不因另一格式失败否定本格式。主拨测默认 Mihomo；仅明确不支持 Mihomo 且进入验证白名单的组合可回退 Sing-box，超时/鉴权/配置/环境错误不回退。缺 Cronet 等依赖应报环境不可用，不能标节点失效。
+
+Mihomo 1.19.30 实测 delay API 对 HTTP 500/302 仍返回 delay，因此项目采用独立 Mihomo 回环 mixed 代理和 Node 标准 HTTP CONNECT/TLS 客户端进行严格响应状态与证书验证。临时内核只绑定回环、禁 TUN/自动健康检查/规则下载；所有验证/拨测共用全局 2 进程、4 连接限额，取消/异常后回收进程与凭据配置，不引入额外外部服务。
+
+### 6.1 能力与验证证据矩阵
+
+下表是当前固定版本的验证证据，不承诺每种参数组合或每个平台均已实测。能力层对未知参数和不可表达项明确拒绝；网络或配置失败不能扩大回退白名单。
+
+| 连接/组合 | 默认客户端 | 当前 Windows / WSL Linux amd64 原生证据 | 回退边界 |
+| :--- | :--- | :--- | :--- |
+| HTTP 鉴权、VLESS/WS、SS AEAD、Hysteria2、TUIC | Mihomo | 真实 HTTP 204 请求，错误凭据拒绝；WS 错路径拒绝 | 不允许失败后回退 |
+| VMess/WS、Trojan/gRPC、SS2022、SS obfs、ShadowTLS v3、TLS SOCKS5、HTTPS 代理 | Mihomo | 固定版本原生配置检查；不代表全部真实链路实测 | 不允许运行错误回退 |
+| SOCKS4 / SOCKS4a | Sing-box 显式兼容 | 原生配置检查及真实代理 HTTP 204；MIHOMO_ONLY 返回 UNSUPPORTED | `MIHOMO_SOCKS_VERSION_UNSUPPORTED`，还须 Sing-box 能力可表达 |
+| TLS 自定义证书信任 | Sing-box 显式兼容 | 原生检查及 HTTPS 代理鉴权真实请求，错误密码拒绝 | `MIHOMO_CERTIFICATE_UNSUPPORTED`；未白名单额外限制同时存在则拒绝 |
+| NaiveProxy | Sing-box 显式兼容 | Windows 依赖不可用；WSL Linux/Cronet 真实 TLS HTTP/2 CONNECT + padding + 鉴权请求 204，通过；错误密码/不可信证书/错误 SNI/500 拒绝 | `MIHOMO_NAIVE_UNSUPPORTED`；MIHOMO_ONLY 启动前拒绝，依赖缺失报环境错误 |
+| httpupgrade、自定义 HTTP headers、特定 TLS/mux/packet 参数 | 按能力明确拒绝 Mihomo | 单元拒绝与独立编译契约 | 不在回退白名单，不可静默丢弃参数 |
+
+实际请求统一拒绝非预期 200/500/302、超时/取消，以及不可信/主机名不匹配的目标证书；测试 CA 下的 HTTPS 目标通过。WSL2 Debian 13 amd64 系统 Node20 和 Node22 测试容器已进行原生执行、隔离 HTTP/中继链路、Master/Agent Docker 构建/运行和 Linux Master 包装配/启动验证。Linux arm64/macOS 仍只有资产校验，不宣称原生执行；Naive 本轮为 HTTP/2，不包含 HTTP/3。
+
+固定 Mihomo 启动时 listener 监听早于内部 Running 状态，版本 API/TCP 不足以判定数据面就绪；执行器使用独立回环 HTTP 204 自检屏障（DIRECT 仅属于该自检 listener），不访问业务目标、不计业务延迟。业务 listener 仍固定指定代理、无 DIRECT 回退，最终结果仍来自严格真实请求；自检也受全局连接槽与启动取消预算约束。

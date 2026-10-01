@@ -62,7 +62,7 @@ pnpm build:agent -- --target linux/amd64 --release  # 指定平台，发布模�
 两个 Dockerfile 的 Agent 编译阶段统一使用 digest 固定的 Go 1.26 基础镜像，必须与 `apps/agent/go.mod` 的 `go 1.26.0` 保持一致或更高；构建不依赖 `GOTOOLCHAIN=auto` 在线下载额外工具链。
 
 在解耦架构下，**Docker Compose 默认同时拉起 `master` 与 `agent`（Master-Local 本机节点）两个独立容器**：
-- **Master 容器**：专注控制平面与 Web 面板，仅暴露 3000 端口，不再以子进程托管 Agent；在构建期会将当前宿主平台的 `riri-agent`、定制 Sing-box（含 `libcronet.so`）按 manifest 登记的版本化布局打入 `/app/binaries/`（静态分发基线仓，不再复制旧的平铺路径副本），并将 `sing-box` 内核放置于 `/usr/local/bin/sing-box`、`mihomo` 内核放置于 `/usr/local/bin/mihomo`（并通过环境变量 `MIHOMO_BINARY_PATH=/usr/local/bin/mihomo` 声明路径）供服务端 `LineSpeedtestService` 与 `TemplatesService` 执行精准的端到端线路代理测速和 Sing-box / Mihomo 双内核真实验证诊断。即便宿主机挂载空白 data 目录，主控也能开箱即用对外提供 Agent 二进制与内核的下载和升级分发。
+- **Master 容器**：专注控制平面与 Web 面板，仅暴露 3000 端口，不托管业务 Agent；Sing-box 服务端分发基线仍保留，独立客户端 Mihomo 放置于 `/usr/local/bin/mihomo`，Sing-box 兼容客户端位于 `/usr/local/bin/sing-box`。ClientKernelsService 统一版本/路径画像，ProbeService 默认 Mihomo 真实端到端，模板按对应格式验证，不无条件执行双内核。客户端内核只作受管临时子进程，不暴露控制/代理端口到公网。
 - **Agent 容器（Master-Local）**：独立容器运行，镜像通过 `AGENT_IMAGE`（默认 `riricloud/agent:latest`）注入；采用 `network_mode: host` 与 `NET_ADMIN` 能力直接监听宿主机网络，并通过 `MASTER_LOCAL_AGENT_TOKEN` 环境变量与 Master 服务端完成 Token 预置与生命周期对接。
 
 Docker 构建、镜像导出和 Compose 运行均应在 Linux shell 执行；Windows 开发环境必须使用 WSL（且 WSL 内须安装原生 Linux `node` 与 `pnpm`，严禁调用 Windows `node.exe`），PowerShell/Git Bash 不直接承担 Docker 操作：
@@ -311,6 +311,8 @@ E2E_SYNC_RESOURCES=0 bash scripts/dev-e2e.sh # 跳过本地构建产物同步
 ```
 
 - 脚本默认使用独立的 `apps/server/prisma/dev-e2e.db` 联调数据库，再检查并应用数据库迁移，数据库首次创建时执行种子播种；这样即使本地 `3000` 端口的手动开发主控正在运行，也不会与其共享 SQLite WAL 写锁。可通过 `E2E_DATABASE_URL` 显式指定要复用的 SQLite URL；若主控已经在运行则跳过迁移，复用时需由调用者确保目标主控与该数据库匹配。随后自动完成管理员登录，优先使用显式 `ADMIN_EMAIL`/`ADMIN_PASSWORD`，其次读取 `apps/server/.env` 中的正式或兼容 `SEED_ADMIN_*` 配置，最后才回退到本地演示默认值；也可通过 `SERVER_ENV_FILE` 指定凭据配置文件。使用临时权限受限 Cookie jar 调用管理 API（登录响应不再读取 `accessToken` JSON；解析器兼容 curl Netscape 格式的 `#HttpOnly_` Cookie 标记）。登录失败时会显示 HTTP 状态和对应排查提示，不再直接暴露 `curl (22)`。脚本默认复用 seed 预置的 `Master-Local` 节点，并通过本地 Prisma bootstrap helper 读取其 AgentToken（节点列表 API 已脱敏，不再返回凭证），再构建并启动 Agent。`SINGBOX_BINARY_PATH` 可显式指定内核；未指定时脚本会按当前系统与 CPU 架构自动过滤候选文件，Linux 优先查找 `.cache/sing-box-v2ray-api/<version>/linux-<arch>/sing-box`，Windows 优先查找 `.exe`，并通过 `sing-box version` 验证文件确实可执行。如需使用独立联调节点，可设置 `USE_MASTER_LOCAL=0`，脚本会按 `127.0.0.1:<NODE_PORT>` 查找或创建节点；复用既有独立节点时必须显式设置 `AGENT_TOKEN`，否则脚本会提示删除旧节点后重新创建对应端口的 VLESS Reality 线路。
+- E2E 主库与遥测库 URL 在脚本启动时分别以 `prisma/` 与 `prisma/telemetry/` 的 schema 目录规范化成绝对 `file:` URL，文件存在判断、上游预检、迁移、种子、主控和 AgentToken helper 复用相同路径。双库部署入口也进行同样规范化；不要将 scratch/custom-output 客户端的生成文件复制进默认 Prisma client，Windows 引擎占用解除后从正式 schema 正常执行 `prisma generate`。
+- 遇到 `P3018` / `backup_and_remove_legacy_upstream_before_upgrade` 应按迁移保护处理，不是写锁或 Prisma 未安装。开发者明确选择不保留专用 E2E 数据时，先确认相关服务已停止，再删除 `prisma/dev-e2e.db`、`prisma/telemetry/dev-e2e-telemetry.db` 及对应 WAL/SHM 后重新运行脚本；不要删除 `dev.db` 或生产库。脚本不会自动清库。两库重建后旧失败记录不保留，正常从空库迁移和播种。
 - 默认资源同步版本跟随 `apps/agent/VERSION`，构建二进制与上传资源使用同一 Agent 版本；可通过 `E2E_AGENT_VERSION` 同时覆盖构建和资源版本。为兼容已有脚本，单独设置 `E2E_RESOURCE_VERSION` 也会作为 Agent 构建版本覆盖；若同时设置两个变量但值不一致，脚本会在启动前报错。`E2E_APP_VERSION` 只记录资源构建来源，不再用作 Agent 版本。设置 `E2E_SYNC_RESOURCES=0` 可跳过同步；`E2E_AGENT_RESOURCE_FILE`、`E2E_AGENT_RESOURCE_TARGET`、`E2E_SINGBOX_RESOURCE_FILE`、`E2E_SINGBOX_RESOURCE_TARGET` 和 `E2E_SINGBOX_RESOURCE_VERSION` 仍可覆盖资源文件、架构或 Sing-box 版本。
 - 主控端默认尝试 `http://localhost:30800`（避开 Windows 系统保留与动态端口区间）；若未检测到可复用的服务且该端口无法绑定，脚本会自动向后探测最多 1000 个可用端口，并同步更新主控地址、Web API 代理地址和 Agent WebSocket 地址；实际使用的端口会记录在 `.cache/dev-e2e-server-port`，后续运行据此复用已在运行的主控端（不再因端口漂移而重复拉起）。若端口在探测与绑定之间被其他进程抢占（`EADDRINUSE`），脚本会顺延到下一个可用端口重试（默认 5 次，可用 `SERVER_START_ATTEMPTS` 调整）。可通过 `SERVER_PORT` 或 `PORT` 固定端口（固定后不自动顺延），或通过 `SERVER_PORT_SCAN_LIMIT` 调整探测范围。手动启动 Web 时可用 `VITE_API_PROXY_TARGET` 指定 `/api` 代理目标。应用自身的默认端口仍为 `3000`，联调端口仅作用于本脚本。
 - StatsService 默认监听 `127.0.0.1:10085`，Clash API 默认监听 `127.0.0.1:10086`；若这些端口在本地无法绑定（如落入 Windows WinNAT / Hyper-V 动态排除端口段或被占用），开发联调会自动探测可用端口并通过 `STATS_API_LISTEN` 与 `CLASH_API_LISTEN` 注入主控配置，Agent 也会在本地落盘前自动校验并重映射不可用的本地回环管理端口；Agent 会自动读取下发或重映射后的地址进行指标与设备连接轮询。也可手动设置 `STATS_API_LISTEN=127.0.0.1:xxxx` 或 `CLASH_API_LISTEN=127.0.0.1:yyyy`。
@@ -468,6 +470,20 @@ RiriCloud 采用**以线路（Line）为中心（Line-Centric Pipeline）**的�
 | **协议代理 (`PROTOCOL_PROXY`)**<br>*协议重加密中继* | 入口节点作为一个完整协议入站终结客户端握手，再由本地内核出站规则（`outbound` + `route`）向落地节点重新握手建连转发。 | 入口与落地分别进行独立协议握手；但中转机需要消耗 CPU 资源进行解密与重封装。受内核架构限制，**不支持 ShadowTLS**。 | 需要入口处完全终结客户端握手的特殊网络拓扑 |
 | **桥接已有线路 (`TARGET_LINE`)**<br>*异构协议桥接* | 入口节点使用当前线路协议生成客户端入站，再从所引用的其他节点 `DIRECT` 线路读取协议参数，生成异构 outbound；落地节点直接复用目标线路已有入站与端口。 | 不重复填写落地线路密钥和端口；可实现 Hysteria2/VLESS-Reality 到 Shadowsocks/Trojan 等异构分段。目标线路删除受保护，目标必须是其他节点的直连线路。 | 已有稳定落地线路，需要更换入口协议或规避入口网络 QoS |
 
+### 5.2.1 最终落地代理出站与 WARP 接入
+
+在线路「高级设置 → 最终落地出站」启用指定代理，选择 HTTP 或 SOCKS5 并填写实际地址/端口；可选用户名密码。HTTP 是非 TLS CONNECT 代理，只承载 TCP；SOCKS5 目标域名交给代理解析，UDP 默认关闭，确认工具提供 UDP ASSOCIATE 后方可开启。本版不支持 HTTPS 代理、SOCKS4、分流或故障自动切换。
+
+直连执行节点为当前入口，自建盲转发/协议代理中继执行节点为最终落地；入口到落地的路径不改变。桥接已有线路继承目标直连的出站，需要到目标线路编辑；UPSTREAM_NODE/EXTERNAL 不叠加。可为同一台落地节点创建普通出口和 WARP 出口两条线路，用户按线路选择。
+
+WARP 客户端/适配工具由管理员自行安装配置，RiriCloud 只对接已运行的 SOCKS5 端点，不管理 WARP 生命周期或修改系统路由。若工具在落地本机回环监听，可填 `127.0.0.1` 和工具实际端口（不假定固定端口），认证按工具实际设置填写。此地址指落地 Sing-box 的网络命名空间；独立 Docker 容器的 loopback 不是宿主机，需要确保代理地址在 Agent/Sing-box 容器内可访问，并用防火墙/认证保护远程代理，不将本机 WARP 无鉴权端口暴露公网。
+
+指定出站的业务连接失败时不回退 VPS 默认出口，未支持的 UDP 明确拒绝；代理地址域名仍需本地解析，目标若已由客户端解析为 IP 不会恢复域名。既有私网保护与代理池来源白名单优先执行。节点高级覆盖接管 inbounds/outbounds/route/dns 会与指定出站冲突，须清除相应覆盖后配置；其他节点及不相关覆盖不变。
+
+保存后观察节点配置应用回执/内核错误，不能把保存成功当作已应用：WS 防抖推送、HTTP 下一轮拉取，失败预检沿用 last-good，离线节点和旧连接不保证即时切换。实际验收通过完整线路查询出口 IP，再访问所需服务；停止 WARP 确认不会直连回退。WARP 出口地区、IP 信誉和解锁能力由服务实际判定，不保证固定国家或服务解锁，正常线路 204 拨测不等于解锁验证。
+
+开发回归使用 `SINGBOX_BINARY_PATH=<实际交付内核> node scripts/line-egress-integration.cjs` 和 `node --test scripts/line-egress-migration.test.cjs`，隔离临时库/端口覆盖 HTTP/SOCKS5、直连/两种中继/桥接、代理域名解析、UDP 开关、认证失败及停代理不直出。未连接真实 WARP，不宣称已验证实际解锁。
+
 ### 5.3 端口机制与传输层协议映射
 
 在中继线路中，核心由两个端口协同工作：
@@ -583,3 +599,51 @@ Master 下发的 Sing-box 配置默认将 `experimental.clash_api.external_contr
 首次上线应只创建 `ADMIN` 或短期 `SHARE` 镜像验证指定节点的实际出口、GitHub Raw/API/Release 响应、重定向白名单和 Range 行为，确认监控后再逐站启用 `PUBLIC`。服务端默认限制单请求 10 分钟、响应 256 MiB、单节点并发 4；公开请求还按 IP/镜像站限速。禁止把 GitHub PAT、Cookie、Authorization、响应体或完整分享 Token 写入日志，日志仅记录镜像 ID、节点 ID、最终 host、状态码、字节数、耗时和稳定错误码。
 
 发布前先备份 SQLite 主文件及对应 `-wal`、`-shm`，再部署 Master 数据库迁移，最后滚动升级并确认 Agent 心跳能力。旧 Agent 会继续运行既有功能但不会接收镜像任务。回滚时先关闭镜像站入口或全部禁用配置，进行中的流按失败处理；不要求旧版本恢复进行中的镜像会话。
+
+## 10. 上游订阅破坏性重构部署
+
+本次删除 `isDirectSub`、旧 `fingerprint` 与 `/admin/upstream/nodes/:nodeId/direct-sub`，不保留旧数据/接口兼容，不自动转换为 EXTERNAL，也不回填加密数据。**不要直接在带旧上游记录的主库上执行迁移或新版服务。**
+
+1. 停止旧 Master 的写入，使用 SQLite 在线备份或停机后完整备份主库及 WAL/SHM；保存与该备份匹配的旧二进制和加密密钥。
+2. 维护者明确选择新数据库，或在备份后显式处理旧上游源、节点与引用它们的线路。只处理上游域，不清空用户/套餐/余额/流量或其他线路；本程序不执行这一步，也没有自动清理开关。
+3. 执行正常部署命令。`prisma/deploy-databases.js`、Docker 入口与 `scripts/dev-e2e.sh` 在任何双库变更前执行 `upstream-upgrade-preflight.js`。检测到旧上游记录时以明确错误中止；SQL 新迁移也在结构变化前设置 CHECK 保护，直接调用 Prisma 同样不能悄悄转换旧数据。
+4. 迁移完成后重新导入上游，等待完整成功快照；创建 EXTERNAL 或 UPSTREAM_NODE 中继线路，确认授权与启停再发布。EXTERNAL 默认禁用/非公开，公开启用可能被 ALL 套餐包含。
+5. 回退必须同时恢复旧数据库备份与旧二进制；新版 EXTERNAL/加密连接不能由旧版安全读取。直接 Prisma 迁移被拒绝留下失败迁移记录时，确认结构未改变并完成维护者的数据处理后，按 Prisma 官方流程标记该失败迁移回滚再重试，禁止修改历史 SQL。
+
+上游 URL、Header、源内容/缓存、参数和原始快照均使用现有 `RIRICLOUD_ENCRYPTION_KEY`（或 JWT_SECRET）AES-GCM 加密；部署必须持续保留同一密钥。管理列表不展示秘密，管理员编辑按需获取详情，日志/错误不能包含完整 URL 或认证内容。
+
+远程拉取仅公共 HTTP(S)，生产必须 HTTPS，禁止私网、回环和 metadata 目标；最多 5 次重定向、20 秒总预算和 5 MiB 响应。实际连接使用已检查的 DNS 地址，跨 origin 不转发自定义秘密 Header。内网来源请使用文本导入，而不是放宽生产 SSRF 检查。
+
+自建中继只允许可归属用户的鉴权入口，用户流量按入口线路倍率计费；共享 SS/关闭用户鉴权不能作为受控上游中继入口。EXTERNAL 为共享外部凭据分发，不计本地用量、不执行本地设备/速率限制，停止分发或用户到期不能撤回已保存的凭据；需要独立停权时使用自建入口中继。
+
+裸节点与全部线路现在均由 Master 的独立 Mihomo 客户端访问目标进行真实代理拨测，Hysteria2/TUIC 不再返回 TCP 不适用；只在严格目标响应与 HTTPS 证书验证通过时记录端到端延迟，失败不自动停用资源。定向回归：`node --test scripts/upstream-upgrade-preflight.test.cjs scripts/upstream-migration.test.cjs scripts/client-probe-migration.test.cjs`；测试在隔离 SQLite 执行，不操作现有业务库。
+
+## 11. Mihomo 主客户端拨测部署
+
+Mihomo 固定 1.19.30，官方五平台资产与 SHA-256 在 `scripts/client-kernel-assets.json`。准备命令 `node scripts/prepare-client-kernels.mjs --target <platform>` 输出 `artifacts/binaries/mihomo/1.19.30/<platform>/mihomo[.exe]` 并验证归档、文件头、架构与二进制摘要；`--archive` 可读取离线官方归档，但不能跳过校验。Docker 构建、Master Linux amd64/arm64 发行包和本地 E2E 共用清单，不在运行时下载。开发支持 windows-amd64、darwin-amd64/arm64、linux-amd64/arm64；不把 Mihomo 放进 Agent 或作为 Agent 升级目标。
+
+`MIHOMO_BINARY_PATH` / `SINGBOX_BINARY_PATH` 显式覆盖错误时明确环境不可用，不静默寻找另一个内核掩盖配置错误。常规解析优先环境路径、发行包版本目录、系统安装位置、开发 artifacts，并读取真实版本；缺资源不是“节点连接失败”。主拨测统一全局 4 连接/2 进程，临时目录私有、回环控制 Secret、禁 TUN/GeoIP/provider 自动下载；取消或异常应退出并清理。Sing-box 回退需要自身协议及运行依赖，Naive/Cronet 缺失不可伪称通过。
+
+上游与线路单/批量拨测返回 202 taskId，通过任务 API 查看进度、分页结果和取消；请求不等待整批网络操作。完成结果内存保留 15 分钟，重启后任务消失但资源 lastProbe 摘要保留。结果标实际内核/版本、Master 视角、链路与目标；Sing-box 兼容成功不等于 Mihomo 主客户端已验证。网络/鉴权/配置/环境失败不自动换内核，不自动停用业务资源。
+
+默认目标 HTTPS generate_204，严格响应状态与证书验证；已有显式 HTTP 目标保留但不提供目标 TLS 验证。目标只能公共地址、禁止任意请求传入 URL/认证、重定向不跟随；上游节点公共端点和目标实际 IP 固定，Host/SNI 保留。自建受控入口可以本机/私网，不提供生产用户私网绕过开关。固定 Mihomo delay API 对 500/302 返回数字，因此项目使用其 mixed 代理和标准 HTTP 客户端的严格请求，不直接把 delay 当成功。
+
+新增 `20261001010000_client_probe_metadata` 仅增加 lastProbeJson 并清除旧派生延迟/状态，不清来源、节点、线路、用户或账务。此迁移不要求清库；之前上游破坏性迁移的前置要求仍独立适用。内核/模板验证缺 GeoIP、规则/provider 或本地证书资源时显示 EXTERNAL_RESOURCES_REQUIRED，不篡改规则后标 FULL 通过。
+
+回归：`node --test scripts/client-kernels.test.mjs scripts/client-probe-migration.test.cjs`；真实任务/内核隔离验收 `node scripts/client-probe-integration.cjs`（HTTPS fixture 与测试 CA 可在 scratch 准备）；中继链路 `node scripts/upstream-integration.cjs`。上述脚本新建临时库并清理，不操作默认 E2E/dev 业务库。
+
+Windows 本机六门禁/隔离 E2E 已通过；本机 WSL2 Debian 13 amd64 已补验系统 Node20、Node22 Linux 测试容器、Mihomo 1.19.30/Sing-box 1.14.0 + Cronet，原生测试 83 项通过，真实 HTTP/TLS、JWT/RBAC、任务/STALE、EXTERNAL/VLESS/HTTP 中继及 Naive HTTP/2 CONNECT + padding 链路通过。正式 Master/Agent 镜像构建、双标签离线导出/摘要/重载，以及 Linux Master 发行包装配/解压后独立启动通过；生产 Master、隔离双库迁移/管理员引导、Cookie、内核画像、真实 Agent/Sing-box、异步 202/取消及格式对应模板检查均验证。所有运行使用临时库/数据目录，不操作现有部署；非 root 原生 Agent 须将 `RIRICLOUD_DATA_DIR` 指向可写目录。
+
+WSL 验证发现并修复 `docker-build.sh export` 引用未定义 HOST_UNAME（Linux-only 脚本不需要 Windows 路径转换），补 `node --test scripts/docker-export.test.mjs`；发现 Mihomo listener 早于 Running 的冷启动竞态，增加仅回环数据面就绪屏障，不访问目标或计入延迟，业务路由无 DIRECT 兜底；端口就绪轮询显式移除 abort listener。发布前其他平台仍须原生补验：Linux arm64/macOS 目前仅资产摘要/文件头通过，未实测原生运行；Naive 本轮未测 HTTP/3。视觉验证按需且仅限 Antigravity。
+
+## 12. 代理池统一授权与上游中继升级
+
+本轮BREAKING CHANGE：旧裸pk_用户名停止新连接，JSON导出改v2逐端点真实凭据，公开代理池线路也遵守套餐ALL/TAGS/EXPLICIT及额外授权；共享配额不再隐含所有线路访问权。Key记录/密码/exportToken不轮换、不删除，用户必须重新导出脚本/工具配置，不能手工将原始Key标识当登录名。
+
+部署顺序：停止旧Master与可能继续旧配置的入口服务→备份业务/观测SQLite（含WAL安全备份）→升级代码并执行追加迁移→同步Master/Web→检查线路proxyPoolEnabled、套餐匹配与额外授权→确认Agent已应用新配置→让用户重新导出。网络分区/离线Agent不承诺立刻撤销，控制面的期望配置和数据面实际应用分开核对；需要强制中断旧连接时使用既有维护操作，不新增踢连接协议。
+
+迁移20261001020000_proxy_pool_line_access只加开关、回填旧ACTIVE/public/DIRECT/MIXED且入口存在/端口有效线路，私有/停用/上游中继默认关闭；不改用户/Key/密码/Token/账务/游标。新增中继须手工开启代理池并开启用户鉴权；普通MIXED/HTTP/SOCKS不会仅因协议自动获得Key。先核对套餐权限，容量每节点512个Key-Line绑定，管理页面显示排除数量，改变UI排序不改变分配。
+
+回滚须同时恢复匹配代码与数据库备份，不能编辑已应用历史迁移；仅回退Web会无法使用v2导出。TLS入口只通过HTTPS或具备相应能力的JSON交付，不能导出普通SOCKS5/TXT冒充兼容；超过200端点须分批选择。原有exportToken可以继续拉取，但返回范围因正确授权收紧且用户名改变；日志/浏览器历史保护、必要时独立轮换Token。
+
+定向回归：`node --test scripts/proxy-pool-migration.test.cjs`、`node scripts/proxy-pool-integration.cjs`（真实Sing-box路径由SINGBOX_BINARY_PATH指定）。脚本使用正式schema临时绝对SQLite库和回环fixture，HTTP CONNECT/SOCKS5、Key/授权/白名单/上游失效、实际gRPC累计计数与倍率事务验证，不使用或清理默认dev/E2E库。无需新Agent协议、外部服务或依赖库。

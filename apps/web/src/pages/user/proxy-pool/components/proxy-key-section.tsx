@@ -85,6 +85,7 @@ export function ProxyKeySection({ keys, limit, isPending, onCreate, onEdit }: Pr
           {t('user:proxyPool.newKeyButton')}
         </Button>
       </div>
+      <p className="text-xs text-muted-foreground">{t('user:proxyPool.reexportRequired')}</p>
 
       {/* 响应式凭据卡片网格 */}
       {isPending ? (

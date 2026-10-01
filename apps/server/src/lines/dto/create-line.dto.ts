@@ -1,3 +1,5 @@
+import { ValidateNested } from 'class-validator';
+import { LineEgressProxyDto } from './line-egress-proxy.dto';
 import { Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -38,23 +40,29 @@ export class CreateLineDto {
   @IsOptional()
   params?: Record<string, unknown>;
 
+  @ApiPropertyOptional({ type: LineEgressProxyDto, nullable: true, description: '最终落地代理出站；null 使用默认出站' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LineEgressProxyDto)
+  egressProxy?: LineEgressProxyDto | null;
+
   @ApiPropertyOptional({ enum: RELAY_MODES })
   @IsIn(RELAY_MODES)
   @IsOptional()
   relayMode?: RelayMode;
 
-  @ApiPropertyOptional({ format: 'uuid', description: '用户连接入口节点；直连线路可与出口节点互相推导' })
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: '本地线路入口节点；EXTERNAL 必须为空' })
   @IsUUID()
   @IsOptional()
-  entryNodeId?: string;
+  entryNodeId?: string | null;
 
-  @ApiPropertyOptional({ example: 24443, minimum: 1, maximum: 65535, description: '入口监听端口，省略时随机分配' })
+  @ApiPropertyOptional({ example: 24443, minimum: 1, maximum: 65535, nullable: true, description: '本地入口监听端口；EXTERNAL 必须为空' })
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(65535)
   @IsOptional()
-  entryPort?: number;
+  entryPort?: number | null;
 
   @ApiPropertyOptional({ format: 'uuid', nullable: true, description: '中继落地节点；普通中继必填，直连与桥接中继置空' })
   @IsUUID()
@@ -66,7 +74,7 @@ export class CreateLineDto {
   @IsOptional()
   targetLineId?: string | null;
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'UPSTREAM_NODE 中继模式引用的外部上游节点' })
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'EXTERNAL 与 UPSTREAM_NODE 中继必须引用有效的上游节点' })
   @IsUUID()
   @IsOptional()
   upstreamNodeId?: string | null;
@@ -140,6 +148,11 @@ export class CreateLineDto {
   @IsBoolean()
   @IsOptional()
   allowLanAccess?: boolean;
+
+  @ApiPropertyOptional({ default: false, description: '显式接入标准代理池，仅支持 MIXED 直连或上游中继' })
+  @IsBoolean()
+  @IsOptional()
+  proxyPoolEnabled?: boolean;
 
   @ApiPropertyOptional({ enum: ['TCP_MUX', 'WIREGUARD'], nullable: true, description: '反向穿透隧道类型' })
   @IsIn(['TCP_MUX', 'WIREGUARD'])

@@ -1,3 +1,7 @@
+import { assertEgressOverride, buildEgressRoute, canConfigureEgress } from '../common/line-egress';
+import { buildUpstreamOutbound } from '../common/upstream-connection';
+import { getUpstreamUnavailableReason, isMeteredUpstreamEntry, type UpstreamAvailabilityNode } from '../common/upstream-availability';
+import { readUpstreamRelayConnection } from '../common/upstream-relay-connection';
 import { ConflictException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -19,7 +23,8 @@ import {
   type ProxyPoolCredential,
   type SharedListenOptions
 } from '../common/inbound';
-import { parseWhitelistIps } from '../proxy-pool/proxy-key.util';
+import { parseProxyLineUsername } from '../proxy-pool/proxy-key.util';
+import { ProxyPoolAccessService, type ProxyPoolBinding } from '../proxy-pool-access/proxy-pool-access.service';
 import { resolveLineTags } from '../common/line-tags';
 import { DEFAULT_INBOUND_LISTEN, getClashApiListen, getStatsApiListen } from '../common/ports';
 import {
@@ -127,19 +132,6 @@ type ResolvedTrafficLine = {
   trafficRate: number;
 };
 
-// 直连代理池凭据快照（含归属用户，用于资格二次过滤）
-type ProxyPoolKeySnapshot = {
-  id: string;
-  userId: string;
-  username: string;
-  password: string;
-  whitelistIps: string;
-  user?: { uuid: string; isActive: boolean } | null;
-};
-
-type ProxyKeyDelegate = {
-  findMany: (args: Record<string, unknown>) => Promise<ProxyPoolKeySnapshot[]>;
-};
 
 type TrafficProxyKeySnapshot = {
   id: string;
@@ -236,8 +228,6 @@ type VersionConfirmation = {
   warned: boolean;
 };
 
-// 单节点注入的直连代理池凭据上限：约束入站用户列表与白名单路由规则的配置体量
-const PROXY_POOL_KEYS_PER_NODE_LIMIT = 512;
 
 const SINGBOX_DIAGNOSTIC_DURATION_MS = 30 * 60 * 1000;
 const SINGBOX_DIAGNOSTIC_SWEEP_INTERVAL_MS = 30 * 1000;
@@ -294,6 +284,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   private nextDeviceEnforcementCleanupAt = 0;
   private readonly taskResults = new Map<string, TaskResult>();
   private readonly configCache = new Map<string, ConfigSyncData>();
+  private configRevision = 0;
   private readonly mirrorSessions = new Map<string, MirrorSession>();
   private readonly pendingHeartbeats = new Map<string, PendingHeartbeat>();
   private readonly heartbeatRetryTimers = new Map<string, NodeJS.Timeout>();
@@ -315,12 +306,13 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     private readonly prisma: PrismaService,
     @Optional() private readonly settingsService?: SettingsService,
     @Optional() private readonly systemLogsService?: SystemLogsService,
-    @Optional() private readonly telemetryPrisma?: TelemetryPrismaService
+    @Optional() private readonly telemetryPrisma?: TelemetryPrismaService,
+    @Optional() private readonly proxyPoolAccess?: ProxyPoolAccessService
   ) {
     if (this.settingsService) {
       this.settingsService.onSettingsChange((patch) => {
         if (
-          patch.enforceEmailVerification !== undefined ||
+          patch.publicLinesEnabled !== undefined || patch.enforceEmailVerification !== undefined ||
           patch.agentLogMaxSizeMb !== undefined ||
           patch.agentLogMaxFiles !== undefined ||
           patch.deviceLimitEnabled !== undefined ||
@@ -651,7 +643,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       void this.drainHeartbeats(nodeId);
     });
     if (deviceTrackingChanged) {
-      this.configCache.delete(nodeId);
+      this.invalidateConfig(nodeId);
       void this.pushConfig(nodeId);
     }
   }
@@ -900,15 +892,15 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       const proxyKeysByUsername = new Map(proxyKeys.map((key) => [key.username, key]));
 
       const lineDelegate = (tx as unknown as {
-        line?: { findMany: (args: Record<string, unknown>) => Promise<Array<{ id: string; trafficRate?: number | null }>> };
+        line?: { findMany: (args: Record<string, unknown>) => Promise<Array<{ id: string; trafficRate?: number | null; entryNodeId?: string | null }>> };
       }).line;
       const loadedLines = lineDelegate && referencedLineIds.size > 0
         ? await lineDelegate.findMany({
             where: { id: { in: [...referencedLineIds] } },
-            select: { id: true, trafficRate: true }
+            select: { id: true, trafficRate: true, entryNodeId: true }
           })
         : [];
-      const linesById = new Map(loadedLines.map((l) => [l.id, { id: l.id, trafficRate: this.normalizeTrafficRate(l.trafficRate) }]));
+      const linesById = new Map(loadedLines.map((l) => [l.id, { id: l.id, trafficRate: this.normalizeTrafficRate(l.trafficRate), entryNodeId: l.entryNodeId }]));
 
       const cursor = (tx as unknown as { trafficCursor?: TrafficCursorDelegate }).trafficCursor;
       if (!cursor) throw new Error('TrafficCursor delegate is unavailable');
@@ -924,6 +916,11 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       for (const [credential, current] of snapshotsByCredential) {
         cursorUpdates.set(credential, current);
         const parsed = parsedByCredential.get(credential) ?? { rawCredential: credential, lineId: null };
+        const proxyLineIdentity = credential.startsWith('pk_line_') ? parseProxyLineUsername(credential) : null;
+        if (credential.startsWith('pk_line_') && (!proxyLineIdentity || linesById.get(proxyLineIdentity.lineId)?.entryNodeId !== nodeId)) {
+          this.logger.warn('heartbeat: invalid proxy line identity');
+          continue;
+        }
         if (this.isInternalSystemCredential(parsed.rawCredential)) continue;
 
         const previous = cursorByCredential.get(credential);
@@ -948,9 +945,9 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         const total = upload + download;
         if (total === 0n) continue;
 
-        const activeLine = parsed.lineId
-          ? (linesById.get(parsed.lineId) ?? { id: parsed.lineId, trafficRate: 1 })
-          : line;
+        const activeLine = proxyLineIdentity
+          ? linesById.get(proxyLineIdentity.lineId)
+          : parsed.lineId ? (linesById.get(parsed.lineId) ?? { id: parsed.lineId, trafficRate: 1 }) : line;
         const targetLineId = activeLine?.id;
         const targetTrafficRate = activeLine?.trafficRate ?? 1;
 
@@ -1699,7 +1696,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       data: { singboxLogMode: 'NORMAL', singboxLogModeUntil: null }
     }));
     for (const node of expired) {
-      this.configCache.delete(node.id);
+      this.invalidateConfig(node.id);
       void this.pushConfig(node.id);
       this.systemLogsService?.enqueue({
         nodeId: node.id,
@@ -1728,7 +1725,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       where: { id: nodeId },
       data: { singboxLogMode: level, singboxLogModeUntil: expiresAt }
     }));
-    this.configCache.delete(nodeId);
+    this.invalidateConfig(nodeId);
     const requested = await this.pushConfig(nodeId);
     this.systemLogsService?.enqueue({
       nodeId,
@@ -1748,7 +1745,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       where: { id: nodeId },
       data: { singboxLogMode: 'NORMAL', singboxLogModeUntil: null }
     }));
-    this.configCache.delete(nodeId);
+    this.invalidateConfig(nodeId);
     const requested = await this.pushConfig(nodeId);
     this.systemLogsService?.enqueue({
       nodeId,
@@ -1768,12 +1765,12 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       where: { id: nodeId },
       include: {
         entryLines: {
-          where: { status: 'ACTIVE' },
+          where: { status: 'ACTIVE', type: { not: 'EXTERNAL' } },
           orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
           include: {
             landingNode: true,
             certificate: true,
-            upstreamNode: true,
+            upstreamNode: { include: { subscription: true } },
             targetLine: { include: { entryNode: true } },
             relaySources: {
               where: { status: 'ACTIVE' },
@@ -1782,7 +1779,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           }
         },
         landingLines: {
-          where: { status: 'ACTIVE' },
+          where: { status: 'ACTIVE', type: { not: 'EXTERNAL' } },
           orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
           include: {
             entryNode: true,
@@ -1876,12 +1873,14 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       id: string;
       tag: string | null;
       listen: string;
+      proxyPoolEnabled?: boolean;
       type: string;
       relayMode: string | null;
       protocolType: string;
       paramsJson: string;
-      entryNodeId: string;
-      entryPort: number;
+      egressProxyJson?: string | null;
+      entryNodeId: string | null;
+      entryPort: number | null;
       landingNodeId: string | null;
       landingPort: number | null;
       allowLanAccess?: boolean;
@@ -1911,25 +1910,17 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         type: string;
         protocolType: string;
         paramsJson: string;
-        entryPort: number;
+        entryPort: number | null;
         status: string;
         endpointOverrideEnabled?: boolean;
         serverHost?: string | null;
         serverPort?: number | null;
         serverName?: string | null;
         host?: string | null;
-        entryNode: { serverHost: string; status?: string };
+        entryNode: { serverHost: string; status?: string } | null;
       } | null;
       relaySources?: Array<{ id: string; tagsJson: string; isPublic: boolean; status: string }>;
-      upstreamNode?: {
-        id: string;
-        name: string;
-        protocolType: string;
-        serverHost: string;
-        serverPort: number;
-        paramsJson: string;
-        status: string;
-      } | null;
+      upstreamNode?: (UpstreamAvailabilityNode & { id: string; name: string; serverHost: string; serverPort: number }) | null;
     };
     const lines = new Map<string, ConfigLine>();
     for (const line of node.entryLines ?? []) {
@@ -1952,18 +1943,20 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     const outbounds: Array<Record<string, unknown>> = [{ type: 'direct', tag: 'direct' }];
     const relayRules: Array<Record<string, unknown>> = [];
     const portSpeedLimits: Record<number, number> = {};
-    // 直连代理池：仅注入当前仍具备订阅资格的用户的 Proxy Key（超额/停用即时吊销）
-    const entitledUserUuids = new Set(entitledSubscriptions.map((subscription) => subscription.user.uuid));
-    const proxyPoolKeys = await this.loadProxyPoolKeys(entitledUserUuids);
-    const proxyPoolUsers: ProxyPoolCredential[] = proxyPoolKeys.map((key) => ({
-      username: key.username,
-      password: key.password
-    }));
-    const proxyPoolWhitelistCredentials = proxyPoolKeys.map((key) => ({
-      username: key.username,
-      whitelistIps: parseWhitelistIps(key.whitelistIps)
-    }));
-    const proxyPoolTags = new Set<string>();
+    // 与端点导出共用逐线路绑定分配，缺少解析器时拒绝注入而非回退旧裸 Key。
+    const bindings = this.proxyPoolAccess ? await this.proxyPoolAccess.getNodeBindings(nodeId) : [];
+    const bindingsByLine = new Map<string, ProxyPoolBinding[]>();
+    for (const binding of bindings) bindingsByLine.set(binding.lineId, [...(bindingsByLine.get(binding.lineId) ?? []), binding]);
+    const proxyPoolRules: Array<Record<string, unknown>> = [];
+    const egressRules: Array<Record<string, unknown>> = [];
+    const applyEgress = (line: ConfigLine, businessInbounds: Array<Record<string, unknown>>) => {
+      if (line.egressProxyJson == null) return;
+      assertEgressOverride(node.configOverride, line.id);
+      const built = buildEgressRoute(line.id, line.egressProxyJson, businessInbounds);
+      if (built.outbound) outbounds.push(built.outbound);
+      egressRules.push(...built.rules);
+      if (built.invalid) this.logger.warn(`Invalid egress configuration rejected for line ${line.id}`);
+    };
     const authorizedUsers = new Map<string, InboundUserCredential>();
     const usersForLine = (line: Pick<ConfigLine, 'id' | 'tagsJson' | 'isPublic' | 'status'>): InboundUserCredential[] => {
       const lineUsers = entitledSubscriptions
@@ -1984,14 +1977,15 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       return [...lineUsers, this.internalSpeedtestUser()];
     };
     for (const line of lines.values()) {
+      if (line.type === 'EXTERNAL' || !line.entryNodeId || !line.entryPort) continue;
       if (!publicLinesEnabled) continue;
       const protocolType = line.protocolType as ProtocolType;
-      const isProxyPoolProtocol = AUTHENTICATED_PROXY_PROTOCOLS.includes(protocolType);
+      const isProxyPoolProtocol = line.proxyPoolEnabled === true && protocolType === 'MIXED' && (line.type === 'DIRECT' || (line.type === 'RELAY' && line.relayMode === 'UPSTREAM_NODE'));
       const lineParams = this.buildLineParams(line);
-      // mixed/socks/http 是面向自动化的直连入口：无用户的入站在 Sing-box 中等价于开放代理，
-      // 因此强制启用鉴权，并注入当前有效的 Proxy Key 凭据数组。
-      const params = isProxyPoolProtocol ? { ...lineParams, usersEnabled: true } : lineParams;
-      const lineUsers = isProxyPoolProtocol ? proxyPoolUsers : [];
+      if (line.relayMode === 'UPSTREAM_NODE' && (!line.upstreamNode || getUpstreamUnavailableReason(line.upstreamNode) || !isMeteredUpstreamEntry(protocolType, lineParams))) continue;
+      // 保留密码协议原有订阅鉴权；只有显式代理池开关才取得独立 Key。
+      const params = isProxyPoolProtocol || (line.relayMode !== 'UPSTREAM_NODE' && AUTHENTICATED_PROXY_PROTOCOLS.includes(protocolType)) ? { ...lineParams, usersEnabled: true } : lineParams;
+      const lineBindings = isProxyPoolProtocol ? bindingsByLine.get(line.id) ?? [] : [];
       const lineTags = resolveLineTags(line);
       const isEntry = line.entryNodeId === nodeId;
       const isLanding = line.landingNodeId === nodeId;
@@ -2007,9 +2001,9 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         ? [...inboundUsers, this.internalRelayTransitUser()]
         : inboundUsers;
       const proxyPoolUsersForTag = (tag: string): ProxyPoolCredential[] => {
-        if (!isProxyPoolProtocol || !lineUsers.length) return [];
-        proxyPoolTags.add(tag);
-        return lineUsers;
+        if (!lineBindings.length || !isEntry) return [];
+        proxyPoolRules.push(...buildProxyPoolWhitelistRules({ tag, credentials: lineBindings }));
+        return lineBindings.map(({ username, password }) => ({ username, password }));
       };
 
       const listenOptions: SharedListenOptions = {
@@ -2031,6 +2025,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
       if (line.type === 'DIRECT' && isEntry) {
         const tag = lineTags.direct ?? `line-${line.id}`;
+        const start = inbounds.length;
         inbounds.push(...buildServerInbounds({
           type: protocolType,
           tag,
@@ -2042,6 +2037,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           proxyPoolUsers: proxyPoolUsersForTag(tag),
           listenOptions
         }));
+        applyEgress(line, inbounds.slice(start));
         continue;
       }
 
@@ -2091,7 +2087,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
       if (isEntry && line.relayMode === 'TARGET_LINE') {
         const targetLine = line.targetLine;
-        if (!targetLine || targetLine.status !== 'ACTIVE') continue;
+        if (!targetLine || targetLine.status !== 'ACTIVE' || !targetLine.entryNode || !targetLine.entryPort) continue;
         const relayTag = lineTags.entry ?? `relay-${line.id}-entry`;
         const relayInbounds = buildServerInbounds({
           type: protocolType,
@@ -2145,7 +2141,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
       if (isEntry && line.relayMode === 'UPSTREAM_NODE') {
         const upstreamNode = line.upstreamNode;
-        if (!upstreamNode || upstreamNode.status !== 'ACTIVE') continue;
+        if (!upstreamNode || getUpstreamUnavailableReason(upstreamNode)) continue;
         const relayTag = lineTags.entry ?? `relay-${line.id}-entry`;
         const relayInbounds = buildServerInbounds({
           type: protocolType,
@@ -2173,6 +2169,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           ? [this.internalRelayTransitUser()]
           : users;
         const landingTag = lineTags.landing ?? `line-${line.id}-landing`;
+        const start = inbounds.length;
         const isSelfNat = (node as { reachability?: string }).reachability === 'NAT';
         inbounds.push(...buildServerInbounds({
           type: protocolType,
@@ -2187,20 +2184,15 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         }));
         if (isSelfNat && !line.allowLanAccess) {
           relayRules.push({
-            inbound: [landingTag],
+            inbound: inbounds.slice(start).filter(i => i.type !== 'shadowtls').map(i => i.tag),
             ip_cidr: PRIVATE_CIDR_BLOCKS,
             outbound: 'block'
           });
         }
+        if (canConfigureEgress(line.type, line.relayMode)) applyEgress(line, inbounds.slice(start));
       }
     }
 
-    // 直连代理池来源 IP 白名单：以逻辑规则拒绝「命中凭据但来源不在白名单」的连接
-    for (const tag of proxyPoolTags) {
-      relayRules.push(
-        ...buildProxyPoolWhitelistRules({ tag, credentials: proxyPoolWhitelistCredentials })
-      );
-    }
 
     if (relayRules.some((rule) => rule.outbound === 'block') && !outbounds.some((outbound) => outbound.tag === 'block')) {
       outbounds.push({ type: 'block', tag: 'block' });
@@ -2306,7 +2298,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           }
         }
       },
-      ...(relayRules.length ? { route: { rules: relayRules } } : {})
+      ...((proxyPoolRules.length || relayRules.length || egressRules.length) ? { route: { rules: [...proxyPoolRules, ...relayRules, ...egressRules] } } : {})
     };
     if (node.configOverride) {
       singboxConfig = deepMerge(singboxConfig, JSON.parse(node.configOverride) as Record<string, unknown>);
@@ -2362,34 +2354,25 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     };
   }
 
-  // 载入可下发的直连代理池凭据：仅保留启用且归属用户仍具备订阅资格的 Proxy Key。
-  // 超额、过期、被禁用的用户在此被自然剔除，从而实现凭据快速熔断。
-  private async loadProxyPoolKeys(entitledUserUuids: Set<string>): Promise<ProxyPoolKeySnapshot[]> {
-    const delegate = (this.prisma as unknown as { proxyKey?: ProxyKeyDelegate }).proxyKey;
-    if (!delegate || !entitledUserUuids.size) return [];
-    const keys = await delegate.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        userId: true,
-        username: true,
-        password: true,
-        whitelistIps: true,
-        user: { select: { uuid: true, isActive: true } }
-      },
-      orderBy: { createdAt: 'asc' }
-    });
-    return keys
-      .filter((key) => Boolean(key.username) && Boolean(key.password) && key.user?.isActive && entitledUserUuids.has(key.user.uuid))
-      .slice(0, PROXY_POOL_KEYS_PER_NODE_LIMIT);
+
+  private invalidateConfig(nodeId?: string): void {
+    this.configRevision += 1;
+    if (nodeId) this.configCache.delete(nodeId); else this.configCache.clear();
   }
 
   private async getDesiredConfigSync(nodeId: string): Promise<ConfigSyncData> {
-    const cached = this.configCache.get(nodeId);
-    if (cached) return cached;
-    const payload = await this.buildConfigSync(nodeId);
-    this.configCache.set(nodeId, payload);
-    return payload;
+    // 配置变更期间的旧构建不能重新污染缓存，WS 与 HTTP 共用此屏障。
+    while (true) {
+      const cached = this.configCache.get(nodeId);
+      if (cached) return cached;
+      const revision = this.configRevision;
+      const payload = await this.buildConfigSync(nodeId);
+      if (revision !== this.configRevision) continue;
+      const latest = this.configCache.get(nodeId);
+      if (latest) return latest;
+      this.configCache.set(nodeId, payload);
+      return payload;
+    }
   }
 
   private buildProtocolRelayOutbound(
@@ -2500,190 +2483,14 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   }
 
   private buildUpstreamRelayOutbound(
-    line: {
-      id: string;
-      landingEndpointOverrideEnabled?: boolean;
-      landingServerHost?: string | null;
-      landingServerPort?: number | null;
-    },
-    upstreamNode: {
-      protocolType: string;
-      serverHost: string;
-      serverPort: number;
-      paramsJson: string;
-    }
+    line: { id: string; landingEndpointOverrideEnabled?: boolean; landingServerHost?: string | null; landingServerPort?: number | null },
+    upstreamNode: { protocolType: string; serverHost: string; serverPort: number; paramsJson: string }
   ): Record<string, unknown> | undefined {
-    if (!upstreamNode.serverHost || !upstreamNode.serverPort) return undefined;
-    let params: Record<string, unknown> = {};
     try {
-      const parsed: unknown = JSON.parse(upstreamNode.paramsJson || '{}');
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        params = parsed as Record<string, unknown>;
-      }
+      return buildUpstreamOutbound(readUpstreamRelayConnection(line, upstreamNode), `relay-out-${line.id}`);
     } catch {
-      params = {};
+      return undefined;
     }
-
-    const protocolType = String(upstreamNode.protocolType || '').toUpperCase();
-    const hasLandingOverride = Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
-    const targetHost = hasLandingOverride ? line.landingServerHost!.trim() : upstreamNode.serverHost.trim();
-    const targetPort = hasLandingOverride && line.landingServerPort ? line.landingServerPort : upstreamNode.serverPort;
-
-    const tls = (params.tls && typeof params.tls === 'object' && !Array.isArray(params.tls))
-      ? (params.tls as Record<string, unknown>)
-      : undefined;
-    const reality = (tls?.reality && typeof tls.reality === 'object' && !Array.isArray(tls.reality))
-      ? (tls.reality as Record<string, unknown>)
-      : undefined;
-    const explicitServerName = typeof tls?.serverName === 'string' && tls.serverName.trim()
-      ? tls.serverName.trim()
-      : (typeof tls?.server_name === 'string' && tls.server_name.trim()
-          ? tls.server_name.trim()
-          : (Array.isArray(reality?.serverNames) && typeof reality.serverNames[0] === 'string'
-              ? reality.serverNames[0]
-              : undefined));
-    const nodeDomainServerName = isIP(upstreamNode.serverHost.trim()) === 0
-      ? upstreamNode.serverHost.trim()
-      : undefined;
-    const tlsServerName = explicitServerName || nodeDomainServerName;
-
-    const outboundType = protocolType === 'MIXED' || protocolType === 'SOCKS'
-      ? 'socks'
-      : protocolType.toLowerCase();
-    const outbound: Record<string, unknown> = {
-      type: outboundType,
-      tag: `relay-out-${line.id}`,
-      server: targetHost,
-      server_port: targetPort
-    };
-
-    switch (protocolType) {
-      case 'VLESS':
-        outbound.uuid = typeof params.uuid === 'string' ? params.uuid : '';
-        if (typeof params.flow === 'string' && params.flow) outbound.flow = params.flow;
-        if (typeof params.packet_encoding === 'string' && params.packet_encoding) {
-          outbound.packet_encoding = params.packet_encoding;
-        }
-        break;
-      case 'VMESS': {
-        outbound.uuid = typeof params.uuid === 'string' ? params.uuid : '';
-        const rawAlterId = params.alterId ?? params.alter_id ?? 0;
-        outbound.alter_id = typeof rawAlterId === 'number' && Number.isFinite(rawAlterId)
-          ? rawAlterId
-          : (Number(rawAlterId) || 0);
-        outbound.security = typeof params.security === 'string' && params.security ? params.security : 'auto';
-        if (typeof params.packet_encoding === 'string' && params.packet_encoding) {
-          outbound.packet_encoding = params.packet_encoding;
-        }
-        break;
-      }
-      case 'TROJAN':
-        outbound.password = typeof params.password === 'string' ? params.password : '';
-        break;
-      case 'SHADOWSOCKS': {
-        outbound.method = typeof params.method === 'string' && params.method ? params.method : 'aes-256-gcm';
-        outbound.password = typeof params.password === 'string' ? params.password : '';
-        const rawPlugin = typeof params.plugin === 'string' && params.plugin.trim() ? params.plugin.trim() : '';
-        if (rawPlugin) {
-          outbound.plugin = rawPlugin === 'obfs' ? 'obfs-local' : rawPlugin;
-        }
-        const rawPluginOpts = params.plugin_opts ?? params.pluginOpts;
-        if (typeof rawPluginOpts === 'string' && rawPluginOpts.trim()) {
-          outbound.plugin_opts = rawPluginOpts.trim();
-        } else if (rawPluginOpts && typeof rawPluginOpts === 'object' && !Array.isArray(rawPluginOpts)) {
-          const optsObj = rawPluginOpts as Record<string, unknown>;
-          if (rawPlugin === 'obfs' || rawPlugin === 'obfs-local') {
-            const parts: string[] = [];
-            if (optsObj.mode) parts.push(`obfs=${String(optsObj.mode)}`);
-            if (optsObj.host) parts.push(`obfs-host=${String(optsObj.host)}`);
-            if (parts.length) outbound.plugin_opts = parts.join(';');
-          } else {
-            const parts = Object.entries(optsObj)
-              .filter(([, v]) => v !== undefined && v !== null && v !== '')
-              .map(([k, v]) => `${k}=${String(v)}`);
-            if (parts.length) outbound.plugin_opts = parts.join(';');
-          }
-        }
-        if (params.udpOverTcp === true || params.udp_over_tcp === true) {
-          outbound.udp_over_tcp = true;
-        }
-        break;
-      }
-      case 'HYSTERIA2': {
-        outbound.password = typeof params.password === 'string' ? params.password : '';
-        const upMbps = Number(params.upMbps ?? params.up_mbps ?? 0);
-        const downMbps = Number(params.downMbps ?? params.down_mbps ?? 0);
-        if (Number.isFinite(upMbps) && upMbps > 0) outbound.up_mbps = upMbps;
-        if (Number.isFinite(downMbps) && downMbps > 0) outbound.down_mbps = downMbps;
-        if (params.obfs && typeof params.obfs === 'object' && !Array.isArray(params.obfs)) {
-          const obfsObj = params.obfs as Record<string, unknown>;
-          if (typeof obfsObj.password === 'string' && obfsObj.password) {
-            outbound.obfs = {
-              type: typeof obfsObj.type === 'string' && obfsObj.type ? obfsObj.type : 'salamander',
-              password: obfsObj.password
-            };
-          }
-        } else if (typeof params.obfs === 'string' && params.obfs) {
-          const obfsPassword = typeof params.obfsPassword === 'string' ? params.obfsPassword : '';
-          if (obfsPassword) {
-            outbound.obfs = { type: params.obfs, password: obfsPassword };
-          }
-        }
-        break;
-      }
-      case 'TUIC': {
-        outbound.uuid = typeof params.uuid === 'string' ? params.uuid : '';
-        outbound.password = typeof params.password === 'string' ? params.password : '';
-        outbound.congestion_control = typeof params.congestionControl === 'string' && params.congestionControl
-          ? params.congestionControl
-          : (typeof params.congestion_control === 'string' && params.congestion_control ? params.congestion_control : 'bbr');
-        if (params.zeroRttHandshake === true || params.zero_rtt_handshake === true) {
-          outbound.zero_rtt_handshake = true;
-        }
-        if (typeof params.heartbeat === 'string' && params.heartbeat) {
-          outbound.heartbeat = params.heartbeat;
-        }
-        if (typeof params.udp_relay_mode === 'string' && params.udp_relay_mode) {
-          outbound.udp_relay_mode = params.udp_relay_mode;
-        }
-        break;
-      }
-      case 'NAIVE':
-        if (typeof params.username === 'string') outbound.username = params.username;
-        if (typeof params.password === 'string') outbound.password = params.password;
-        break;
-      case 'SOCKS':
-      case 'MIXED':
-        outbound.version = '5';
-        if (typeof params.username === 'string' && params.username) outbound.username = params.username;
-        if (typeof params.password === 'string' && params.password) outbound.password = params.password;
-        break;
-      case 'HTTP':
-        if (typeof params.username === 'string' && params.username) outbound.username = params.username;
-        if (typeof params.password === 'string' && params.password) outbound.password = params.password;
-        break;
-      default:
-        return undefined;
-    }
-
-    const clientTls = buildClientTls(
-      tls as unknown as Parameters<typeof buildClientTls>[0],
-      tlsServerName,
-      protocolType === 'NAIVE' ? { includeAlpn: false, includeInsecure: false } : undefined
-    );
-    if (clientTls) outbound.tls = clientTls;
-
-    const transport = (params.transport && typeof params.transport === 'object' && !Array.isArray(params.transport))
-      ? (params.transport as Record<string, unknown>)
-      : undefined;
-    const transportHost = typeof transport?.host === 'string' ? transport.host : null;
-    const clientTransport = buildClientTransport(
-      transport as unknown as Parameters<typeof buildClientTransport>[0],
-      transportHost
-    );
-    if (clientTransport) outbound.transport = clientTransport;
-
-    return outbound;
   }
 
   private internalRelayTransitUser(): InboundUserCredential {
@@ -2705,8 +2512,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   // 向指定节点推送配置（reload 触发）
   async pushConfig(nodeId: string): Promise<boolean> {
     try {
-      const payload = await this.buildConfigSync(nodeId);
-      this.configCache.set(nodeId, payload);
+      this.invalidateConfig(nodeId);
+      const payload = await this.getDesiredConfigSync(nodeId);
       const socket = this.sockets.get(nodeId);
       if (!socket) {
         const node = await this.prisma.node.findUnique({
@@ -2725,7 +2532,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
   // 用户增删/资格变动时向全部在线节点推送（协议约定见 docs/API_AND_PROTOCOLS.md §2.2）
   async pushConfigToAll(): Promise<number> {
-    this.configCache.clear();
+    this.invalidateConfig();
     const settings = await this.settingsService?.getSettings();
     const debounceMs = settings?.configSyncDebounceMs ?? 250;
     return new Promise((resolve) => {
@@ -2733,10 +2540,10 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       if (this.configPushTimer) clearTimeout(this.configPushTimer);
       this.configPushTimer = setTimeout(() => {
         this.configPushTimer = undefined;
+        const waiters = this.configPushWaiters.splice(0);
         void this.flushConfigToAll().then((count) => {
-          const waiters = this.configPushWaiters.splice(0);
           waiters.forEach((waiter) => waiter(count));
-        });
+        }).catch(() => waiters.forEach((waiter) => waiter(0)));
       }, debounceMs);
     });
   }
@@ -3152,7 +2959,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     this.sockets.clear();
     this.pendingTasks.clear();
     this.taskResults.clear();
-    this.configCache.clear();
+    this.invalidateConfig();
     this.mirrorSessions.clear();
     this.pendingHeartbeats.clear();
     this.versionConfirmations.clear();

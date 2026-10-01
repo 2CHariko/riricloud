@@ -21,6 +21,7 @@ import { MirrorsModule } from './mirrors/mirrors.module';
 import { ProxyPoolModule } from './proxy-pool/proxy-pool.module';
 import { HelpModule } from './help/help.module';
 import { UpstreamModule } from './upstream/upstream.module';
+import { ProbeModule } from './probe/probe.module';
 
 // Web 静态托管在 main.ts 以中间件方式注册（@nestjs/serve-static 与 Express 5 不兼容）
 @Module({
@@ -47,6 +48,7 @@ import { UpstreamModule } from './upstream/upstream.module';
     ProxyPoolModule,
     HelpModule,
     UpstreamModule,
+    ProbeModule,
   ]
 })
 export class AppModule {}

@@ -4,7 +4,7 @@ const common = {
     mainNav: '主导航',
     console: '控制台',
     mySubscription: '我的订阅',
-    directProxy: '直连代理',
+    directProxy: '代理池',
     help: '使用文档',
     market: '套餐市场',
     profile: '个人中心',
@@ -245,6 +245,11 @@ const common = {
     userKickAllDescription: '此操作会使当前在线的所有设备下线。',
     kicking: '处理中…',
     overLimit: '已超出上限'
+  },
+  lineCapabilities: {
+    unmetered: '此线路不计入本地流量账单，上游账户用量由供应方控制。',
+    noLocalLimits: '外部直发不受本地限速、流量配额或在线设备限额控制。',
+    notRevocable: '停权或重置本地凭据不能撤回已经获取的外部连接凭据。'
   },
   userMenu: {
     menuLabel: '用户菜单',

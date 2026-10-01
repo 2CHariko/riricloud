@@ -18,11 +18,11 @@ export function useAdminUpstreamNodes(params?: {
   protocolType?: string;
   tag?: string;
   status?: string;
-  isDirectSub?: boolean;
-}) {
+}, enabled = true) {
   return useQuery({
     queryKey: ['admin-upstream-nodes', params],
-    queryFn: async () => (await upstreamApi.listNodes(params)).data
+    queryFn: async () => (await upstreamApi.listNodes(params)).data,
+    enabled,
   });
 }
 
@@ -46,6 +46,9 @@ export function useAdminUpstreamMutations() {
     onSuccess: () => {
       toast.success(t('admin:upstream.saveSuccess'));
       void queryClient.invalidateQueries({ queryKey: ['admin-upstreams'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'lines'] });
+      void queryClient.invalidateQueries({ queryKey: ['user'] });
     },
     onError: (err) => {
       toast.error(extractErrorMessage(err));
@@ -58,7 +61,8 @@ export function useAdminUpstreamMutations() {
       toast.success(t('admin:upstream.deleteSuccess'));
       void queryClient.invalidateQueries({ queryKey: ['admin-upstreams'] });
       void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-lines'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'lines'] });
+      void queryClient.invalidateQueries({ queryKey: ['user'] });
     },
     onError: (err) => {
       toast.error(extractErrorMessage(err));
@@ -67,28 +71,18 @@ export function useAdminUpstreamMutations() {
 
   const syncMutation = useMutation({
     mutationFn: upstreamApi.sync,
-    onSuccess: () => {
-      toast.success(t('admin:upstream.syncSuccess'));
+    onSuccess: (res) => {
+      toast.success(t('admin:upstream.syncSummary', { ...res.data, ...res.data.diagnostics }));
       void queryClient.invalidateQueries({ queryKey: ['admin-upstreams'] });
       void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-lines'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'lines'] });
+      void queryClient.invalidateQueries({ queryKey: ['user'] });
     },
     onError: (err) => {
       toast.error(extractErrorMessage(err));
     }
   });
 
-  const setNodeDirectSubMutation = useMutation({
-    mutationFn: ({ nodeId, isDirectSub }: { nodeId: string; isDirectSub: boolean }) =>
-      upstreamApi.setNodeDirectSub(nodeId, isDirectSub),
-    onSuccess: () => {
-      toast.success(t('admin:upstream.directSubSuccess'));
-      void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-    },
-    onError: (err) => {
-      toast.error(extractErrorMessage(err));
-    }
-  });
 
   const setNodeStatusMutation = useMutation({
     mutationFn: ({ nodeId, status }: { nodeId: string; status: UpstreamNodeStatus }) =>
@@ -96,50 +90,20 @@ export function useAdminUpstreamMutations() {
     onSuccess: () => {
       toast.success(t('admin:upstream.statusSuccess'));
       void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-lines'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'lines'] });
+      void queryClient.invalidateQueries({ queryKey: ['user'] });
     },
     onError: (err) => {
       toast.error(extractErrorMessage(err));
     }
   });
 
-  const probeNodeMutation = useMutation({
-    mutationFn: upstreamApi.probeNode,
-    onSuccess: (res) => {
-      const probe = res.data.probe;
-      if (probe.status === 'SUCCESS') {
-        toast.success(t('admin:upstream.probeSuccess', { latency: probe.latencyMs ?? 0 }));
-      } else if (probe.status === 'TIMEOUT') {
-        toast.warning(t('admin:upstream.probeTimeout'));
-      } else {
-        toast.error(t('admin:upstream.probeError', { error: probe.message || '' }));
-      }
-      void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-    },
-    onError: (err) => {
-      toast.error(extractErrorMessage(err));
-    }
-  });
-
-  const probeAllMutation = useMutation({
-    mutationFn: upstreamApi.probeAll,
-    onSuccess: (res) => {
-      toast.success(t('admin:upstream.allTested', { total: res.data.tested }));
-      void queryClient.invalidateQueries({ queryKey: ['admin-upstream-nodes'] });
-    },
-    onError: (err) => {
-      toast.error(extractErrorMessage(err));
-    }
-  });
 
   return {
     createMutation,
     updateMutation,
     deleteMutation,
     syncMutation,
-    setNodeDirectSubMutation,
-    setNodeStatusMutation,
-    probeNodeMutation,
-    probeAllMutation
+    setNodeStatusMutation
   };
 }

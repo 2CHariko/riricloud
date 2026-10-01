@@ -355,7 +355,7 @@ export class UpdateSettingsDto {
   @IsOptional()
   lineSpeedtestIntervalMins?: number;
 
-  @ApiPropertyOptional({ example: 'http://cp.cloudflare.com/generate_204', nullable: true })
+  @ApiPropertyOptional({ example: 'https://cp.cloudflare.com/generate_204', nullable: true })
   @ValidateIf((o) => o.lineSpeedtestTargetUrl !== undefined && o.lineSpeedtestTargetUrl !== null && o.lineSpeedtestTargetUrl !== '')
   @IsUrl(HTTP_URL_OPTIONS)
   @IsOptional()
@@ -368,6 +368,11 @@ export class UpdateSettingsDto {
   @Max(30000)
   @IsOptional()
   lineSpeedtestTimeoutMs?: number;
+
+  @ApiPropertyOptional({ example: true, description: '仅能力白名单不支持 Mihomo 时允许兼容拨测' })
+  @IsBoolean()
+  @IsOptional()
+  probeSingboxFallbackEnabled?: boolean;
 
   @ApiPropertyOptional({ example: 'Asia/Shanghai', description: '系统统一时区，标准 IANA 时区标识符' })
   @IsString()

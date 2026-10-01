@@ -1,3 +1,4 @@
+import type { ProbeResult } from '@/lib/probe-types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, extractErrorMessage } from '@/lib/api';
@@ -28,15 +29,19 @@ export interface UserSubscription { id: string; status: 'ACTIVE' | 'CANCELED' | 
 export interface UserLine {
   id: string;
   name: string;
+  type: 'DIRECT' | 'RELAY' | 'EXTERNAL';
+  status: 'ACTIVE' | 'DISABLED';
+  serverHost: string;
+  serverPort: number;
+  capabilities: { trafficMetered: boolean; localLimitsSupported: boolean; credentialRevocable: boolean };
   protocolType: string;
   trafficRate: number;
   speedLimitMbps?: number | null;
+  lastProbe?: ProbeResult | null;
   lastLatencyMs?: number | null;
   lastTestedAt?: string | null;
   lastTestStatus?: string | null;
   lastTestMessage?: string | null;
-  entryNode?: { name?: string; status: string };
-  landingNode?: { name?: string; status: string } | null;
 }
 
 export interface PlanClaim {

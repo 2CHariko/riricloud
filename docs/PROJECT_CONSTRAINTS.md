@@ -16,10 +16,12 @@
 | 持久化 | SQLite (WAL) + Prisma ORM |
 | 实时通信 | `@nestjs/websockets` + `ws`（WSS） |
 | 边缘节点 | Go ≥ 1.26（`CGO_ENABLED=0` 单静态二进制，内置 Cobra CLI、Bubble Tea TUI 与系统服务适配） |
-| 代理内核 | Sing-box |
+| 代理内核 | 服务端 Sing-box；主客户端配置/验证/拨测 Mihomo，Sing-box 客户端限明确能力白名单兼容回退 |
 | Node.js / pnpm 版本 | Node ≥ 20，pnpm ≥ 9 |
 
 在既有选型内新增**小型**辅助库不受限，但须遵守 [CODE_REVIEW.md](./CODE_REVIEW.md) §4 的依赖说明义务。
+
+客户端职责分离不改变 Agent 数据平面或外部服务零依赖。Mihomo 在 Master 上作为受管临时子进程，仅回环控制与代理端口；禁止因网络/鉴权/配置/环境失败静默回退 Sing-box，回退必须记录原因、实际内核与版本。只有真实代理请求满足目标响应与证书契约才能称为端到端测速成功；TCP 可达性不能代替。
 
 ### 1.1 Linux 开发环境与工具安装
 

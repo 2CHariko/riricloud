@@ -21,7 +21,7 @@ export const PROTOCOL_TYPES = [
 ] as const;
 export type ProtocolType = (typeof PROTOCOL_TYPES)[number];
 
-export const LINE_TYPES = ['DIRECT', 'RELAY'] as const;
+export const LINE_TYPES = ['DIRECT', 'RELAY', 'EXTERNAL'] as const;
 export type LineType = (typeof LINE_TYPES)[number];
 
 export const RELAY_MODES = ['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE', 'UPSTREAM_NODE'] as const;

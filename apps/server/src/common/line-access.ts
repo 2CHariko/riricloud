@@ -26,9 +26,10 @@ export function matchesPlanLine(plan: PlanLineRule, line: AccessLine): boolean {
     const tags = new Set(parseStringArray(line.tagsJson));
     return parseStringArray(plan.lineTagsJson).some((tag) => tags.has(tag));
   }
-  return true;
+  return plan.lineMatchMode === 'ALL';
 }
 
 export function isLineAuthorized(plan: PlanLineRule, line: AccessLine, extraLineIds: string[] = []): boolean {
+  if (line.status !== undefined && line.status !== 'ACTIVE') return false;
   return extraLineIds.includes(line.id) || (line.isPublic !== false && matchesPlanLine(plan, line));
 }

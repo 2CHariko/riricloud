@@ -45,6 +45,10 @@ if (!process.env.TELEMETRY_DATABASE_URL) {
   }
 }
 
+const { normalizeSqliteUrl } = require('./sqlite-url');
+process.env.DATABASE_URL = normalizeSqliteUrl(mainUrl, __dirname);
+process.env.TELEMETRY_DATABASE_URL = normalizeSqliteUrl(process.env.TELEMETRY_DATABASE_URL, path.join(__dirname, 'telemetry'));
+
 const prismaCli = path.resolve(__dirname, '..', 'node_modules', 'prisma', 'build', 'index.js');
 
 function runPrisma(args) {
@@ -62,16 +66,21 @@ function runPrisma(args) {
   }
 }
 
-// 1. 部署观测库迁移
-runPrisma(['migrate', 'deploy', '--schema=prisma/telemetry/schema.prisma']);
-
-// 2. 存量时序与日志数据无损搬移
-const { migrateTelemetryData } = require('./migrate-telemetry-data');
-migrateTelemetryData()
-  .catch((err) => {
+async function deploy() {
+  // 必须在任何主库/观测库变更前拒绝旧上游数据，不自动清理或转换。
+  const { runUpstreamUpgradePreflight } = require('./upstream-upgrade-preflight');
+  await runUpstreamUpgradePreflight(process.env.DATABASE_URL);
+  runPrisma(['migrate', 'deploy', '--schema=prisma/telemetry/schema.prisma']);
+  const { migrateTelemetryData } = require('./migrate-telemetry-data');
+  try {
+    await migrateTelemetryData();
+  } catch (err) {
     console.warn(`[telemetry-migration] Migration check error: ${err.message}`);
-  })
-  .finally(() => {
-    // 3. 部署主业务库迁移
-    runPrisma(['migrate', 'deploy']);
-  });
+  }
+  runPrisma(['migrate', 'deploy']);
+}
+
+deploy().catch((err) => {
+  console.error(`[database-deploy] ${err.message}`);
+  process.exitCode = 1;
+});

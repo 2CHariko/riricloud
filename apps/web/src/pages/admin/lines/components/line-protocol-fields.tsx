@@ -2,10 +2,12 @@ import type { UseFormReturn } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { FieldGrid, SelectField, SwitchField, TextField } from './line-form-controls';
 import type { LineFormValues } from './line-form-schema';
+import { requiresUpstreamUserAuth } from './proxy-pool-line-capabilities';
 
 export function LineProtocolFields({ form }: { form: UseFormReturn<LineFormValues> }) {
   const { t } = useTranslation(['admin']);
   const protocol = form.watch('protocolType');
+  const authRequired = requiresUpstreamUserAuth(form.watch());
   return <div className="space-y-3">
     {protocol === 'VLESS' && (
       <TextField
@@ -77,6 +79,7 @@ export function LineProtocolFields({ form }: { form: UseFormReturn<LineFormValue
       <SwitchField form={form} name="localAllowLan" label={t('admin:lineForm.localAllowLan')} />
       <SwitchField form={form} name="localUsersEnabled" label={t('admin:lineForm.localUsersEnabled')} />
     </FieldGrid>}
+    {authRequired && <p className="text-sm text-destructive">{t('admin:lineForm.upstreamUsersRequired')}</p>}
     {protocol === 'DIRECT' && <FieldGrid>
       <TextField form={form} name="directOverrideAddress" label={t('admin:lineForm.directOverrideAddress')} placeholder={t('admin:lineForm.directOverrideAddressPlaceholder')} />
       <TextField form={form} name="directOverridePort" label={t('admin:lineForm.directOverridePort')} type="number" placeholder={t('admin:lineForm.directOverridePortPlaceholder')} />

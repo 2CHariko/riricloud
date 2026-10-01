@@ -1,3 +1,4 @@
+import { assertEgressOverride, egressOverrideConflict } from '../common/line-egress';
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { AgentService, type UpgradeTaskOptions } from '../agent-gateway/agent.service';
@@ -354,6 +355,10 @@ export class NodesService {
       data.configOverride = dto.configOverride === null || dto.configOverride.trim() === ''
         ? null
         : this.validateConfigOverride(dto.configOverride);
+      if (egressOverrideConflict(data.configOverride)) {
+        const egressLine = await this.prisma.line.findFirst({ where: { egressProxyJson: { not: null }, OR: [{ type: 'DIRECT', entryNodeId: id }, { type: 'RELAY', relayMode: { in: ['BLIND_FORWARD', 'PROTOCOL_PROXY'] }, landingNodeId: id }] }, select: { id: true } });
+        if (egressLine) assertEgressOverride(data.configOverride, egressLine.id);
+      }
     }
     if (dto.communicationMode !== undefined) data.communicationMode = dto.communicationMode;
     if (dto.pollIntervalSecs !== undefined) data.pollIntervalSecs = dto.pollIntervalSecs;
@@ -612,6 +617,7 @@ export class NodesService {
 
   private sanitize(node: NodeWithLines): Record<string, unknown> {
     const { entryLines, landingLines, lastProbeResult, capabilitiesJson, agentToken: _agentToken, agentTokenHash: _agentTokenHash, ...rest } = node;
+    const safeRelation = (line: (typeof entryLines)[number] | (typeof landingLines)[number]) => ({ ...line, egressProxyJson: undefined, ...('targetLine' in line ? { targetLine: line.targetLine ? { ...line.targetLine, egressProxyJson: undefined } : null } : {}) });
     const toLine = (line: (typeof entryLines)[number] | (typeof landingLines)[number], role: 'DIRECT' | 'TRANSIT' | 'LANDING') => ({
       id: line.id,
       name: line.name,
@@ -637,13 +643,14 @@ export class NodesService {
       role,
       entryNode: 'entryNode' in line ? line.entryNode : undefined,
       landingNode: 'landingNode' in line ? line.landingNode : undefined,
-      targetLine: 'targetLine' in line ? line.targetLine : undefined
+      targetLine: 'targetLine' in line && line.targetLine ? { ...line.targetLine, egressProxyJson: undefined } : undefined
     });
 
     const linesMap = new Map<string, ReturnType<typeof toLine>>();
     const servicePorts: Array<{ lineId: string; lineName: string; protocolType: string; role: 'DIRECT' | 'TRANSIT' | 'LANDING'; port: number }> = [];
 
     for (const line of entryLines) {
+      if (line.type === 'EXTERNAL' || line.entryPort === null) continue;
       if (line.type === 'DIRECT') {
         const item = toLine(line, 'DIRECT');
         linesMap.set(line.id, item);
@@ -678,8 +685,8 @@ export class NodesService {
       supportsAgentLogRotation: capabilities.includes('agent_log_rotation'),
       lastProbeResult: this.parseJson(lastProbeResult),
       lines,
-      entryLines,
-      landingLines,
+      entryLines: entryLines.map(safeRelation),
+      landingLines: landingLines.map(safeRelation),
       servicePorts
     };
   }

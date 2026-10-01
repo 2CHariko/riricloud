@@ -1,18 +1,17 @@
-import * as os from 'node:os';
-import * as path from 'node:path';
-import * as fs from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { parseDocument } from 'yaml';
 import { SETTING_KEYS, SettingsService } from '../system/settings.service';
 import { LinesService } from '../lines/lines.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTemplateDto } from './dto/create-template.dto';
-import { PreviewTemplateDto, type SingboxCheckResult, type MihomoCheckResult } from './dto/preview-template.dto';
+import { PreviewTemplateDto } from './dto/preview-template.dto';
+import { ClientKernelsService } from '../client-kernels/client-kernels.service';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 import { buildClashYaml, buildSingboxJson, type SubLine, type SubUser, type SubscriptionTemplateConfig } from '../subscription/builders';
 
+import { bindManagedConnection } from '../subscription/compilers/managed-connection';
+import { getProxyCapabilities } from '../common/proxy-capabilities';
 type TemplateViewInput = {
   id: string;
   name: string;
@@ -39,8 +38,9 @@ function parseJson<T>(value: string, fallback: T): T {
 export class TemplatesService {
   constructor(
     private readonly prisma: PrismaService,
-    @Optional() private readonly settingsService?: SettingsService,
-    @Optional() private readonly linesService?: LinesService
+    @Optional() @Inject(SettingsService) private readonly settingsService: SettingsService | undefined,
+    @Optional() @Inject(LinesService) private readonly linesService: LinesService | undefined,
+    private readonly kernels: ClientKernelsService
   ) {}
 
   async create(dto: CreateTemplateDto) {
@@ -128,21 +128,20 @@ export class TemplatesService {
       email: 'preview@riricloud.local',
       credential: 'preview-credential'
     };
+    const warnings: string[] = [];
+    const engine = dto.format === 'clash' ? 'mihomo' : 'singbox';
+    const compatible = sources.filter((line) => {
+      const connection = line.externalConnection ?? bindManagedConnection({ protocolType: line.protocolType ?? 'VLESS', serverHost: line.serverHost, serverPort: line.serverPort, params: line.params ?? {}, lineId: line.id, serverName: line.serverName ?? undefined, host: line.host ?? undefined }, user);
+      const capability = getProxyCapabilities(connection)[engine];
+      if (!capability.supported) warnings.push(`PREVIEW_NODE_OMITTED:${line.id ?? 'unknown'}:${capability.reason}`);
+      return capability.supported;
+    });
     const content = dto.format === 'clash'
-      ? buildClashYaml(user, sources, template)
-      : buildSingboxJson(user, sources, template);
-    const stats = this.previewStats(dto.format, content, sources.length);
-    const clashContent = dto.format === 'clash'
-      ? content
-      : buildClashYaml(user, sources, template);
-    const singboxContent = dto.format === 'singbox'
-      ? content
-      : buildSingboxJson(user, sources, template);
-    const [singboxCheck, mihomoCheck] = await Promise.all([
-      this.checkSingboxConfig(singboxContent),
-      this.checkMihomoConfig(clashContent)
-    ]);
-    return { format: dto.format, content, stats, warnings: [] as string[], singboxCheck, mihomoCheck };
+      ? buildClashYaml(user, compatible, template)
+      : buildSingboxJson(user, compatible, template);
+    const stats = { ...this.previewStats(dto.format, content, compatible.length), totalNodes: sources.length };
+    const kernelCheck = await this.kernels.validate(dto.format === 'clash' ? 'MIHOMO' : 'SINGBOX', content);
+    return { format: dto.format, content, stats, warnings, kernelCheck };
   }
 
   async remove(id: string) {
@@ -197,7 +196,7 @@ export class TemplatesService {
     return this.mockPreviewSources();
   }
 
-  private toSubLine(line: Record<string, unknown>): SubLine {
+  private toSubLine(line: Awaited<ReturnType<LinesService['getAvailableForPlan']>>[number]): SubLine {
     return {
       id: typeof line.id === 'string' ? line.id : undefined,
       name: typeof line.name === 'string' ? line.name : 'Preview line',
@@ -212,7 +211,8 @@ export class TemplatesService {
       tags: Array.isArray(line.tags) ? line.tags.filter((tag): tag is string => typeof tag === 'string') : [],
       level: typeof line.level === 'number' ? line.level : 0,
       protocolType: typeof line.protocolType === 'string' ? line.protocolType as SubLine['protocolType'] : 'VLESS',
-      params: line.params && typeof line.params === 'object' && !Array.isArray(line.params) ? line.params as Record<string, unknown> : {}
+      params: line.params,
+      externalConnection: line.externalConnection
     };
   }
 
@@ -313,139 +313,4 @@ export class TemplatesService {
     };
   }
 
-  private cachedSingboxPath: string | null = null;
-  private singboxBinaryChecked = false;
-
-  private async resolveSingboxBinary(): Promise<string | null> {
-    if (this.singboxBinaryChecked) return this.cachedSingboxPath;
-    this.singboxBinaryChecked = true;
-
-      const arch = process.arch === 'x64' ? 'amd64' : process.arch;
-      const isWindows = process.platform === 'win32';
-      const candidates = [
-        process.env.SINGBOX_BINARY_PATH,
-        '/usr/local/bin/sing-box',
-        `/app/binaries/singbox-linux-${arch}`,
-        path.resolve(process.cwd(), 'binaries', isWindows ? `singbox-windows-${arch}.exe` : `singbox-linux-${arch}`),
-        path.resolve(process.cwd(), '.tools/sing-box', isWindows ? 'sing-box.exe' : 'sing-box'),
-        path.resolve(process.cwd(), '../../.tools/sing-box', isWindows ? 'sing-box.exe' : 'sing-box')
-    ].filter((p): p is string => Boolean(p));
-
-    for (const candidate of candidates) {
-      try {
-        const stat = await fs.stat(candidate);
-        if (stat.isFile()) {
-          this.cachedSingboxPath = candidate;
-          return candidate;
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    this.cachedSingboxPath = null;
-    return null;
-  }
-
-  private async checkSingboxConfig(configJson: string): Promise<SingboxCheckResult> {
-    const bin = await this.resolveSingboxBinary();
-    if (!bin) {
-      return { executed: false, passed: true, message: '主控未挂载 sing-box 二进制，已通过结构语法校验' };
-    }
-
-    const tmpDir = path.resolve(os.tmpdir());
-    const tmpFile = path.join(tmpDir, `riri-singbox-check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
-    try {
-      await fs.writeFile(tmpFile, configJson, 'utf-8');
-      return await new Promise((resolve) => {
-        execFile(bin, ['check', '-c', tmpFile, '--disable-color'], { timeout: 5000 }, (error, stdout, stderr) => {
-          if (error) {
-            const rawOutput = (stderr || stdout || error.message).trim();
-            // eslint-disable-next-line no-control-regex
-            const cleanOutput = rawOutput.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
-            resolve({ executed: true, passed: false, message: cleanOutput });
-          } else {
-            resolve({ executed: true, passed: true, message: 'Sing-box 内核配置校验通过' });
-          }
-        });
-      });
-    } catch (err) {
-      return { executed: true, passed: false, message: (err as Error).message };
-    } finally {
-      await fs.unlink(tmpFile).catch(() => {});
-    }
-  }
-
-  private cachedMihomoPath: string | null = null;
-  private mihomoBinaryChecked = false;
-
-  private async resolveMihomoBinary(): Promise<string | null> {
-    if (this.mihomoBinaryChecked) return this.cachedMihomoPath;
-    this.mihomoBinaryChecked = true;
-
-      const arch = process.arch === 'x64' ? 'amd64' : process.arch;
-      const isWindows = process.platform === 'win32';
-      const candidates = [
-      process.env.MIHOMO_BINARY_PATH,
-      process.env.CLASH_BINARY_PATH,
-      '/usr/local/bin/mihomo',
-      '/usr/local/bin/clash-meta',
-      `/app/binaries/mihomo-linux-${arch}`,
-        path.resolve(process.cwd(), 'binaries', isWindows ? `mihomo-windows-${arch}.exe` : `mihomo-linux-${arch}`),
-        path.resolve(process.cwd(), '.tools/mihomo', isWindows ? 'mihomo.exe' : 'mihomo'),
-        path.resolve(process.cwd(), '../../.tools/mihomo', isWindows ? 'mihomo.exe' : 'mihomo')
-    ].filter((p): p is string => Boolean(p));
-
-    for (const candidate of candidates) {
-      try {
-        const stat = await fs.stat(candidate);
-        if (stat.isFile()) {
-          this.cachedMihomoPath = candidate;
-          return candidate;
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    this.cachedMihomoPath = null;
-    return null;
-  }
-
-  private async checkMihomoConfig(configYaml: string): Promise<MihomoCheckResult> {
-    const bin = await this.resolveMihomoBinary();
-    if (!bin) {
-      return { executed: false, passed: true, message: '主控未挂载 mihomo 内核，已通过结构语法校验' };
-    }
-
-    // 纯分析诊断模式：在内核测试前将 GEOSITE/GEOIP 规则安全替换为等价的 DOMAIN-SUFFIX/IP-CIDR 规则，
-    // 既能让 Mihomo 完整验证 YAML 语法、代理协议配置、策略组引用及规则目标，
-    // 又彻底避免因缺少本地 geodata 而触发公网下载 GeoSite.dat/GeoIP.dat 及超时中断。
-    const sanitizedYaml = configYaml
-      .replace(/^([ \t]*-[ \t]*)(['"]?)(?:GEOSITE|geosite)[ \t]*,[ \t]*([^,'"\r\n]+)[ \t]*,[ \t]*([^'"\r\n]+)\2/gim, '$1DOMAIN-SUFFIX,dummy-$3.local,$4')
-      .replace(/^([ \t]*-[ \t]*)(['"]?)(?:GEOIP|geoip)[ \t]*,[ \t]*([^,'"\r\n]+)[ \t]*,[ \t]*([^'"\r\n]+)\2/gim, '$1IP-CIDR,198.18.0.1/32,$4');
-
-    const tmpDir = path.resolve(os.tmpdir(), `riri-mihomo-check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-    const tmpFile = path.join(tmpDir, 'config.yaml');
-    try {
-      await fs.mkdir(tmpDir, { recursive: true });
-      await fs.writeFile(tmpFile, sanitizedYaml, 'utf-8');
-      return await new Promise((resolve) => {
-        execFile(bin, ['-t', '-d', tmpDir, '-f', tmpFile], { timeout: 5000 }, (error, stdout, stderr) => {
-          if (error) {
-            const rawOutput = (stderr || stdout || error.message).trim();
-            // eslint-disable-next-line no-control-regex
-            const cleanOutput = rawOutput.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
-            resolve({ executed: true, passed: false, message: cleanOutput });
-          } else {
-            resolve({ executed: true, passed: true, message: 'Mihomo 内核配置校验通过' });
-          }
-        });
-      });
-    } catch (err) {
-      return { executed: true, passed: false, message: (err as Error).message };
-    } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-    }
-  }
 }

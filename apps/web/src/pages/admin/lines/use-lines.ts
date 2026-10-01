@@ -3,21 +3,50 @@ import { toast } from 'sonner';
 import i18n from '@/i18n/config';
 import { api, extractErrorMessage, type ApiLine, type LineStatus, type LineType, type ProtocolType, type RelayMode } from '@/lib/api';
 
+import type { EgressProxyPayload } from '@/lib/api';
 export type { ApiLine as AdminLine };
 
-export interface LinePayload {
+interface LineAttributes {
   name: string;
   tag?: string | null;
+  tags?: string[];
+  level?: number;
+  sortOrder?: number;
+  isPublic?: boolean;
+  status?: LineStatus;
+}
+
+export interface ExternalLinePayload extends LineAttributes {
+  type: 'EXTERNAL';
+  upstreamNodeId: string;
+  egressProxy?: null;
+}
+
+export interface ManagedLinePayload extends LineAttributes {
   listen?: string;
-  type: LineType;
+  type: 'DIRECT' | 'RELAY';
   protocolType: ProtocolType;
+  proxyPoolEnabled: boolean;
   params: Record<string, unknown>;
+  egressProxy?: EgressProxyPayload | null;
   relayMode?: RelayMode | null;
   targetLineId?: string | null;
+  upstreamNodeId?: string | null;
   entryNodeId: string;
   entryPort?: number | null;
   landingNodeId?: string | null;
   landingPort?: number | null;
+  speedLimitMbps?: number | null;
+  tcpFastOpen?: boolean;
+  tcpMultiPath?: boolean;
+  udpFragment?: boolean;
+  udpTimeout?: string | null;
+  proxyProtocol?: boolean;
+  proxyProtocolAcceptNoHeader?: boolean;
+  allowLanAccess?: boolean;
+  tunnelType?: string | null;
+  tunnelPort?: number | null;
+  tunnelSecret?: string | null;
   certificateId?: string | null;
   endpointOverrideEnabled?: boolean;
   serverHost?: string | null;
@@ -35,46 +64,41 @@ export interface LinePayload {
   status?: LineStatus;
 }
 
+export type LinePayload = ManagedLinePayload | ExternalLinePayload;
+
 export interface LineQuery {
+  page?: number;
+  pageSize?: number;
   search?: string;
   type?: LineType;
   status?: LineStatus;
   tag?: string;
 }
 
-export interface SpeedTestStage {
-  id: 'master_ready' | 'entry_handshake' | 'relay_transit' | 'target_http';
-  name: string;
-  target: string;
-  status: 'SUCCESS' | 'FAILED' | 'SKIPPED';
-  latencyMs?: number | null;
-  message?: string;
-}
-
-export interface SpeedTestExecutionResult {
-  lineId: string;
-  lineName: string;
-  latencyMs: number | null;
-  status: 'SUCCESS' | 'TIMEOUT' | 'ERROR';
-  message: string;
-  testedAt: string;
-  mode: 'END_TO_END' | 'TCP_HANDSHAKE';
-  targetUrl: string;
-  protocolType: string;
-  topology: {
-    isRelay: boolean;
-    relayMode?: string | null;
-    masterHost: string;
-    entryNode: { id: string; name: string; host: string; port: number };
-    landingNode?: { id: string; name: string; host: string; port?: number | null } | null;
-  };
-  stages: SpeedTestStage[];
-}
 
 export function useAdminLines(query: LineQuery = {}) {
   return useQuery({
     queryKey: ['admin', 'lines', query],
-    queryFn: async () => (await api.get<{ data: ApiLine[]; total: number }>('/admin/lines', { params: { ...query, page: 1, pageSize: 100 } })).data
+    queryFn: async () => (await api.get<{ data: ApiLine[]; total: number; page: number; pageSize: number }>('/admin/lines', { params: { page: 1, pageSize: 20, ...query } })).data
+  });
+}
+
+export function useLineOptions(enabled = true) {
+  return useQuery({
+    queryKey: ['admin', 'lines', 'options'], enabled,
+    queryFn: async () => {
+      const data: ApiLine[] = [];
+      let page = 1;
+      let total = 0;
+      do {
+        const response = (await api.get<{ data: ApiLine[]; total: number; page: number; pageSize: number }>('/admin/lines', { params: { page, pageSize: 100 } })).data;
+        data.push(...response.data);
+        total = response.total;
+        if (response.data.length === 0) break;
+        page++;
+      } while (data.length < total);
+      return { data, total };
+    }
   });
 }
 
@@ -85,6 +109,7 @@ export function useLineMutations() {
     void queryClient.invalidateQueries({ queryKey: ['admin', 'nodes'] });
     void queryClient.invalidateQueries({ queryKey: ['admin', 'plans'] });
     void queryClient.invalidateQueries({ queryKey: ['user'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin', 'proxy-pool'] });
   };
   const onError = (error: unknown, fallback: string) => toast.error(extractErrorMessage(error, fallback));
   const create = useMutation({
@@ -122,27 +147,7 @@ export function useLineMutations() {
     onSuccess: () => { toast.success(i18n.t('admin:lines.reorderSuccess')); invalidate(); },
     onError: (error: unknown) => onError(error, i18n.t('admin:lines.reorderFailed'))
   });
-  const speedtest = useMutation({
-    mutationFn: async (id: string) => (await api.post<SpeedTestExecutionResult>(`/admin/lines/${id}/speedtest`, {}, { timeout: 45_000 })).data,
-    onSuccess: (data) => {
-      if (data.status === 'SUCCESS') {
-        toast.success(i18n.t('admin:lines.speedtestSuccess', { latency: data.latencyMs ?? '—' }));
-      } else {
-        toast.error(i18n.t('admin:lines.speedtestFailed', { message: data.message }));
-      }
-      invalidate();
-    },
-    onError: (error: unknown) => onError(error, i18n.t('admin:lines.speedtestRequestFailed'))
-  });
-  const speedtestAll = useMutation({
-    mutationFn: async () => (await api.post<{ total: number; success: number; failed: number }>('/admin/lines/speedtest-all', {}, { timeout: 120_000 })).data,
-    onSuccess: (data) => {
-      toast.success(i18n.t('admin:lines.speedtestAllSuccess', { total: data.total, success: data.success, failed: data.failed }));
-      invalidate();
-    },
-    onError: (error: unknown) => onError(error, i18n.t('admin:lines.speedtestAllFailed'))
-  });
-  return { create, update, remove, duplicate, testResolve, batchStatus, reorder, speedtest, speedtestAll };
+  return { create, update, remove, duplicate, testResolve, batchStatus, reorder };
 }
 
 export function useRealityKeypair() {

@@ -302,12 +302,13 @@ model Line {
   name            String
   tag             String?
   listen          String   @default("0.0.0.0")
-  type            String   @default("DIRECT") // DIRECT | RELAY
+  type            String   @default("DIRECT") // DIRECT | RELAY | EXTERNAL
   relayMode       String? // BLIND_FORWARD | PROTOCOL_PROXY | TARGET_LINE | UPSTREAM_NODE
   protocolType    String   @default("VLESS") // ProtocolType
   paramsJson      String   @default("{}") // 协议专属参数 JSON；Reality 私钥按应用层 AES-GCM 加密保存
-  entryNodeId     String
-  entryPort       Int
+  egressProxyJson  String? // 最终落地 HTTP/SOCKS5 出站整段 AES-GCM 密文；null 默认出站
+  entryNodeId     String? // DIRECT/RELAY 必填，EXTERNAL 必须为空
+  entryPort       Int?    // EXTERNAL 不分配端口
   landingNodeId   String?  // 普通中继落地节点；直连与 TARGET_LINE 为 null
   landingPort     Int?     // 普通中继落地监听端口；直连与 TARGET_LINE 为 null
   targetLineId    String? // TARGET_LINE 模式引用的其他节点直连线路
@@ -344,13 +345,13 @@ model Line {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  entryNode     Node @relation("LineEntryNode", fields: [entryNodeId], references: [id], onDelete: Cascade)
+  entryNode     Node? @relation("LineEntryNode", fields: [entryNodeId], references: [id], onDelete: Cascade)
   landingNode   Node? @relation("LineLandingNode", fields: [landingNodeId], references: [id], onDelete: Cascade)
   targetLine    Line? @relation("LineRelayTarget", fields: [targetLineId], references: [id], onDelete: Restrict)
   relaySources  Line[] @relation("LineRelayTarget")
   certificate   Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
-  upstreamNodeId String?  // UPSTREAM_NODE 模式引用的外部上游节点
-  upstreamNode  UpstreamNode? @relation(\"LineUpstreamNode\", fields: [upstreamNodeId], references: [id], onDelete: SetNull)
+  upstreamNodeId String?  // UPSTREAM_NODE 中继与 EXTERNAL 必填
+  upstreamNode  UpstreamNode? @relation("LineUpstreamNode", fields: [upstreamNodeId], references: [id], onDelete: SetNull)
 
   @@index([entryNodeId])
   @@index([landingNodeId])
@@ -1002,7 +1003,7 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 | `id` | String (UUID) | 凭据主键 |
 | `userId` | String | 归属用户；`User` 删除时 `onDelete: Cascade` 级联删除 |
 | `name` | String | 凭据备注名称，服务端清洗首尾空白并限制 ≤60 字符（如“爬虫项目 A”“AdsPower 环境 3”） |
-| `username` | String @unique | 高熵用户名，固定形态 `pk_<24 位小写十六进制>`（96 bit 熵）。**必须冒号安全**：Sing-box `mixed`/`socks`/`http` 入站的认证用户名会同时出现在 SOCKS5 用户名长度前缀与 HTTP `Proxy-Authorization` Basic 头中，而后者按首个 `:` 切分，因此不得追加 `::lineId` 后缀 |
+| `username` | String @unique | 原始Key标识 `pk_<24hex>`（96bit熵），不再直接登录；每线路派生 `pk_line_` +Base64URL规范JSON `[原始Key,lineId]`，冒号安全、长度≤255，不修改原字段或密码/Token |
 | `password` | String | 该凭据独立密码，24 字节 base64url（192 bit 熵）。因 Sing-box 入站校验需要，落库为明文（与 `User.password` 同口径）；可随时轮换 |
 | `whitelistIps` | String | 逗号分隔的 IP/CIDR 白名单，空串表示不限制来源；单条须为合法 IPv4/IPv6 地址或 CIDR（IPv4 前缀 0~32、IPv6 前缀 0~128），最多 64 条 |
 | `exportToken` | String @unique | 免登录动态拉取令牌，默认 `uuid()`；用于 `GET /api/v1/user/proxy-pool/export?token=`，可独立轮换且不影响代理密码 |
@@ -1018,14 +1019,14 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 - `User 1 ── n ProxyKey`（`onDelete: Cascade`）：账号删除时凭据一并清除。
 - `ProxyKey 1 ── n TrafficLog`（关系名 `ProxyKeyTrafficLogs`，`onDelete: SetNull`）：凭据删除后历史流水保留并置空 `proxyKeyId`，不影响主账户与线路维度的历史统计。
 - `TrafficLog.proxyKeyId` 为可空外键：订阅体系产生的流水为 `null`，直连代理池流量在 `pk_` 凭据经 `ProxyKey.username` 映射回 `userId` 后写入归属凭据。
-- 线路维度归属不变：直连代理流水的 `lineId` 由节点级活动线路解析（`resolveActiveLineForNode`）填充，因此同样参与线路倍率折算与线路排行统计。
+- 新代理池流水从派生用户名精确解码Key与lineId，验证线路属于上报节点入口后应用该线路倍率，不回退节点首线路。未知/跨节点/非法新身份只推进安全游标、不误计其他线路。旧裸Key迟到累计使用既有游标和兼容归属，不重置或重写历史。
 
 ### 7.3 生命周期与一致性
 
 1. **创建**：用户名在 `pk_` 命名空间内以 5 次重试规避唯一约束冲突（Prisma `P2002`）；单账号凭据上限 20 条。
-2. **注入**：`buildConfigSync` 只注入 `isActive = true` 且归属用户仍具备订阅资格（账号启用、邮箱核验通过、未超额、未过期）的凭据，单节点上限 512 条。
-3. **账务**：心跳累计快照的增量在同一 SQLite 事务内写入 `TrafficLog`、累加 `User` / `Subscription` / `ProxyKey` 用量并刷新 `lastUsedAt`；任一环节失败整批回滚。
-4. **熔断**：本批次入账后触及配额的账号触发全局 `config_sync`，凭据与订阅凭证在数秒内同步吊销；管理端启停/删除凭据同样即时重下发。
+2. **注入**：独立 `ProxyPoolAccessService` 复用订阅资格/有效套餐快照/额外授权与线路/上游可用性，按Key createdAt/id再Line createdAt/id分配每节点最多512个Key-Line绑定；列表/导出/Agent同源，容量排除明确反馈，不截断后仍导出。
+3. **账务**：累计快照增量在既有短事务累加User/Subscription/ProxyKey、lastUsedAt和TrafficCursor，再沿已有遥测delta路径聚合；重复快照、计数归零及迟到合法身份按原游标处理，内部探针免计费。
+4. **熔断**：资格/Key/密码/授权/线路状态变更触发配置失效与重下发，Agent实际应用前不宣称即时撤销；不保证网络分区或所有旧长连接立刻断开。
 
 ---
 
@@ -1135,50 +1136,77 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 - 管理端提供 `POST /api/v1/admin/help/articles/reset-defaults` 安全重置机制，支持在文档损毁或配置错乱时一键恢复官方标准预设文档，可选择覆写冲突项或全量刷新。
 
 ---\n
-## 11. 上游订阅与代理节点模型（UpstreamSubscription / UpstreamNode）\n
-上游订阅机制允许管理员导入外部任意 Mihomo (Clash Meta) YAML、Sing-box JSON 或标准 URI 订阅，解析提取外部落地代理节点，并支持三种核心落地形态：直接合并入用户客户端订阅、作为自建 VPS 中转线路的落地目标，或提取挂载为直连代理池。\n
-### 11.1 UpstreamSubscription 字段字典\n
-| 字段 | 类型 | 默认值 | 约束与说明 |
-| :--- | :--- | :--- | :--- |
-| `id` | String (UUID) | uuid() | 上游订阅记录唯一主键 |
-| `name` | String | 必填 | 订阅源名称标识（如「XX 机场主力」） |
-| `sourceType` | String | `\"URL\"` | 来源类型：`URL`（远程链接） / `TEXT`（手动粘贴快照） |
-| `format` | String | `\"AUTO\"` | 解析格式：`AUTO`（智能探测）/ `CLASH_META` / `SINGBOX` / `URI_LIST` |
-| `url` | String? | `null` | 远程拉取链接（HTTPS / HTTP） |
-| `content` | String? | `null` | 文本配置快照或最近一次拉取成功的缓存内容 |
-| `customHeadersJson` | String | `\"{}\"` | 远程拉取时的自定义 HTTP Header（如 User-Agent 等） |
-| `autoUpdate` | Boolean | `true` | 是否开启后台定时自动更新同步 |
-| `updateIntervalMins` | Int | `720` | 自动刷新间隔周期（分钟，默认 12 小时） |
-| `lastSyncAt` | DateTime? | `null` | 最近一次同步尝试时间戳 |
-| `lastSyncStatus` | String | `\"PENDING\"` | 最近同步状态：`PENDING` / `SUCCESS` / `FAILED` |
-| `lastSyncMessage` | String? | `null` | 最近同步状态详情或错误诊断信息 |
-| `userInfoUsedBytes` | BigInt? | `null` | 从 `subscription-userinfo` 响应头解析出的已用流量 |
-| `userInfoTotalBytes`| BigInt? | `null` | 从 `subscription-userinfo` 响应头解析出的总配额 |
-| `userInfoExpireAt` | DateTime? | `null` | 从 `subscription-userinfo` 响应头解析出的到期时间 |
-| `nodeCount` | Int | `0` | 当前解析包含的有效节点总数 |
-| `status` | String | `\"ACTIVE\"` | 订阅源启用状态：`ACTIVE` / `DISABLED` |
-| `createdAt` / `updatedAt` | DateTime | 自动 | 创建与更新时间戳 |\n
-### 11.2 UpstreamNode 字段字典\n
-| 字段 | 类型 | 默认值 | 约束与说明 |
-| :--- | :--- | :--- | :--- |
-| `id` | String (UUID) | uuid() | 外部节点唯一主键 |
-| `subscriptionId` | String | 必填 | 归属上游订阅源 ID，级联删除 `onDelete: Cascade` |
-| `name` | String | 必填 | 节点展示名称（如「🇭🇰 香港 01 [IEPL]」） |
-| `protocolType` | String | 必填 | 协议类型（`VLESS`, `VMESS`, `TROJAN`, `HYSTERIA2`, `TUIC`, `SHADOWSOCKS`, `SOCKS`, `HTTP` 等） |
-| `serverHost` | String | 必填 | 目标主机地址（域名或 IP） |
-| `serverPort` | Int | 必填 | 目标端口 (1~65535) |
-| `paramsJson` | String | 必填 | 归一化 Sing-box 客户端 Outbound 与连接参数 JSON |
-| `rawConfigJson` | String | 必填 | 导入时的单节点原始配置快照 |
-| `fingerprint` | String | 必填 | 节点指纹哈希（基于协议、地址、端口与鉴权计算，更新时精准 Diff Match） |
-| `tagsJson` | String | `\"[]\"` | 自动提取的地区代码标签（如 `[\"HK\"]`, `[\"US\"]`） |
-| `latencyMs` | Int? | `null` | 最近一次连通性测速握手延迟（毫秒） |
-| `lastTestedAt` | DateTime? | `null` | 最近一次测速时间 |
-| `lastTestStatus` | String? | `null` | 测速状态：`SUCCESS` / `TIMEOUT` / `ERROR` |
-| `lastTestMessage` | String? | `null` | 测速诊断详细信息 |
-| `status` | String | `\"ACTIVE\"` | 节点可用状态：`ACTIVE` / `DISABLED` |
-| `isDirectSub` | Boolean | `false` | 是否直接合并进用户客户端订阅（默认 `false`，仅作为候选节点池） |
-| `createdAt` / `updatedAt` | DateTime | 自动 | 创建与更新时间戳 |\n
-### 11.3 联动与生命周期规则\n
-1. **指纹比对与平滑更新**：定时或手动同步时，依据 `fingerprint` 识别存量节点与新节点。存量节点更新连接配置但保留原有 UUID，保障已有中转线路不中断。
-2. **失效自动停用机制**：若上游删除了某个节点，系统自动将其关联的 `Line.status` 置为 `DISABLED`，记录系统警告日志并下发 `config_sync` 安全剔除失效出站。
-3. **中继链路与出站注入**：当 `Line.relayMode === 'UPSTREAM_NODE'` 时，入口节点 Agent 会直接根据 `upstreamNode.paramsJson` 组装对应协议的 Sing-box Outbound，所有入口连接均完整通过 Agent 进行流量统计与配额计费。
+## 11. 上游订阅与外部线路
+
+### 11.1 来源与资源职责
+
+`UpstreamSubscription` 只负责 URL/文本来源及同步，`UpstreamNode` 是外部连接资源。面向用户的授权统一在 `Line`：自建中继为 `RELAY + UPSTREAM_NODE`，直接分发为 `EXTERNAL`。不再提供 `isDirectSub` 或全局合并授权。
+
+| UpstreamSubscription 字段 | 说明 |
+| :--- | :--- |
+| `id` / `name` | UUID 与管理名称 |
+| `sourceType` | `URL` / `TEXT` |
+| `format` / `detectedFormat` | 管理员配置与实际检测结果分离；AUTO 每次重新检测 |
+| `url` / `content` / `customHeadersJson` | 整段 AES-GCM 密文；内容为文本源或 last-good 拉取快照；管理员详情按需解密，列表掩码 |
+| `autoUpdate` / `updateIntervalMins` | 默认 720 分钟，允许 10~43200 分钟 |
+| `lastSyncAt` / `lastSuccessAt` | 最近尝试和最近成功快照的时间分离 |
+| `lastSyncStatus` / `lastSyncMessage` | PENDING / SUCCESS / FAILED 与脱敏诊断 |
+| `userInfoUsedBytes` / `userInfoTotalBytes` / `userInfoExpireAt` | 上游账户元信息快照，未知为 null；API 字节值用十进制字符串，不计作本地用户流量 |
+| `nodeCount` | 当前成功快照去重后的 PRESENT 节点数，不含缺失保留记录 |
+| `status` | ACTIVE / DISABLED；源禁用立即停止直接分发与中继，不覆盖独立线路启停状态 |
+
+| UpstreamNode 字段 | 说明 |
+| :--- | :--- |
+| `id` / `subscriptionId` | 稳定资源 UUID 与所属源；显式删除源才级联删除 |
+| `name` / `protocolType` / `serverHost` / `serverPort` | 展示名、归一化协议、地址和 1~65535 端口 |
+| `paramsJson` / `rawConfigJson` | 归一化连接及原始配置的整段 AES-GCM 密文，不通过用户摘要返回 |
+| `sourceKey` | 可选可靠的源内标识，不使用数组顺序猜测 |
+| `connectionHash` / `configHash` | 全长 SHA-256 规范化完整连接特征和配置变化哈希；不是业务 ID，也不使用随机密文计算 |
+| `presenceStatus` / `missingSince` | PRESENT / MISSING 与缺失时间；独立于管理员启用状态 |
+| `tagsJson` | 地区标签数组，用于资源筛选；Line 自身标签用于套餐授权 |
+| `latencyMs` / `lastTestedAt` / `lastTestStatus` / `lastTestMessage` | 只镜像新端到端拨测摘要；没有有效 lastProbeJson 时不展示旧 TCP 数字 |
+| `status` | 管理员 ACTIVE / DISABLED；同步不覆盖 |
+
+### 11.2 业务不变量与授权
+
+- DIRECT/RELAY 必须有真实入口节点与端口。EXTERNAL 只绑定上游节点，不挂假节点、不分配监听、不生成 Agent 入站；协议/端点/参数从资源动态解析，不复制到 Line 参数中。
+- EXTERNAL 默认非公开且禁用；沿用 ALL/TAGS/EXPLICIT 和 UserLineGrant。公开启用后 ALL 套餐可包含它，新增/发布时必须提示影响范围。
+- EXTERNAL 不计本地流量、不执行本地限速或设备限制；管理员停止分发不能追回用户已获得的共享上游凭据。
+- 中继只允许可归属用户、可撤除用户的入口鉴权配置，拒绝共享 SS 或关闭用户鉴权的入口；客户端只获取本地入口凭据。
+- 上游有效性共用源启用、节点启用、PRESENT、有效连接及已知到期/耗尽规则。未知元信息不视为无限，网络失败保留 last-good；成功响应缺元信息时清除旧值。
+
+### 11.3 原子同步与生命周期
+
+同源首次/手动/定时同步、修改和删除串行化；网络/解析在事务外，节点变更、缺失线路停用、统计和 last-good 快照在短事务内提交，提交后才清缓存并通知 Agent。
+
+一对一匹配顺序为可靠 sourceKey → 完整 connectionHash → 源内唯一名称加协议；多候选拒绝提交，不按顺序猜测。完整重复去重，不同 WS 路径等连接特征不合并。缺失资源保留 UUID 和引用，停用关联线路；重新出现不自动启用线路。无效或不支持的代理条目阻止快照替换，不能用部分解析结果执行删除。
+
+### 11.4 破坏性结构升级
+
+删除 `fingerprint`、`isDirectSub`，不保留兼容接口或旧数据回填。新增迁移 `20260930190000_upstream_breaking_refactor` 保留非上游业务记录，但要求旧上游域为空；部署脚本在任何双库迁移前只读检查，SQL 本身也在持久结构变化前拒绝旧上游记录。维护者先备份并明确处理旧源、节点及关联线路，再重新导入；程序不自动清理。回退必须配套恢复数据库备份，详见部署指南。
+
+## 12. 统一客户端测量摘要
+
+Line 与 UpstreamNode 新增 `lastProbeJson String?`，保存 schemaVersion=1 的安全结果，API 输出 `lastProbe` 白名单对象：实际内核/版本、回退原因、主要客户端兼容性、Master 视角、链路类型、测试目标 ID/host、时间、耗时、延迟、状态/原因码、配置 hash/applied。禁止保存连接秘密、完整含凭据 URL、原始内核日志或控制 Secret。
+
+迁移 `20261001010000_client_probe_metadata` 只新增列，并将旧延迟/状态/诊断/时间置空；不删除来源、节点、线路、用户、余额或流量，不要求清库。旧未标内核/目标的 TCP 或兼容结果不能冒充端到端测量，新版以 schemaVersion 与资源配置版本确认有效性。
+
+拨测读取不可变短快照，在来源同步锁外执行；结果在短事务中再次验证连接/线路/关联来源和节点状态、配置 hash、更新时间与最新任务提交序列，条件 updateMany 写入。资源删除、失效、缺失、轮换或重绑后的旧结果为 STALE，不覆盖新配置。同资源旧任务晚结束不能覆盖新任务。环境不可用、取消和不支持不更改业务启停；测速失败不自动禁用资源。
+
+任务只在 Master 内存保留，完成 15 分钟后清理、最多保留 50 个完成任务；重启丢失任务但保留资源最后有效测量。不新增数据库任务表或外部队列。系统新增 `probeSingboxFallbackEnabled`（默认 true），仅允许能力白名单兼容执行；既有 lineSpeedtestTargetUrl/Timeout 作为统一节点/线路拨测设置，默认目标 HTTPS generate_204，已有显式设置保留。
+
+线路探针版本还纳入关联证书的 `id/updatedAt`，包括 TARGET_LINE 的实际证书依赖；同 ID 更新 PEM 后，旧结果展示为 STALE，运行中旧结果不能写回。快照及列表只加载证书版本元信息，不为该验证读取或返回私钥。
+
+## 13. 代理池显式线路开关与非破坏升级
+
+`Line.proxyPoolEnabled Boolean @default(false)` 只支持DIRECT/MIXED和RELAY/UPSTREAM_NODE/MIXED，上游入口仍须usersEnabled=true；开关关闭后普通订阅业务不变，独立ProxyKey不注入单HTTP/SOCKS或未参与线路。
+
+追加迁移 `20261001020000_proxy_pool_line_access` 只新增字段、为旧ACTIVE/public/DIRECT/MIXED且真实入口端口有效的线路回填true，其余默认false，不自动开放上游中继。保留用户/订阅/Line/Key、密码/exportToken、余额/流量/TrafficCursor；旧登录名停止新连接，升级须重新导出，不清现有库或历史账务。全量schema见apps/server/prisma/schema.prisma，代理池绑定不新增持久化表。
+
+## 14. 线路最终落地代理出站
+
+`Line.egressProxyJson String?` 保存规范化 HTTP/SOCKS5 连接的整段 AES-GCM 密文，包含认证与 UDP 策略，与入站 paramsJson 分离。迁移 `20261001030000_line_egress_proxy` 仅新增可空 TEXT 列，既有线路全为 null；不改变用户、Key、订阅、授权、余额、流量及游标，不启用任何出口。
+
+公共模块 line-egress 负责校验、密码保留、加密/解密与脱敏；HTTP 不含 TLS、不支持 UDP；SOCKS5 version=5、udpEnabled 默认 false。DIRECT 当前节点、自建双节点中继落地执行，TARGET_LINE 从目标直连继承，UPSTREAM_NODE/EXTERNAL 不允许独立出站。复制重加密并保留设置，副本禁用。PATCH null 清除，省略保持原密文；对象密码省略保留旧密码，关闭认证删除旧凭据。
+
+管理视图显式剥离当前/目标线路及节点关联的 egressProxyJson，仅返回不含密码的 egressProxy/hasPassword 和 effectiveEgress。用户摘要/订阅不交付出站连接。秘密只在实际执行节点配置编译时解密。线路出站变化清除派生拨测摘要，目标线路版本变化使桥接摘要 STALE；配置下发继续复用 WS/HTTP，不新增模型关系、任务表或 Go 协议。

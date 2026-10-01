@@ -2,9 +2,11 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
 import { TemplatesService } from './templates.service';
+import { ClientKernelsService } from '../client-kernels/client-kernels.service';
 
 describe('TemplatesService', () => {
   let service: TemplatesService;
+  const kernels = { validate: jest.fn().mockResolvedValue({ engine: 'SINGBOX', status: 'UNAVAILABLE', executed: false, scope: 'FULL', diagnostics: ['KERNEL_UNAVAILABLE'] }) };
   type PrismaMock = {
     subscriptionTemplate: Record<string, jest.Mock>;
     systemSetting: Record<string, jest.Mock>;
@@ -20,7 +22,7 @@ describe('TemplatesService', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      providers: [TemplatesService, { provide: PrismaService, useValue: prisma }]
+      providers: [TemplatesService, { provide: PrismaService, useValue: prisma }, { provide: ClientKernelsService, useValue: kernels }]
     }).compile();
     service = moduleRef.get(TemplatesService);
   });
@@ -75,8 +77,17 @@ describe('TemplatesService', () => {
     })).resolves.toEqual(expect.objectContaining({
       format: 'singbox',
       stats: expect.objectContaining({ totalNodes: 6, proxyGroupsCount: 1, rulesCount: 1 }),
-      singboxCheck: expect.objectContaining({ executed: expect.any(Boolean), passed: true }),
-      mihomoCheck: expect.objectContaining({ executed: expect.any(Boolean) })
+      kernelCheck: expect.objectContaining({ status: 'UNAVAILABLE', executed: false })
     }));
+    expect(kernels.validate).toHaveBeenCalledTimes(1);
+    expect(kernels.validate).toHaveBeenCalledWith('SINGBOX', expect.any(String));
   }, 15000);
+  it('Clash 预览只验证 Mihomo，不为了兼容格式再编译 Sing-box', async () => {
+    kernels.validate.mockResolvedValueOnce({ engine: 'MIHOMO', status: 'UNAVAILABLE', executed: false, scope: 'FULL', diagnostics: ['KERNEL_UNAVAILABLE'] });
+    const preview = await service.previewTemplate({ format: 'clash', template: {} });
+    expect(preview).toHaveProperty('kernelCheck');
+    expect(preview).not.toHaveProperty('singboxCheck');
+    expect(kernels.validate).toHaveBeenCalledTimes(1);
+    expect(kernels.validate).toHaveBeenCalledWith('MIHOMO', preview.content);
+  });
 });

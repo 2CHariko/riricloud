@@ -1,3 +1,5 @@
+export type { KernelCheckResult } from '@/lib/probe-types';
+import type { KernelCheckResult } from '@/lib/probe-types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, extractErrorMessage } from '@/lib/api';
@@ -27,20 +29,13 @@ export interface TemplatePayload {
   isDefault: boolean;
 }
 
-export interface KernelCheckResult {
-  executed: boolean;
-  passed: boolean;
-  message?: string;
-  kernelVersion?: string;
-}
 
 export interface TemplatePreviewResponse {
   format: 'clash' | 'singbox';
   content: string;
   stats: { totalNodes: number; matchedNodes: number; proxyGroupsCount: number; rulesCount: number };
   warnings: string[];
-  singboxCheck?: KernelCheckResult;
-  mihomoCheck?: KernelCheckResult;
+  kernelCheck: KernelCheckResult;
 }
 
 export function useAdminTemplates() {

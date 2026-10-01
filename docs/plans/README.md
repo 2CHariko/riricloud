@@ -19,6 +19,7 @@
 
 | 规划名称 | 目标版本 | 创建日期 | 任务进度 |
 | :--- | :--- | :--- | :--- |
+| [双内核职责解耦与统一端到端拨测](./mihomo-client-probe-separation.md) | `下一次 MINOR 发布` | 2026-10-01 | 11/12 (92%) |
 | [无公网 IP 主机（NAT/家宽）作为落地节点与反向穿透隧道全链路实现](./nat-landing-node-reverse-tunnel.md) | `v0.10.0` | 2026-09-13 | 34/36 (94%) |
 | [实时节点镜像站与 Agent 流式代理](./node-mirror-site-proxy.md) | `v0.7.2+` | 2026-09-09 | 93/123 (76%) |
 | [公开线路与中继落地凭据安全整改 TODO（2026-09-08）](./security-audit-public-relay-credentials.md) | `v0.7.2+` | 2026-09-08 | 0/58 (0%) |
@@ -30,7 +31,10 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
-| [上游订阅导入与多模式融合功能方案](./archive/2026-09-30-upstream-subscriptions-proxy-relay.md) | `v0.10.0` | 2026-09-30 | — |
+| [线路最终落地 HTTP/SOCKS5 出站](./archive/2026-10-02-line-egress-proxy.md) | `下一次 MINOR 发布` | 2026-10-02 | — |
+| [代理池统一授权与受控上游中继接入](./archive/2026-10-01-proxy-pool-unified-access.md) | `下一次 MINOR 发布` | 2026-10-01 | — |
+| [上游订阅导入与多模式融合功能方案 (Upstream Subscriptions & Proxy Relay)](./archive/2026-09-30-upstream-subscriptions-proxy-relay.md) | `v0.10.0` | 2026-09-30 | — |
+| [上游订阅破坏性重构：统一线路授权与可靠同步](./archive/2026-09-30-upstream-subscription-breaking-refactor.md) | `下一次 MINOR 发布` | 2026-09-30 | — |
 | [节点管理批量 Agent 升级](./archive/2026-09-29-agent-batch-upgrade.md) | `0.10.0` | 2026-09-29 | — |
 | [docker-dockerhub-publish](./archive/2026-09-28-docker-dockerhub-publish.md) | `v0.9.5` | 2026-09-28 | — |
 | [default-docker-hub-images](./archive/2026-09-28-default-docker-hub-images.md) | `v0.9.5` | 2026-09-28 | — |

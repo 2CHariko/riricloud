@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   const directByNode = new Map<string, string[]>();
   const blindExitByNode = new Map<string, string[]>();
   for (const line of lines) {
-    if (line.type === 'DIRECT') {
+    if (line.type === 'DIRECT' && line.entryNodeId) {
       directByNode.set(line.entryNodeId, [...(directByNode.get(line.entryNodeId) ?? []), line.id]);
     }
     if (line.type === 'RELAY' && line.relayMode === 'BLIND_FORWARD' && line.landingNodeId) {

@@ -1,8 +1,13 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { parse as parseYaml } from 'yaml';
 import { createHash } from 'crypto';
+import { canonicalJson } from './upstream.types';
 import type { ParsedUpstreamNode, ParseResult, UpstreamUserInfo } from './upstream.types';
-import type { ProtocolType } from '../common/constants';
+import { validateUpstreamConnection } from '../common/upstream-connection';
+import { isIP } from 'node:net';
+const NON_PROXY_TYPES = new Set(['direct', 'block', 'reject', 'dns', 'selector', 'urltest']);
+const PROTOCOLS: Record<string, string> = { ss: 'SHADOWSOCKS', shadowsocks: 'SHADOWSOCKS', vless: 'VLESS', vmess: 'VMESS', trojan: 'TROJAN', hysteria2: 'HYSTERIA2', hy2: 'HYSTERIA2', tuic: 'TUIC', socks: 'SOCKS', socks5: 'SOCKS', http: 'HTTP' };
+const hash = (value: unknown) => createHash('sha256').update(canonicalJson(value)).digest('hex');
 
 const REGION_KEYWORDS: Array<{ code: string; regex: RegExp }> = [
   { code: 'HK', regex: /香港|Hong\s*Kong|HK|HongKong/i },
@@ -26,117 +31,75 @@ export class UpstreamParserService {
    * 例如: upload=12345; download=67890; total=107374182400; expire=1735689600
    */
   parseUserInfoHeader(headerValue?: string | null): UpstreamUserInfo | null {
-    if (!headerValue || typeof headerValue !== 'string') return null;
-    const parts = headerValue.split(';');
+    if (!headerValue) return null;
     const result: UpstreamUserInfo = {};
-    for (const part of parts) {
-      const [rawKey, rawVal] = part.split('=').map((s) => s.trim());
-      if (!rawKey || !rawVal) continue;
-      const key = rawKey.toLowerCase();
-      try {
-        if (key === 'upload') result.uploadBytes = BigInt(rawVal);
-        if (key === 'download') result.downloadBytes = BigInt(rawVal);
-        if (key === 'total') result.totalBytes = BigInt(rawVal);
-        if (key === 'expire') {
-          const timestampSec = Number(rawVal);
-          if (timestampSec > 0) result.expireAt = new Date(timestampSec * 1000);
-        }
-      } catch {
-        // ignore bigint/number parse errors
+    for (const part of headerValue.split(';')) {
+      const [key, value] = part.trim().split('=');
+      if (!value || !/^\d+$/.test(value)) continue;
+      if (key === 'upload') result.uploadBytes = BigInt(value);
+      if (key === 'download') result.downloadBytes = BigInt(value);
+      if (key === 'total') result.totalBytes = BigInt(value);
+      if (key === 'expire') {
+        const seconds = Number(value);
+        if (Number.isSafeInteger(seconds) && seconds > 0 && seconds <= 8640000000000) result.expireAt = new Date(seconds * 1000);
       }
     }
-    if (result.uploadBytes !== undefined || result.downloadBytes !== undefined) {
-      result.usedBytes = (result.uploadBytes ?? 0n) + (result.downloadBytes ?? 0n);
-    }
-    return Object.keys(result).length > 0 ? result : null;
+    if (result.uploadBytes !== undefined && result.downloadBytes !== undefined) result.usedBytes = result.uploadBytes + result.downloadBytes;
+    return Object.keys(result).length ? result : null;
   }
 
-  /**
-   * 自动探测并解析上游订阅内容
-   */
-  parse(rawContent: string, formatHint: string = 'AUTO'): ParseResult {
-    const trimmed = rawContent.trim();
-    if (!trimmed) {
-      throw new BadRequestException('订阅内容为空');
-    }
-
-    // 1. 若显式指定或探测为 Clash Meta (YAML)
-    if (formatHint === 'CLASH_META' || (formatHint === 'AUTO' && this.isClashMetaYaml(trimmed))) {
+  parse(rawContent: string, formatHint = 'AUTO'): ParseResult {
+    const text = rawContent.trim();
+    if (!text || Buffer.byteLength(text) > 5 * 1024 * 1024 || /^\s*</.test(text)) throw new BadRequestException('订阅为空、超限或不是代理配置');
+    let document: Record<string, unknown> | undefined;
+    let format: ParseResult['format'];
+    if (formatHint === 'AUTO') {
       try {
-        const nodes = this.parseClashMeta(trimmed);
-        if (nodes.length > 0) {
-          return { format: 'CLASH_META', nodes };
-        }
-      } catch (err) {
-        if (formatHint === 'CLASH_META') throw err;
-      }
-    }
-
-    // 2. 若显式指定或探测为 Sing-box (JSON)
-    if (formatHint === 'SINGBOX' || (formatHint === 'AUTO' && this.isSingboxJson(trimmed))) {
-      try {
-        const nodes = this.parseSingbox(trimmed);
-        if (nodes.length > 0) {
-          return { format: 'SINGBOX', nodes };
-        }
-      } catch (err) {
-        if (formatHint === 'SINGBOX') throw err;
-      }
-    }
-
-    // 3. 尝试作为 URI 列表解析（支持 Base64 解码）
+        const parsed: unknown = text.startsWith('{') ? JSON.parse(text) : parseYaml(text, { maxAliasCount: 50 });
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) document = parsed as Record<string, unknown>;
+      } catch { /* URI 内容不作为结构化配置处理 */ }
+      format = document && ('proxies' in document || 'Proxy' in document) ? 'CLASH_META' : document && 'outbounds' in document ? 'SINGBOX' : 'URI_LIST';
+    } else if (['CLASH_META', 'SINGBOX', 'URI_LIST'].includes(formatHint)) {
+      format = formatHint as ParseResult['format'];
+    } else throw new BadRequestException('不支持的订阅格式');
+    let entries: unknown[];
     try {
-      const nodes = this.parseUriList(trimmed);
-      if (nodes.length > 0) {
-        return { format: 'URI_LIST', nodes };
+      if (format === 'URI_LIST') {
+        const decoded = !text.includes('://') && /^[A-Za-z0-9+/_=\s-]+$/.test(text) ? Buffer.from(text.replace(/\s/g, ''), 'base64url').toString('utf8') : text;
+        entries = decoded.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      } else {
+        document ??= (format === 'SINGBOX' ? JSON.parse(text) : parseYaml(text, { maxAliasCount: 50 })) as Record<string, unknown>;
+        const list = format === 'SINGBOX' ? document.outbounds : document.proxies ?? document.Proxy;
+        if (!Array.isArray(list)) throw new Error();
+        entries = list;
       }
-    } catch (err) {
-      if (formatHint === 'URI_LIST') throw err;
-    }
-
-    throw new BadRequestException('无法识别该订阅的内容格式，请确认其符合 Mihomo (Clash Meta)、Sing-box 或标准 URI 规范');
-  }
-
-  // ==============================
-  // 探测逻辑
-  // ==============================
-
-  private isClashMetaYaml(content: string): boolean {
-    return (
-      (content.includes('proxies:') || content.includes('Proxy:')) &&
-      !content.startsWith('{')
-    );
-  }
-
-  private isSingboxJson(content: string): boolean {
-    if (!content.startsWith('{') && !content.startsWith('[')) return false;
-    try {
-      const parsed = JSON.parse(content);
-      return Boolean(parsed.outbounds && Array.isArray(parsed.outbounds));
-    } catch {
-      return false;
-    }
-  }
-
-  // ==============================
-  // Clash Meta / Mihomo 解析器
-  // ==============================
-
-  private parseClashMeta(content: string): ParsedUpstreamNode[] {
-    const parsed = parseYaml(content) as Record<string, unknown>;
-    const rawProxies = Array.isArray(parsed?.proxies)
-      ? (parsed.proxies as Array<Record<string, unknown>>)
-      : Array.isArray(parsed?.Proxy)
-        ? (parsed.Proxy as Array<Record<string, unknown>>)
-        : [];
-
+    } catch { throw new BadRequestException('订阅结构无效或指定格式不匹配'); }
     const nodes: ParsedUpstreamNode[] = [];
-    for (const p of rawProxies) {
-      if (!p || typeof p !== 'object') continue;
-      const node = this.convertClashProxy(p);
-      if (node) nodes.push(node);
+    const diagnostics = { recognized: 0, duplicates: 0, skipped: 0 };
+    const seen = new Set<string>();
+    for (const [index, entry] of entries.entries()) {
+      try {
+        let node: ParsedUpstreamNode;
+        if (format === 'URI_LIST') node = this.parseUri(String(entry));
+        else {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error();
+          const proxy = entry as Record<string, unknown>;
+          if (NON_PROXY_TYPES.has(String(proxy.type).toLowerCase())) { diagnostics.skipped++; continue; }
+          if (!PROTOCOLS[String(proxy.type).toLowerCase()]) throw new Error();
+          const converted = format === 'SINGBOX' ? this.convertSingbox(proxy) : this.convertClashProxy(proxy);
+          if (!converted) throw new Error();
+          node = converted;
+        }
+        validateUpstreamConnection(node);
+        diagnostics.recognized++;
+        const exact = hash({ name: node.name, sourceKey: node.sourceKey, connectionHash: node.connectionHash, tags: node.tags });
+        if (seen.has(exact)) { diagnostics.duplicates++; continue; }
+        seen.add(exact);
+        nodes.push(node);
+      } catch { throw new BadRequestException(`代理条目 ${index + 1} 无效或不受支持；快照未提交`); }
     }
-    return nodes;
+    if (!nodes.length) throw new BadRequestException('订阅没有有效代理；快照未提交');
+    return { format, nodes, diagnostics };
   }
 
   private convertClashProxy(p: Record<string, unknown>): ParsedUpstreamNode | null {
@@ -146,7 +109,7 @@ export class UpstreamParserService {
     const serverPort = Number(p.port);
     if (!name || !serverHost || !serverPort || isNaN(serverPort)) return null;
 
-    let protocolType: ProtocolType | string = 'DIRECT';
+    let protocolType = 'DIRECT';
     const params: Record<string, unknown> = {};
 
     switch (rawType) {
@@ -227,31 +190,15 @@ export class UpstreamParserService {
         if (p.tls) params.tls = { enabled: true, serverName: p.sni };
         break;
       }
-      default:
-        // 其他协议（如 wireguard 等）以原样记录
-        protocolType = rawType.toUpperCase();
-        Object.assign(params, p);
-        break;
+      default: throw new Error('Unsupported proxy');
     }
-
-    const fingerprint = this.computeFingerprint(protocolType, serverHost, serverPort, params);
-    const tags = this.extractTags(name);
-
-    return {
-      name,
-      protocolType,
-      serverHost,
-      serverPort,
-      params,
-      rawConfig: p,
-      fingerprint,
-      tags
-    };
+    if (protocolType === 'TROJAN' && !params.tls) params.tls = { enabled: true, mode: 'tls' };
+    return this.makeNode(name, protocolType, serverHost, serverPort, params, { kind: 'STRUCTURED', value: p }, p.id);
   }
 
   private extractClashTransportAndTls(p: Record<string, unknown>, params: Record<string, unknown>) {
     const tls: Record<string, unknown> = {
-      enabled: Boolean(p.tls),
+      enabled: p.tls === undefined ? String(p.type).toLowerCase() === 'trojan' : Boolean(p.tls),
       mode: 'tls'
     };
     if (p.sni) tls.serverName = String(p.sni);
@@ -296,6 +243,8 @@ export class UpstreamParserService {
         host: Array.isArray(h2Opts.host) ? h2Opts.host[0] : (h2Opts.host ? String(h2Opts.host) : undefined),
         path: h2Opts.path ? String(h2Opts.path) : '/'
       };
+    } else if (network && network !== 'tcp') {
+      throw new Error('Unsupported transport');
     }
   }
 
@@ -303,48 +252,14 @@ export class UpstreamParserService {
   // Sing-box (JSON) 解析器
   // ==============================
 
-  private parseSingbox(content: string): ParsedUpstreamNode[] {
-    const parsed = JSON.parse(content) as Record<string, unknown>;
-    const outbounds = Array.isArray(parsed.outbounds)
-      ? (parsed.outbounds as Array<Record<string, unknown>>)
-      : [];
-
-    const nonProxyTypes = new Set(['direct', 'block', 'dns', 'selector', 'urltest', 'wireguard-drop']);
-    const nodes: ParsedUpstreamNode[] = [];
-
-    for (const ob of outbounds) {
-      if (!ob || typeof ob !== 'object') continue;
-      const type = String(ob.type || '').toLowerCase();
-      if (nonProxyTypes.has(type)) continue;
-
-      const name = String(ob.tag || '').trim();
-      const serverHost = String(ob.server || '').trim();
-      const serverPort = Number(ob.server_port);
-      if (!name || !serverHost || !serverPort) continue;
-
-      const protocolType = type.toUpperCase() as ProtocolType;
-      const params: Record<string, unknown> = { ...ob };
-      delete params.type;
-      delete params.tag;
-      delete params.server;
-      delete params.server_port;
-      this.normalizeSingboxParams(params);
-      const fingerprint = this.computeFingerprint(protocolType, serverHost, serverPort, params);
-      const tags = this.extractTags(name);
-
-      nodes.push({
-        name,
-        protocolType,
-        serverHost,
-        serverPort,
-        params,
-        rawConfig: ob,
-        fingerprint,
-        tags
-      });
-    }
-
-    return nodes;
+  private convertSingbox(ob: Record<string, unknown>): ParsedUpstreamNode {
+    const protocolType = PROTOCOLS[String(ob.type).toLowerCase()];
+    if (!protocolType) throw new Error('Unsupported proxy');
+    const params = { ...ob };
+    for (const key of ['type', 'tag', 'server', 'server_port', 'id']) delete params[key];
+    this.normalizeSingboxParams(params);
+    if (['TROJAN', 'TUIC', 'HYSTERIA2'].includes(protocolType) && !params.tls) params.tls = { enabled: true, mode: 'tls' };
+    return this.makeNode(String(ob.tag || ''), protocolType, String(ob.server || ''), Number(ob.server_port), params, { kind: 'STRUCTURED', value: ob }, ob.id);
   }
 
   private normalizeSingboxParams(params: Record<string, unknown>) {
@@ -434,431 +349,79 @@ export class UpstreamParserService {
   // URI 列表解析器 (单行 / Base64)
   // ==============================
 
-  private parseUriList(content: string): ParsedUpstreamNode[] {
-    let text = content;
-    // 检查是否全文本是 Base64 编码
-    if (!content.includes('://') && /^[A-Za-z0-9+/=\r\n]+$/.test(content)) {
-      try {
-        const decoded = Buffer.from(content.replace(/\s+/g, ''), 'base64').toString('utf-8');
-        if (decoded.includes('://')) {
-          text = decoded;
-        }
-      } catch {
-        // ignore
+  private parseUri(uri: string): ParsedUpstreamNode {
+    const scheme = uri.slice(0, uri.indexOf('://')).toLowerCase();
+    const protocolType = PROTOCOLS[scheme];
+    if (!protocolType) throw new Error('Unsupported proxy');
+    if (scheme === 'vmess') {
+      const obj = JSON.parse(Buffer.from(uri.slice(8), 'base64url').toString('utf8')) as Record<string, unknown>;
+      return this.convertClashProxy({ name: obj.ps || 'VMess', type: 'vmess', server: obj.add, port: obj.port, uuid: obj.id, alterId: obj.aid || 0, cipher: obj.scy || 'auto', tls: obj.tls === 'tls', sni: obj.sni, alpn: obj.alpn ? String(obj.alpn).split(',') : undefined, network: obj.net, 'ws-opts': { path: obj.path || '/', headers: obj.host ? { Host: obj.host } : {} }, 'grpc-opts': { 'grpc-service-name': obj.path || '' } })!;
+    }
+    let rest = uri.slice(uri.indexOf('://') + 3);
+    const hashIndex = rest.indexOf('#');
+    const name = hashIndex >= 0 ? decodeURIComponent(rest.slice(hashIndex + 1)) : protocolType;
+    rest = hashIndex >= 0 ? rest.slice(0, hashIndex) : rest;
+    const queryIndex = rest.indexOf('?');
+    const query = new URLSearchParams(queryIndex >= 0 ? rest.slice(queryIndex + 1) : '');
+    let authority = (queryIndex >= 0 ? rest.slice(0, queryIndex) : rest).replace(/\/$/, '');
+    if (scheme === 'ss' && !authority.includes('@')) authority = Buffer.from(authority, 'base64url').toString('utf8');
+    const at = authority.lastIndexOf('@');
+    let credential = at >= 0 ? authority.slice(0, at) : '';
+    const endpoint = at >= 0 ? authority.slice(at + 1) : authority;
+    const match = /^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/.exec(endpoint);
+    if (!match) throw new Error('Invalid endpoint');
+    const host = match[1] || match[2];
+    const port = Number(match[3]);
+    const params: Record<string, unknown> = {};
+    if (scheme === 'ss') {
+      if (!credential.includes(':')) credential = Buffer.from(credential, 'base64url').toString('utf8');
+      const colon = credential.indexOf(':');
+      if (colon < 0) throw new Error('Invalid credential');
+      params.method = decodeURIComponent(credential.slice(0, colon));
+      params.password = decodeURIComponent(credential.slice(colon + 1));
+      if (query.get('plugin')) {
+        const [plugin, ...opts] = query.get('plugin')!.split(';');
+        params.plugin = plugin;
+        params.pluginOpts = opts.join(';');
       }
-    }
-
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    const nodes: ParsedUpstreamNode[] = [];
-
-    for (const line of lines) {
-      try {
-        const node = this.parseSingleUri(line);
-        if (node) nodes.push(node);
-      } catch {
-        // skip invalid line
+    } else if (['SOCKS', 'HTTP', 'TUIC'].includes(protocolType)) {
+      if (credential) {
+        const colon = credential.indexOf(':');
+        params[protocolType === 'TUIC' ? 'uuid' : 'username'] = decodeURIComponent(colon >= 0 ? credential.slice(0, colon) : credential);
+        if (colon >= 0) params.password = decodeURIComponent(credential.slice(colon + 1));
       }
-    }
-
-    return nodes;
-  }
-
-  private parseSingleUri(uri: string): ParsedUpstreamNode | null {
-    if (!uri.includes('://')) return null;
-    const protoIndex = uri.indexOf('://');
-    const scheme = uri.slice(0, protoIndex).toLowerCase();
-    const rest = uri.slice(protoIndex + 3);
-
-    switch (scheme) {
-      case 'vless':
-        return this.parseVlessUri(rest);
-      case 'vmess':
-        return this.parseVmessUri(rest);
-      case 'trojan':
-        return this.parseTrojanUri(rest);
-      case 'ss':
-        return this.parseShadowsocksUri(rest);
-      case 'hysteria2':
-      case 'hy2':
-        return this.parseHysteria2Uri(rest);
-      case 'tuic':
-        return this.parseTuicUri(rest);
-      case 'socks5':
-      case 'socks':
-      case 'http':
-        return this.parseCommonProxyUri(scheme.toUpperCase(), rest);
-      default:
-        return null;
-    }
-  }
-
-  private parseVlessUri(rest: string): ParsedUpstreamNode | null {
-    const [mainPart, rawName] = rest.split('#');
-    const name = rawName ? decodeURIComponent(rawName) : 'VLESS 节点';
-    const [credAndHost, queryPart] = mainPart.split('?');
-    const atIndex = credAndHost.lastIndexOf('@');
-    if (atIndex < 0) return null;
-
-    const uuid = credAndHost.slice(0, atIndex);
-    const hostPort = credAndHost.slice(atIndex + 1);
-    const [serverHost, rawPort] = hostPort.split(':');
-    const serverPort = Number(rawPort);
-    if (!serverHost || !serverPort) return null;
-
-    const query = new URLSearchParams(queryPart || '');
-    const params: Record<string, unknown> = { uuid };
-    if (query.get('flow')) params.flow = query.get('flow');
-
+    } else params[protocolType === 'VLESS' ? 'uuid' : 'password'] = decodeURIComponent(credential);
     const security = query.get('security');
-    if (security === 'tls' || security === 'reality') {
-      const tls: Record<string, unknown> = { enabled: true, mode: security };
+    if (['TROJAN', 'HYSTERIA2', 'TUIC'].includes(protocolType) || security === 'tls' || security === 'reality') {
+      const tls: Record<string, unknown> = { enabled: true, mode: security === 'reality' ? 'reality' : 'tls' };
       if (query.get('sni')) tls.serverName = query.get('sni');
       if (query.get('fp')) tls.clientFingerprint = query.get('fp');
       if (query.get('alpn')) tls.alpn = query.get('alpn')!.split(',');
-      if (query.get('insecure') === '1') tls.insecure = true;
-      if (security === 'reality') {
-        const shortId = query.get('sid') || '';
-        tls.reality = {
-          enabled: true,
-          publicKey: query.get('pbk') || '',
-          shortId,
-          shortIds: [shortId],
-          ...(tls.serverName ? { serverNames: [String(tls.serverName)] } : {})
-        };
-      }
+      if (['insecure', 'allowInsecure', 'allow_insecure'].some((key) => query.get(key) === '1')) tls.insecure = true;
+      if (security === 'reality') tls.reality = { enabled: true, publicKey: query.get('pbk') || '', shortId: query.get('sid') || '' };
       params.tls = tls;
     }
-
-    const type = query.get('type') || query.get('net') || 'tcp';
-    if (type === 'ws') {
-      params.transport = {
-        type: 'ws',
-        path: query.get('path') || '/',
-        headers: query.get('host') ? { Host: query.get('host') } : {}
-      };
-    } else if (type === 'grpc') {
-      params.transport = {
-        type: 'grpc',
-        serviceName: query.get('serviceName') || ''
-      };
-    }
-
-    const fingerprint = this.computeFingerprint('VLESS', serverHost, serverPort, params);
-    return {
-      name,
-      protocolType: 'VLESS',
-      serverHost,
-      serverPort,
-      params,
-      rawConfig: uriRest('vless', rest),
-      fingerprint,
-      tags: this.extractTags(name)
-    };
+    if (query.get('flow')) params.flow = query.get('flow');
+    const transport = query.get('type') || query.get('net') || 'tcp';
+    if (transport === 'ws') params.transport = { type: 'ws', path: query.get('path') || '/', headers: query.get('host') ? { Host: query.get('host') } : {} };
+    else if (transport === 'grpc') params.transport = { type: 'grpc', serviceName: query.get('serviceName') || '' };
+    else if (transport !== 'tcp') throw new Error('Unsupported transport');
+    if (protocolType === 'HYSTERIA2' && query.get('obfs')) params.obfs = { type: query.get('obfs'), password: query.get('obfs-password') || '' };
+    if (protocolType === 'TUIC' && query.get('congestion_control')) params.congestionControl = query.get('congestion_control');
+    return this.makeNode(name, protocolType, host, port, params, { kind: 'URI', value: uri });
   }
 
-  private parseVmessUri(rest: string): ParsedUpstreamNode | null {
-    try {
-      const decoded = Buffer.from(rest, 'base64').toString('utf-8');
-      const obj = JSON.parse(decoded) as Record<string, unknown>;
-      const name = String(obj.ps || 'VMess 节点');
-      const serverHost = String(obj.add || '');
-      const serverPort = Number(obj.port);
-      if (!serverHost || !serverPort) return null;
-
-      const params: Record<string, unknown> = {
-        uuid: String(obj.id || ''),
-        alterId: Number(obj.aid || 0),
-        security: String(obj.scy || 'auto')
-      };
-
-      if (obj.tls === 'tls') {
-        const tls: Record<string, unknown> = { enabled: true };
-        if (obj.sni) tls.serverName = String(obj.sni);
-        if (obj.alpn) tls.alpn = String(obj.alpn).split(',');
-        params.tls = tls;
-      }
-
-      const net = String(obj.net || 'tcp').toLowerCase();
-      if (net === 'ws') {
-        params.transport = {
-          type: 'ws',
-          path: String(obj.path || '/'),
-          headers: obj.host ? { Host: String(obj.host) } : {}
-        };
-      } else if (net === 'grpc') {
-        params.transport = {
-          type: 'grpc',
-          serviceName: String(obj.path || '')
-        };
-      }
-
-      const fingerprint = this.computeFingerprint('VMESS', serverHost, serverPort, params);
-      return {
-        name,
-        protocolType: 'VMESS',
-        serverHost,
-        serverPort,
-        params,
-        rawConfig: obj,
-        fingerprint,
-        tags: this.extractTags(name)
-      };
-    } catch {
-      return null;
-    }
+  private makeNode(name: string, protocolType: string, serverHost: string, serverPort: number, params: Record<string, unknown>, rawConfig: ParsedUpstreamNode['rawConfig'], sourceId?: unknown): ParsedUpstreamNode {
+    serverHost = serverHost.trim().replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
+    if (!name.trim() || name.length > 512 || !serverHost || serverHost.length > 253 || /[\s/@?#]/.test(serverHost) || (serverHost.includes(':') && !isIP(serverHost)) || !Number.isInteger(serverPort) || serverPort < 1 || serverPort > 65535) throw new Error('Invalid node');
+    const sourceKey = typeof sourceId === 'string' && sourceId.length > 0 && sourceId.length <= 512 ? sourceId : undefined;
+    const connectionHash = this.computeConnectionHash(protocolType, serverHost, serverPort, params);
+    const tags = this.extractTags(name);
+    return { name: name.trim(), protocolType, serverHost, serverPort, params, rawConfig, sourceKey, connectionHash, configHash: hash({ connectionHash, name: name.trim(), tags }), tags };
   }
 
-  private parseTrojanUri(rest: string): ParsedUpstreamNode | null {
-    const [mainPart, rawName] = rest.split('#');
-    const name = rawName ? decodeURIComponent(rawName) : 'Trojan 节点';
-    const [credAndHost, queryPart] = mainPart.split('?');
-    const atIndex = credAndHost.lastIndexOf('@');
-    if (atIndex < 0) return null;
-
-    const password = credAndHost.slice(0, atIndex);
-    const hostPort = credAndHost.slice(atIndex + 1);
-    const [serverHost, rawPort] = hostPort.split(':');
-    const serverPort = Number(rawPort);
-    if (!serverHost || !serverPort) return null;
-
-    const query = new URLSearchParams(queryPart || '');
-    const tls: Record<string, unknown> = { enabled: true };
-    if (query.get('sni')) tls.serverName = query.get('sni');
-    if (query.get('alpn')) tls.alpn = query.get('alpn')!.split(',');
-    if (query.get('allowInsecure') === '1') tls.insecure = true;
-
-    const params: Record<string, unknown> = { password, tls };
-    const type = query.get('type');
-    if (type === 'ws') {
-      params.transport = {
-        type: 'ws',
-        path: query.get('path') || '/',
-        headers: query.get('host') ? { Host: query.get('host') } : {}
-      };
-    } else if (type === 'grpc') {
-      params.transport = {
-        type: 'grpc',
-        serviceName: query.get('serviceName') || ''
-      };
-    }
-
-    const fingerprint = this.computeFingerprint('TROJAN', serverHost, serverPort, params);
-    return {
-      name,
-      protocolType: 'TROJAN',
-      serverHost,
-      serverPort,
-      params,
-      rawConfig: uriRest('trojan', rest),
-      fingerprint,
-      tags: this.extractTags(name)
-    };
-  }
-
-  private parseShadowsocksUri(rest: string): ParsedUpstreamNode | null {
-    const [mainPart, rawName] = rest.split('#');
-    const name = rawName ? decodeURIComponent(rawName) : 'Shadowsocks 节点';
-    let method = '';
-    let password = '';
-    let serverHost = '';
-    let serverPort = 0;
-
-    if (mainPart.includes('@')) {
-      const atIndex = mainPart.lastIndexOf('@');
-      const credPart = mainPart.slice(0, atIndex);
-      const hostPort = mainPart.slice(atIndex + 1);
-      const [h, p] = hostPort.split(':');
-      serverHost = h;
-      serverPort = Number(p);
-
-      // 解密 base64 cred
-      try {
-        const decoded = Buffer.from(credPart, 'base64').toString('utf-8');
-        const [m, pwd] = decoded.split(':');
-        method = m;
-        password = pwd;
-      } catch {
-        const [m, pwd] = credPart.split(':');
-        method = m;
-        password = pwd;
-      }
-    } else {
-      // 全身 base64
-      try {
-        const decoded = Buffer.from(mainPart, 'base64').toString('utf-8');
-        const atIndex = decoded.lastIndexOf('@');
-        const cred = decoded.slice(0, atIndex);
-        const hostPort = decoded.slice(atIndex + 1);
-        const [m, pwd] = cred.split(':');
-        const [h, p] = hostPort.split(':');
-        method = m;
-        password = pwd;
-        serverHost = h;
-        serverPort = Number(p);
-      } catch {
-        return null;
-      }
-    }
-
-    if (!serverHost || !serverPort || !method || !password) return null;
-    const params = { method, password };
-    const fingerprint = this.computeFingerprint('SHADOWSOCKS', serverHost, serverPort, params);
-    return {
-      name,
-      protocolType: 'SHADOWSOCKS',
-      serverHost,
-      serverPort,
-      params,
-      rawConfig: uriRest('ss', rest),
-      fingerprint,
-      tags: this.extractTags(name)
-    };
-  }
-
-  private parseHysteria2Uri(rest: string): ParsedUpstreamNode | null {
-    const [mainPart, rawName] = rest.split('#');
-    const name = rawName ? decodeURIComponent(rawName) : 'Hysteria 2 节点';
-    const [credAndHost, queryPart] = mainPart.split('?');
-    const atIndex = credAndHost.lastIndexOf('@');
-    if (atIndex < 0) return null;
-
-    const password = decodeURIComponent(credAndHost.slice(0, atIndex));
-    const hostPort = credAndHost.slice(atIndex + 1);
-    const [serverHost, rawPort] = hostPort.split(':');
-    const serverPort = Number(rawPort);
-    if (!serverHost || !serverPort) return null;
-
-    const query = new URLSearchParams(queryPart || '');
-    const tls: Record<string, unknown> = { enabled: true };
-    if (query.get('sni')) tls.serverName = query.get('sni');
-    if (query.get('insecure') === '1') tls.insecure = true;
-
-    const params: Record<string, unknown> = { password, tls };
-    if (query.get('obfs') && query.get('obfs-password')) {
-      params.obfs = { type: query.get('obfs')!, password: query.get('obfs-password')! };
-      params.obfsPassword = query.get('obfs-password');
-    } else if (query.get('obfs')) {
-      params.obfs = query.get('obfs');
-    }
-
-    const fingerprint = this.computeFingerprint('HYSTERIA2', serverHost, serverPort, params);
-    return {
-      name,
-      protocolType: 'HYSTERIA2',
-      serverHost,
-      serverPort,
-      params,
-      rawConfig: uriRest('hysteria2', rest),
-      fingerprint,
-      tags: this.extractTags(name)
-    };
-  }
-
-  private parseTuicUri(rest: string): ParsedUpstreamNode | null {
-    const [mainPart, rawName] = rest.split('#');
-    const name = rawName ? decodeURIComponent(rawName) : 'TUIC 节点';
-    const [credAndHost, queryPart] = mainPart.split('?');
-    const atIndex = credAndHost.lastIndexOf('@');
-    if (atIndex < 0) return null;
-
-    const cred = credAndHost.slice(0, atIndex);
-    const [uuid, password] = cred.split(':');
-    const hostPort = credAndHost.slice(atIndex + 1);
-    const [serverHost, rawPort] = hostPort.split(':');
-    const serverPort = Number(rawPort);
-    if (!serverHost || !serverPort) return null;
-
-    const query = new URLSearchParams(queryPart || '');
-    const tls: Record<string, unknown> = { enabled: true };
-    if (query.get('sni')) tls.serverName = query.get('sni');
-    if (query.get('allow_insecure') === '1') tls.insecure = true;
-
-    const params: Record<string, unknown> = {
-      uuid: uuid || '',
-      password: password || '',
-      tls,
-      congestionControl: query.get('congestion_control') || 'bbr'
-    };
-
-    const fingerprint = this.computeFingerprint('TUIC', serverHost, serverPort, params);
-    return {
-      name,
-      protocolType: 'TUIC',
-      serverHost,
-      serverPort,
-      params,
-      rawConfig: uriRest('tuic', rest),
-      fingerprint,
-      tags: this.extractTags(name)
-    };
-  }
-
-  private parseCommonProxyUri(protocolType: string, rest: string): ParsedUpstreamNode | null {
-    const [mainPart, rawName] = rest.split('#');
-    const name = rawName ? decodeURIComponent(rawName) : `${protocolType} 节点`;
-    let username = '';
-    let password = '';
-    let serverHost = '';
-    let serverPort = 0;
-
-    if (mainPart.includes('@')) {
-      const atIndex = mainPart.lastIndexOf('@');
-      const cred = mainPart.slice(0, atIndex);
-      const hostPort = mainPart.slice(atIndex + 1);
-      const [u, p] = cred.split(':');
-      username = decodeURIComponent(u || '');
-      password = decodeURIComponent(p || '');
-      const [h, portStr] = hostPort.split(':');
-      serverHost = h;
-      serverPort = Number(portStr);
-    } else {
-      const [h, portStr] = mainPart.split(':');
-      serverHost = h;
-      serverPort = Number(portStr);
-    }
-
-    if (!serverHost || !serverPort) return null;
-    const params: Record<string, unknown> = {};
-    if (username) params.username = username;
-    if (password) params.password = password;
-
-    const fingerprint = this.computeFingerprint(protocolType, serverHost, serverPort, params);
-    return {
-      name,
-      protocolType,
-      serverHost,
-      serverPort,
-      params,
-      rawConfig: uriRest(protocolType.toLowerCase(), rest),
-      fingerprint,
-      tags: this.extractTags(name)
-    };
-  }
-
-  // ==============================
-  // 工具函数
-  // ==============================
-
-  /**
-   * 计算节点特征唯一指纹 (Fingerprint)
-   */
-  computeFingerprint(
-    protocolType: string,
-    serverHost: string,
-    serverPort: number,
-    params: Record<string, unknown>
-  ): string {
-    const keyParts = [
-      protocolType.toUpperCase(),
-      serverHost.toLowerCase().trim(),
-      String(serverPort),
-      params.uuid || '',
-      params.password || '',
-      params.method || '',
-      params.username || '',
-      (params.tls as Record<string, unknown>)?.serverName || ''
-    ];
-    return createHash('sha256').update(keyParts.join('|')).digest('hex').slice(0, 16);
+  computeConnectionHash(protocolType: string, serverHost: string, serverPort: number, params: Record<string, unknown>): string {
+    return hash({ protocolType: protocolType.toUpperCase(), serverHost: serverHost.trim().toLowerCase(), serverPort, params });
   }
 
   /**
@@ -873,8 +436,4 @@ export class UpstreamParserService {
     }
     return Array.from(tags);
   }
-}
-
-function uriRest(scheme: string, rest: string): string {
-  return `${scheme}://${rest}`;
 }

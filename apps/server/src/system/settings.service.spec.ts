@@ -35,6 +35,14 @@ describe('SettingsService', () => {
     await expect(service.getSettings()).resolves.toEqual(DEFAULTS);
   });
 
+  it('默认启用能力限定回退，管理员可明确关闭', async () => {
+    prisma.systemSetting.findMany.mockResolvedValue([{ key: SETTING_KEYS.PROBE_SINGBOX_FALLBACK_ENABLED, value: 'false' }]);
+    expect((await service.getSettings()).probeSingboxFallbackEnabled).toBe(false);
+    expect(DEFAULTS.probeSingboxFallbackEnabled).toBe(true);
+    const dto = plainToInstance(UpdateSettingsDto, { probeSingboxFallbackEnabled: false });
+    expect(await validate(dto, { whitelist: true, forbidNonWhitelisted: true })).toHaveLength(0);
+  });
+
   it('支持数字、布尔、数组、时区与无效值回退', async () => {
     prisma.systemSetting.findMany.mockResolvedValue([
       { key: SETTING_KEYS.SITE_NAME, value: ' 我的面板 ' },
@@ -113,7 +121,7 @@ describe('SettingsService', () => {
       }
     });
     expect(result.binaryDownloadBaseUrl).toBe('');
-    expect(result.lineSpeedtestTargetUrl).toBe('http://cp.cloudflare.com/generate_204');
+    expect(result.lineSpeedtestTargetUrl).toBe('https://cp.cloudflare.com/generate_204');
   });
 
   it('自动忽略并清理库中脏写入的 "undefined" 记录（含加密密钥）', async () => {
@@ -126,7 +134,7 @@ describe('SettingsService', () => {
 
     const settings = await service.getSettings();
     expect(settings.binaryDownloadBaseUrl).toBe('');
-    expect(settings.lineSpeedtestTargetUrl).toBe('http://cp.cloudflare.com/generate_204');
+    expect(settings.lineSpeedtestTargetUrl).toBe('https://cp.cloudflare.com/generate_204');
     expect(settings.smtpPass).toBe('');
     expect(prisma.systemSetting.deleteMany).toHaveBeenCalledWith({
       where: {

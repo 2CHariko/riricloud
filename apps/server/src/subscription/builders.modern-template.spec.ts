@@ -2,7 +2,7 @@ import { parse } from 'yaml';
 import { buildClashYaml, buildSingboxJson, type SubLine, type SubUser } from './builders';
 
 describe('builders with modernized template configuration', () => {
-  const user: SubUser = { uuid: 'user-uuid-1', email: 'user@example.com', credential: 'user-pass' };
+  const user: SubUser = { uuid: 'a77cf184-4b56-41ee-962c-1357184acd77', email: 'user@example.com', credential: 'user-pass' };
   const mockNodes: SubLine[] = [
     {
       id: 'line-hk',

@@ -2,7 +2,7 @@ import { buildClashYaml, buildSingboxJson, buildUriList, entryLabels, type SubLi
 import { parse } from 'yaml';
 
 describe('subscription builders with lines', () => {
-  const user: SubUser = { uuid: 'user-uuid', email: 'user@example.com', credential: 'user-password' };
+  const user: SubUser = { uuid: 'a77cf184-4b56-41ee-962c-1357184acd77', email: 'user@example.com', credential: 'user-password' };
   const line: SubLine = {
     id: 'line-1',
     name: '香港中继',
@@ -21,7 +21,7 @@ describe('subscription builders with lines', () => {
       tag: 'vless-in',
       port: 443,
       params: {
-        flow: 'xtls-rprx-vision',
+        flow: '',
         transport: { type: 'ws', path: '/proxy', host: 'origin.example.com' },
         tls: { enabled: true, mode: 'tls', serverName: 'origin.example.com', alpn: ['http/1.1'], insecure: false }
       }
@@ -51,7 +51,7 @@ describe('subscription builders with lines', () => {
       transport: { type: 'ws', path: '/proxy', headers: { Host: 'cdn.example.com' } }
     });
     const [uri] = buildUriList(user, [line]);
-    expect(uri).toContain('vless://user-uuid@relay.example.com:8443');
+    expect(uri).toContain(`vless://${user.uuid}@relay.example.com:8443`);
     expect(uri).toContain('sni=www.apple.com');
     expect(uri).toContain('host=cdn.example.com');
   });

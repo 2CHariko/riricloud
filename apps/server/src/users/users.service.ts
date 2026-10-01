@@ -5,7 +5,6 @@ import { randomUUID } from 'node:crypto';
 import { AgentService } from '../agent-gateway/agent.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../system/settings.service';
-import { isUserEntitled } from '../common/utils';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users.query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -492,10 +491,7 @@ export class UsersService {
       ? await subscriptionDelegate.findUnique({ where: { userId }, include: { plan: true } })
       : null;
     const subscription = rawSubscription ? applyPlanSnapshot(rawSubscription) as typeof rawSubscription : null;
-    const extraLineIds = await this.getExtraLineIds(userId);
-    const lines = this.linesService
-      ? await this.linesService.getAvailableForPlan(subscription?.plan ?? { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' }, extraLineIds)
-      : [];
+    const lines = await this.availableLineSummaries(user, subscription);
     const trafficLimitBytes = subscription?.trafficLimitBytes ?? user.trafficLimitBytes;
     const trafficUsedBytes = subscription?.trafficUsedBytes ?? user.trafficUsedBytes;
     const expireAt = subscription?.expireAt ?? user.expireAt;
@@ -523,17 +519,24 @@ export class UsersService {
       ? await subscriptionDelegate.findUnique({ where: { userId }, include: { plan: true } })
       : null;
     const subscription = rawSubscription ? applyPlanSnapshot(rawSubscription) as typeof rawSubscription : null;
-    const extraLineIds = await this.getExtraLineIds(userId);
-    const lines = this.linesService
-      ? await this.linesService.getAvailableForPlan(subscription?.plan ?? { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' }, extraLineIds)
-      : [];
+    const lines = await this.availableLineSummaries(user, subscription);
     return {
-      entitled: subscription
-        ? user.isActive && ['ACTIVE', 'CANCELED'].includes(subscription.status) && (!subscription.expireAt || subscription.expireAt > new Date()) && subscription.trafficUsedBytes < subscription.trafficLimitBytes
-        : isUserEntitled(user),
+      entitled: this.hasLineEntitlement(user, subscription),
       lines,
       nodes: lines
     };
+  }
+
+  private hasLineEntitlement(user: { isActive: boolean; expireAt: Date | null; trafficUsedBytes: bigint; trafficLimitBytes: bigint }, subscription: UserSubscriptionSnapshot | null): boolean {
+    return Boolean(subscription && user.isActive && ['ACTIVE', 'CANCELED'].includes(subscription.status) && (!subscription.expireAt || subscription.expireAt > new Date()) && subscription.trafficUsedBytes < subscription.trafficLimitBytes);
+  }
+
+  private async availableLineSummaries(user: Prisma.UserGetPayload<object>, subscription: UserSubscriptionSnapshot | null) {
+    const settings = await this.settingsService.getSettings();
+    if (!this.linesService || !this.hasLineEntitlement(user, subscription) || (settings?.enforceEmailVerification && user.role !== 'ADMIN' && !user.emailVerifiedAt)) return [];
+    const extraLineIds = await this.getExtraLineIds(user.id);
+    const resources = await this.linesService.getAvailableForPlan(subscription?.plan ?? { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' }, extraLineIds);
+    return resources.map((line) => this.linesService!.toUserSummary(line));
   }
 
   private async resolveInitialPlan(planId?: string | null) {

@@ -1,12 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min, MinLength, MaxLength, ValidateBy } from 'class-validator';
+import { validateUpstreamHeaders } from '../upstream-fetch';
 import { UPSTREAM_FORMATS, UPSTREAM_NODE_STATUSES, UPSTREAM_SOURCE_TYPES, UpstreamFormat, UpstreamNodeStatus, UpstreamSourceType } from '../../common/constants';
 
 export class UpdateUpstreamDto {
   @ApiPropertyOptional()
   @IsString()
   @MinLength(1)
+  @MaxLength(128)
   @IsOptional()
   name?: string;
 
@@ -22,16 +24,19 @@ export class UpdateUpstreamDto {
 
   @ApiPropertyOptional()
   @IsString()
+  @MaxLength(8192)
   @IsOptional()
   url?: string;
 
   @ApiPropertyOptional()
   @IsString()
+  @MaxLength(5 * 1024 * 1024)
   @IsOptional()
   content?: string;
 
   @ApiPropertyOptional()
   @IsObject()
+  @ValidateBy({ name: 'upstreamHeaders', validator: { validate: (value: Record<string, string>) => { try { validateUpstreamHeaders(value); return true; } catch { return false; } }, defaultMessage: () => '自定义 Header 名称、类型或长度无效' } })
   @IsOptional()
   customHeaders?: Record<string, string>;
 

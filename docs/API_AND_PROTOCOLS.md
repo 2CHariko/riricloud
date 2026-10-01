@@ -41,7 +41,7 @@
 - `GET /user/wallet/transactions?page&pageSize`：查询当前用户余额流水。⭐ 返回统一分页结构，流水包含 `amount`、`balanceBefore`、`balanceAfter`、`type`、`description`、`createdAt`。
 - `POST /user/wallet/redeem`：兑换卡密。⭐ 请求 `{ code }`；卡密核销、购买身份分类额度占用和余额入账/套餐订阅履约在同一 SQLite 事务内完成，并发兑换不得重复发奖或突破上限。卡密不区分大小写（服务端统一大写归一）；接口按用户限流（默认 5 次/分钟），超限返回 429。套餐卡遵守套餐购买限购；已有有效订阅时返回 409 且不核销，可稍后重试。软删除卡仍可兑换。
 - `GET /plans/public`：公开套餐市场列表。⭐ 返回公开套餐及其价格、流量、有效期、`trafficResetMode`、节点匹配模式、`purchaseLimitPerUser`（`null` 不限购）、`allowRenewal` 与 `deviceLimit`（`0` 不限）。
-- `GET /user/subscription`：查询当前用户唯一订阅、可用线路、套餐购买额度与在线设备策略。⭐ 无订阅时返回 `{ subscription: null, lines: [], nodes: [], planClaims: [], deviceManagement }`；有订阅时返回 `lines[]`、`planClaims[{ planId, used }]` 并保留 `nodes` 兼容镜像。订阅视图包含 `trafficResetMode`、`nextTrafficResetAt` 和 `extraLineIds`；线路为套餐匹配线路与用户额外授权线路的并集。`deviceManagement` 在设备管理服务不可用时为 `null`。
+- `GET /user/subscription`：查询当前用户唯一订阅、可用线路、套餐购买额度与在线设备策略。⭐ 无订阅时返回 `{ subscription: null, lines: [], nodes: [], planClaims: [], deviceManagement }`；无有效权益（过期、耗尽、禁用或未满足邮箱验证）仍可查看订阅状态，但连接资源为空。`lines` 与 `nodes` 使用同一安全摘要：名称、协议、端点、标签、状态与 `capabilities{trafficMetered,localLimitsSupported,credentialRevocable}`，不包含 params、原始 JSON、上游凭据或源 URL/Header。线路为套餐 ALL/TAGS/EXPLICIT 匹配与用户额外授权的并集，与实际客户端订阅使用同一资源解析；EXTERNAL 不提供本地流量/速率/设备执行或共享凭据追回能力。订阅视图包含 `trafficResetMode`、`nextTrafficResetAt` 和 `extraLineIds`；`deviceManagement` 不可用时为 null。
 - `GET /user/subscription/devices`：查询当前用户设备策略及在线设备明细。⭐ 返回 `{ onlineDeviceCount, configuredDeviceLimit, effectiveDeviceLimit, deviceLimitSource, configuredDeviceLimitSource, deviceLimitEnabled, devices }`；每台设备按客户端 IP 聚合，含连接数、首次/最近上报时间及节点/线路明细。
 - `DELETE /user/subscription/devices?ip=<IP>`：踢下线当前用户指定 IP；省略 `ip` 时踢下线所有当前在线设备。
 - `POST /user/subscription/devices/kick-all`：踢下线当前用户全部在线设备。踢设备返回 `{ taskId, requested, notifiedNodes, kickedIps }`，只向当前报告了该用户设备的在线节点发送任务；设备管理服务未注入时返回 400。
@@ -58,7 +58,7 @@
 - `DELETE /user/proxy-pool/keys/:id`：删除凭据并即时从节点配置中吊销。⭐
 - `POST /user/proxy-pool/keys/:id/rotate-password`：轮换凭据密码（旧密码立即失效）。⭐
 - `POST /user/proxy-pool/keys/:id/rotate-token`：轮换免登录拉取令牌。⭐
-- `GET /user/proxy-pool/nodes?lineIds?`：列出可用的 Mixed 直连代理端点。⭐
+- `GET /user/proxy-pool/nodes?keyId&lineIds`：当前用户/Key的授权Mixed直出及上游中继端点与容量资格，详见§5。⭐
 - `GET /user/proxy-pool/export?format&protocol&keyId&lineIds&token`：多格式导出与免登录拉取。⭐ 支持 Cookie 登录态或 `?token=<exportToken>` 二选一。
 
 ### 1.2.1 帮助中心与使用文档 (`/help`)
@@ -124,14 +124,26 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `GET /admin/lines?page&pageSize&search&type&status&tag`：分页查询线路，可按名称/地址、类型、启停状态和标签筛选；响应包含 `tag`、`listen`、`protocolType`、脱敏后的 `params`、`certificateId`/`certificate` 简要关联、`targetLineId`/`targetLine` 目标摘要、`topology`（入口/落地节点与端口）、最终生效的 `serverHost/serverPort`、原始 `endpointOverrides` 以及测速快照（`lastLatencyMs`、`lastTestedAt`、`lastTestStatus`、`lastTestMessage`）。旧客户端仍可读取只读 `targetInbound` 摘要。⭐
 - `GET /admin/lines/:id`：查询线路详情及入口/落地节点关联、协议参数、证书简要信息、端点解析结果与最新测速快照。⭐
 - `POST /admin/lines`：创建线路。⭐ 请求 `{ name, tag?, listen?, type?, protocolType?, params?, relayMode?, targetLineId?, upstreamNodeId?, entryNodeId?, entryPort?, landingNodeId?, landingPort?, allowLanAccess?, certificateId?(UUID|null), endpointOverrideEnabled?, serverHost?, serverPort?, serverName?, host?, landingEndpointOverrideEnabled?, landingServerHost?, landingServerPort?, trafficRate?, tags?, level?, sortOrder?, isPublic?, status?, speedLimitMbps?, tcpFastOpen?, tcpMultiPath?, udpFragment?, udpTimeout?, proxyProtocol?, proxyProtocolAcceptNoHeader? }`；`relayMode` 支持 `BLIND_FORWARD`、`PROTOCOL_PROXY`、`TARGET_LINE` 与 `UPSTREAM_NODE`；当为 `UPSTREAM_NODE` 时落地目标指向已导入的外部上游节点（`upstreamNodeId` 必填），入口 VPS 自动生成对应 Outbound 并纳管入口流量计费。同节点端口冲突校验按实际传输层（TCP/UDP）重叠判定：`SHADOWSOCKS`、`DIRECT` 与 `BLIND_FORWARD` 盲转发入口均按 TCP+UDP 双栈占用校验，禁止与同节点同端口的 TCP 或 UDP（`HYSTERIA2`/`TUIC`）线路冲突。其余参数与约束见下文。⭐
+- `UPSTREAM_NODE` 入口支持开启逐用户鉴权的MIXED、HTTP、SOCKS，必须显式params.usersEnabled=true；普通订阅仍用套餐/额外授权用户及内部探针。只有proxyPoolEnabled开启的MIXED才按§5额外注入授权/容量分配的派生ProxyKey，不注入裸pk_；客户端以SOCKS5或HTTP CONNECT接入。无鉴权入口及共享SS仍不可作为计费入口。
+- **EXTERNAL 外部直发线路**：创建请求 `{ name, type: 'EXTERNAL', upstreamNodeId, tags?, level?, sortOrder?, isPublic?, status? }`，默认 `DISABLED`、`isPublic=false`。没有 entryNodeId/entryPort/证书/监听/本地倍率或限速设置；协议、端点、连接从上游动态解析。返回入口与 `topology.entry` 为 null，不返回外部秘密。DIRECT/RELAY 必须保留真实入口。公开启用会被 ALL 套餐包含；用户实际获取需通过既有资格和线路授权。
 - `PATCH /admin/lines/:id`：部分更新线路，字段同创建请求。⭐ 保存后触发全量 Agent 配置推送防抖。
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
 - `POST /admin/lines/:id/test`：解析并返回最终对外端点、入口/落地节点与端口，不建立真实连接。⭐
-- `POST /admin/lines/:id/speedtest`：对单条线路执行即时端到端测速（要求全链路 100% 跑通并经 Sing-box 代理收到目标 HTTP 204/200 响应才判定为测速成功；若任一阶段失败或超时，整体状态记为 `ERROR` 或 `TIMEOUT` 且延迟置为 `null`，不进行 TCP 握手降级误报；使用内部专用探针凭据且不计入账单；前端客户端为单条测速配置 45s 超时预算以完整接收阶段诊断报告），响应 `{ lineId, lineName, latencyMs, status, message, testedAt, mode, topology, stages }`，并持久化到 Line 最新快照；其中 `stages` 包含多阶段耗时与状态（`master_ready` 主控探针准备、`entry_handshake` 入口网络握手、`relay_transit` 中继转发准备、`target_http` 目标端到端 HTTP 204/200 探测），支持在管理前端以弹窗展示完整的链路测试流程与异常诊断。⭐
-- `POST /admin/lines/speedtest-all`：受控并发（限制并发度 4）批量测试所有已启用的线路（前端客户端配置 120s 超时预算），响应 `{ total, success, failed }`。⭐
+- `POST /admin/lines/:id/speedtest`：创建真实整线路端到端拨测任务，HTTP 202 `{taskId,state,total}`，可选 `{policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY'}`；默认 Mihomo 客户端使用系统专用探针凭据，不计用户账单。通过 `/admin/probe-tasks` 轮询/取消，不再返回旧同步 topology/stages 结果；TCP 检查不能代替成功。
+- `POST /admin/lines/speedtest-all`：同样返回 HTTP 202，匹配全部启用线路，统一全局连接/进程限额；前端不用 120 秒挂起请求，任务结果分页与状态异步获取。
 - `POST /admin/lines/batch-status`：批量启用/禁用线路。⭐ 请求 `{ ids: UUID[], status: "ACTIVE"|"DISABLED" }`。
 - `PATCH /admin/lines/reorder`：批量调整排序。⭐ 请求 `{ items: [{ id, sortOrder }] }`。
+
+##### 最终落地代理出站
+
+创建/编辑线路接收可选 `egressProxy: {protocol:'HTTP'|'SOCKS5',serverHost,serverPort,authEnabled,username?,password?,udpEnabled?} | null`。HTTP 为非 TLS CONNECT 代理，仅 TCP；SOCKS5 固定 v5，UDP 默认 false，开启需代理支持 UDP ASSOCIATE。地址为域名/IPv4/IPv6，端口 1～65535；拒绝 URL、未知字段、错误认证组合和 HTTP UDP。POST 省略/null 使用默认出站，PATCH 省略保留、null 清除；对象完整提交非秘密字段，认证开启且密码省略保留原密码，首次认证必须提供非空密码。关闭认证清除凭据，显式空密码报错。
+
+DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地执行，入口连接落地的路径不变。TARGET_LINE 继承目标 DIRECT 出站，不允许自身配置；UPSTREAM_NODE/EXTERNAL 不叠加。切换不支持模式必须显式清除旧配置，复制保留加密配置且副本默认禁用。
+
+管理响应返回脱敏 `egressProxy`（无 password，增加 hasPassword）和 `effectiveEgress:{sourceLineId,nodeId,inherited,proxy}`，不返回原始密文；节点详情关联同样剥离密文。用户摘要与所有客户端订阅不返回出站设置或凭据。目标仍为域名时交给代理解析，不主动本地解析成 IP；不保证客户端已解析的 IP 可还原，也不承诺远端 DNS 的私网安全性。
+
+执行节点有指定出站时，节点高级覆盖不得接管 inbounds/outbounds/route/dns，线路保存/启用与节点覆盖更新均校验冲突。来源白名单/原私网拒绝优先于出站路由，不支持的 UDP 拒绝；代理断开、认证错误和出站配置损坏没有 DIRECT 兜底。保存仅代表提交配置，在线 WS 防抖下发、HTTP 下一轮拉取，Agent 预检及应用回执沿用原契约；应用失败仍保留 last-good，不宣称已切换或即时终止旧连接。目标线路配置版本纳入桥接拨测失效，旧结果不得写回。配置同步使用失效代数防止旧构建污染缓存，各防抖批次只结算本轮等待者。
 
 #### 证书管理
 - `GET /admin/certificates?page&pageSize&search`：分页查询证书，支持按名称、主题、签发者和 SAN 搜索；响应为 `{ data, total, page, pageSize }`，返回 SAN、签发者、有效期、状态（`VALID`/`EXPIRING`/`EXPIRED`/`NOT_YET_VALID`）和关联线路数，不返回 PEM 私钥。⭐
@@ -142,18 +154,30 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `DELETE /admin/certificates/:id`：删除未被线路引用的证书；仍有关联线路时返回 `409`。⭐
 
 #### 上游订阅与节点管理 (`/admin/upstream`)
-- `GET /admin/upstream?page&pageSize&search&status`：分页查询上游订阅列表，响应包含订阅名称、来源类型（URL/文本）、解析格式、自动更新周期、上次同步状态、流量用量与节点总数。⭐
-- `GET /admin/upstream/:id`：查询指定上游订阅详情。⭐
-- `POST /admin/upstream`：创建上游订阅。⭐ 请求 `{ name, sourceType?, format?, url?, content?, customHeaders?, autoUpdate?, updateIntervalMins? }`；创建成功后自动异步触发一次初始同步。
-- `PUT /admin/upstream/:id`：修改上游订阅配置。⭐
-- `DELETE /admin/upstream/:id`：删除上游订阅并级联删除所属节点。⭐ 若有中转线路正引用该订阅下的节点，自动将相关线路置为 `DISABLED` 并清空引用，同时向节点推送配置。
-- `POST /admin/upstream/:id/sync`：立即强制同步指定的上游订阅。⭐ 拉取内容并执行节点差异比对，平滑保留存量节点配置，若上游删除节点则自动停用关联的中继线路。
-- `POST /admin/upstream/probe-all?subscriptionId`：并发对全部或指定订阅的有效节点执行 TCP 连通性测速。⭐
-- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status&isDirectSub`：分页多维度筛选上游解析节点列表。⭐
-- `PUT /admin/upstream/nodes/:nodeId/direct-sub`：切换指定节点是否直接合并入用户客户端订阅。⭐ 请求 `{ isDirectSub: boolean }`。
-- `PUT /admin/upstream/nodes/:nodeId/status`：启用或停用单个外部节点。⭐ 若停用节点，自动联动停用引用它的中继线路。
-- `POST /admin/upstream/nodes/:nodeId/probe`：单节点 TCP 握手连通性测速。⭐ 响应 `{ probe: { latencyMs, status, message }, node }`。
-- `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：快捷导出外部节点为标准协议 URI 文本列表或 JSON。⭐
+- `GET /admin/upstream?page&pageSize&search&status`：真实分页来源列表；URL/Header 掩码，content 不返回，提供 hasContent。`format` 是配置，`detectedFormat` 为最近检测结果；`lastSyncAt` 与 `lastSuccessAt` 分离；用量字节值为十进制字符串或 null，未知不等于无限。
+- `GET /admin/upstream/:id`：管理员按需读取详情 `{ subscription }`，详情含解密后的 URL、自定义 Header 和 content；普通用户不能调用。
+- `POST /admin/upstream`：创建源 `{ name, sourceType?, format?, url?, content?, customHeaders?, autoUpdate?, updateIntervalMins?, status? }`；缺省 sourceType=URL 仍需有效 URL；TEXT 需非空配置；Header 值必须为字符串，更新间隔 10~43200 分钟。status 默认 ACTIVE，启用源创建后异步首次同步，DISABLED 不触发拉取。
+- `PUT /admin/upstream/:id`：按合并后来源类型验证。TEXT 未提交 content 则保持原文，不接受空文本替换；可切换 ACTIVE/DISABLED。状态变化提交后清配置缓存，源禁用立即停止其直发与中继，重新启用不复活此前自动禁用的线路。
+- `DELETE /admin/upstream/:id`：显式删除源并级联删除节点，在事务中停用关联 Line、清空引用，提交后通知 Agent。
+- `POST /admin/upstream/:id/sync`：同源串行完整同步，响应提供 `success,nodeCount,format,created,updated,missing,diagnostics{recognized,duplicates,skipped},userInfo`；元信息字节值字符串化。网络/解析失败保留 last-good，不以部分结果删除节点；歧义身份拒绝提交；节点缺失保留引用并停用关联线路，重现不自动启用。AUTO 不写成固定格式，参数变化提交后刷新 WS/HTTP 配置。
+- `POST /admin/upstream/probe-all?subscriptionId`：创建全量匹配资源的真实端到端任务，响应 HTTP 202 `{ taskId,state,total }`；可选 body `{ policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY' }`，默认前者；subscriptionId 经 UUID 校验。单任务超过 10000 个资源明确拒绝，不静默截断。
+- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status`：真实服务端分页与 tag 筛选，total 为筛选总数；返回 presenceStatus/sourceKey/关联线路等安全摘要，不包含 params/rawConfigJson。旧 isDirectSub 参数不支持。
+- `PUT /admin/upstream/nodes/:nodeId/status`：DTO 验证 `{ status: 'ACTIVE'|'DISABLED' }`；禁用节点停用关联线路并刷新配置。
+- `POST /admin/upstream/nodes/:nodeId/probe`：同样返回 HTTP 202 拨测任务，不再返回同步 TCP probe/node。Master 使用独立 Mihomo 客户端和真实上游凭据访问指定目标，UDP 协议也做真实拨测；无能力/环境标识为 UNSUPPORTED/ENVIRONMENT_UNAVAILABLE，不用 TCP 值冒充端到端延迟。
+- `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：管理员导出明确的规范化 URI 或 Sing-box outbound JSON；通过同一连接编译器保留 TLS/Reality/Transport/plugin，不能表示的协议组合报明确错误，不以含有 `://` 的任意 JSON 当原始 URI。
+- `GET /admin/upstream/:id/sync-status`：返回 QUEUED/FETCHING/PARSING/COMMITTING/IDLE 阶段及最近同步/成功时间、状态和脱敏诊断；不返回连接秘密。
+- **BREAKING CHANGE**：删除 `/nodes/:nodeId/direct-sub`、isDirectSub 字段和 fingerprint。直接分发通过 EXTERNAL Line 授权；不提供旧接口、转换或旧数据回填。
+
+#### 统一客户端拨测任务 (`/admin/probe-tasks`)
+
+- `GET /admin/probe-tasks/:taskId`：状态 QUEUED/RUNNING/COMPLETED/CANCELED/FAILED、total/completed/success/failed/skipped、阶段及时间；任务状态内存保留，完成 15 分钟后过期，重启后不可恢复。
+- `GET /admin/probe-tasks/:taskId/results?page&pageSize`：分页安全结果，pageSize 1~200。结果含 subjectType/id、status/errorCode、实际 engine/version、fallbackReason、mihomoCompatibility、measurement=PROXY_HTTP_DELAY、perspective=MASTER、routeKind、targetId/targetHost、testedAt/durationMs/latencyMs、configHash/applied；不含连接参数、凭据、控制 Secret 或原始日志。
+- `DELETE /admin/probe-tasks/:taskId`：幂等请求取消；完成态保持不变。关闭前端窗口只停止轮询，不自动取消服务器任务。
+- `GET /admin/client-kernels/status`：管理员查看 Mihomo/Sing-box 可执行性、版本及兼容依赖画像，不输出秘密。
+- 状态 SUCCESS/TIMEOUT/ERROR/UNSUPPORTED/ENVIRONMENT_UNAVAILABLE/CANCELED/STALE/SKIPPED 分开；失败延迟为 null，环境或取消不更改业务启停。资源配置/关联状态变更后旧结果 STALE，不能覆盖新配置。单资源重复任务去重，最多 20 个等待任务、单管理员 2 活跃任务、全局 4 连接/2 内核进程；任务 30 分钟截止，结果分页。
+- 回退只在能力白名单明确不支持 Mihomo 时生效；`probeSingboxFallbackEnabled=false` 或 MIHOMO_ONLY 禁止回退。Mihomo 超时、鉴权/配置/环境错误不触发回退；Sing-box 兼容成功不代表 Mihomo 主客户端验证通过。
+- 测量均为真实代理请求延迟，不是带宽/丢包/ICMP RTT。上游/EXTERNAL 路径 Master→上游→目标，自建/中继路径 Master→入口→实际出口→目标；结果不能互相代替。默认目标 HTTPS generate_204，严格核验预期 HTTP 状态、目标证书、不跟随重定向，临时内核不读取上游策略组/规则。
+
 
 #### 系统设置
 - `GET /admin/settings`：读取全量设置。⭐ 响应包含 `docs/DATA_MODELS.md` §SystemSetting 列出的全部强类型字段（含 SMTP、邮箱验证、CAPTCHA、统一时区 `systemTimezone`、速率色彩阶梯 `speedLimitColorTiers` 与单位换算 `speedLimitUnitConversionEnabled`、存储日志策略、结构化公告列表 `siteAnnouncementsJson`、首页配置 `landingEnabled` / `landingHero*` / `landingShow*` / `landingCustom*Json`、多设备限制 `deviceLimitEnabled`（默认 `true`）与在线活跃窗口 `deviceOnlineWindowSecs`（默认 60 秒）等）；`smtpPass` 与 `turnstileSecretKey` 有值时均返回 `********`。存储日志策略包括 `trafficHourlyRetentionDays`（默认 90）、`nodeRateRetentionDays`（默认 30）、`logsRetentionDays`（默认 7）、`logsMaxCount`（默认 100000）、`logsMinIngestLevel`（默认 `INFO`）、`agentLogMaxSizeMb`（默认 50）和 `agentLogMaxFiles`（默认 5）。
@@ -177,7 +201,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - **审计与限流**：分类管理、批量生成、作废、软删除/恢复与清理均写系统日志（`module=REDEEM_CODE`，含操作者与必要 ID/计数，不含卡密明文）；用户兑换按用户限流（默认 5 次/分钟）。
 
 #### 直连代理池管理（v0.9.0，完整规约见 §5）
-- `GET /admin/proxy-pool/overview`：直连代理池总览。⭐ 响应 `{ totalKeys, activeKeys, disabledKeys, trafficUsedBytes, endpointCount, endpoints[] }`。
+- `GET /admin/proxy-pool/overview`：代理池总览，返回凭据规模/累计流量、endpointCount/endpoints和nodeCapacities（used/limit/excluded），详见§5。⭐
 - `GET /admin/proxy-pool/keys?page&pageSize&search&userId&isActive&sortBy`：分页检索全部用户的直连代理凭据。⭐ 列表项附带 `user{ id, email, uid, isActive }`。
 - `POST /admin/proxy-pool/keys/:id/active`：管理员启用/停用指定凭据。⭐ 请求 `{ isActive }`；变更后立即重下发在线节点配置。
 - `DELETE /admin/proxy-pool/keys/:id`：强制删除指定凭据。⭐
@@ -200,7 +224,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `GET /admin/subscription-templates/:id`：查询模板详情。⭐
 - `POST /admin/subscription-templates`：创建模板。⭐ 请求含 `proxyGroups?`（支持 `all` 动态节点展开、`DIRECT`/`REJECT` 与策略组引用）、`ruleSets?`、`dnsConfig?`、`customInjectYaml?`、`customInjectJson?`、`isDefault?`。
 - `PATCH /admin/subscription-templates/:id`：部分更新模板；YAML/JSON 覆写在服务端校验语法。⭐
-- `POST /admin/subscription-templates/preview`：渲染模板草稿。⭐ 请求 `{ format: "clash"|"singbox", template: { proxyGroups?, ruleSets?, dnsConfig?, customInjectYaml?, customInjectJson? } }`；优先使用当前可用线路，无可用线路时回退内置多协议 Mock 节点池。服务端会同时并发执行 Sing-box 与 Mihomo (Clash Meta) 双内核真实验证诊断，响应包含 `content`、`stats{totalNodes,matchedNodes,proxyGroupsCount,rulesCount}`、`warnings[]`、`singboxCheck{ executed, passed, message?, kernelVersion? }` 以及 `mihomoCheck{ executed, passed, message?, kernelVersion? }`。⭐
+- `POST /admin/subscription-templates/preview`：请求 `{ format:'clash'|'singbox',template:{proxyGroups?,ruleSets?,dnsConfig?,customInjectYaml?,customInjectJson?} }`；Clash 默认只执行 Mihomo 验证，Sing-box JSON 执行明确兼容验证，不再无条件同时生成和校验两种格式。响应 `{format,content,stats,warnings,kernelCheck}`；kernelCheck 含 engine/engineVersion、status=PASSED/FAILED/UNAVAILABLE/UNSUPPORTED/EXTERNAL_RESOURCES_REQUIRED、executed、scope=FULL/PARTIAL、diagnostics。内核缺失不能 passed，缺 GeoIP/provider/本地证书等依赖明确报资源要求，不通过替换规则假装完整配置已验证。旧 singboxCheck/mihomoCheck 字段删除。
 - `POST /admin/subscription-templates/:id/duplicate`：复制模板并命名为 `${name} (副本)`；副本重置 `isDefault=false` 与 `isBuiltin=false`。⭐
 - `DELETE /admin/subscription-templates/:id`：删除非默认、非内嵌且未被套餐使用的模板；内嵌默认模板只能通过 `PATCH` 修改，删除返回 `409`。⭐
 
@@ -302,6 +326,7 @@ Agent 通过握手 Header `X-Agent-Token: <AGENT_TOKEN>` 鉴权；URL 不携带�
 #### 2. 配置全量同步 (`config_sync`) —— Master -> Agent
 当节点首次连接成功、或主控端发生用户/线路变动时，Master 向 Agent 实时推送最新的 Sing-box 运行配置。
 `PROTOCOL_PROXY` 与 `TARGET_LINE` 的跨节点出站统一使用系统内部中继凭证，不借用任何普通用户凭证；对应出口入站仅注入该内部凭证（`TARGET_LINE` 追加到目标直连入站）。内部凭证固定为 `email=__riricloud_relay_transit__`、`uuid=00000000-0000-4000-8000-000000000002`、密码 `riricloud-internal-relay-transit-secret`，仅允许在 Master 生成的节点配置中使用。Master 在生成各协议入站时，普通用户的 `name` 字段编码为复合标签 `<email_or_uuid>::<lineId>`，使 Sing-box 的 V2Ray stats API 原生支持按线路精准切分用户流量统计；内部中继凭证保持固定不变。Agent 上报该复合凭证后，Master 端自动拆解用户与所属线路，精准落库 `TrafficLog` 并按线路倍率折算扣除套餐配额，彻底解决单节点多入站与中转线路归属问题。`experimental.v2ray_api.stats` 的 `users` 自动注册所有生成的复合标签，并下发 `inbounds` 入站 Tag 列表。
+用户名密码协议不能把含冒号统计标签放进Basic userinfo：普通订阅登录名为riri_login_编码并还原用户/lineId；ProxyKey实际登录为pk_line_编码原始Key/lineId，账号uuid、系统内部凭据与外部直发原用户名不变。两类本地身份都由服务端统一编解码，禁止客户端拼裸统计标签。
 Agent 收到后原子落盘（临时文件 + rename），并与最近一次配置做字节比对：内容变化则优雅重启内核使配置生效（sing-box 无原生 reload，重启即热应用）；内容相同且内核存活则跳过，避免无谓重启。
 ```json
 {
@@ -752,81 +777,41 @@ Agent 默认单请求超时 10 分钟、响应上限 256 MiB、单节点镜像�
 
 ---
 
-## 5. 直连代理池协议 (Proxy Pool, v0.9.0)
+## 5. 标准代理池协议（统一授权与上游中继）
 
-面向爬虫、指纹浏览器与脚本工具的**标准直连代理**能力，与面向客户端翻墙的订阅体系完全解耦：不暴露账号密码、UUID 与订阅 Token，使用独立 `ProxyKey` 凭据，流量统一计入主账户配额。
+面向爬虫与脚本的标准代理池使用独立 ProxyKey，不暴露账号密码、订阅 UUID/Token 或上游秘密；流量共享用户/订阅配额，线路权限仍受套餐与额外授权约束。
 
-### 5.1 端点模型与凭据注入
+### 5.1 显式端点、统一授权与容量
 
-- **端点来源**：`Line` 中 `protocolType = "MIXED"`、`type = "DIRECT"`、`status = "ACTIVE"`、`isPublic = true` 且入口节点未禁用的线路即为一个直连代理端点。同一 `mixed` 入站在**单端口**上同时承接 SOCKS5 与 HTTP CONNECT。
-- **对外地址解析**：`endpointOverrideEnabled` 为真且配置了 `serverHost`/`serverPort` 时使用覆盖值，否则回退为入口节点 `serverHost` 与线路 `entryPort`。
-- **强制鉴权**：`mixed`/`socks`/`http` 入站在生成节点配置时**一律强制启用用户认证**。Sing-box 中 `users` 为空的这三类入站等价于开放代理，属于安全红线，因此不接受 `params.usersEnabled = false`。
-- **明文优先、TLS 按需**：默认标准 TCP 明文监听以保证原生工具 100% 兼容；`params.tls` 支持按需挂载系统证书中心的一键 TLS（`mode = tls` 关联 `certificateId`，或 `mode = acme`），也支持节点本地证书路径。这三类协议的 TLS 选项仅提供「关闭 / 标准 TLS / ACME」，不提供 Reality。
-- **凭据注入**：`buildConfigSync` 将当前**仍具备订阅资格**的用户的有效 `ProxyKey` 注入 `inbounds[].users`，形态为 `{ "username": "pk_<24 位十六进制>", "password": "<独立密码>" }`，单节点上限 512 条。
-- **用户名必须冒号安全（重要实现约定）**：Sing-box 的 HTTP CONNECT 认证走 Go `net/http.parseBasicAuth`，按**首个 `:`** 切分用户名与密码；同时用户在 `socks5://user:pass@host` 与 `http://user:pass@host` 中也是按首个 `:` 解析 userinfo（curl 等通用客户端行为一致）。因此代理池凭据用户名统一使用**裸 `pk_xxxx`**，不追加 `::lineId` 复合后缀 —— 否则 `http://` 与 `socks5://` 两种形态都会认证失败。线路归属改由节点级回退解析（取该节点上 `status = ACTIVE` 的首条线路）确定，符合“单节点单 Mixed 端点”的产品设计。
-  - `parseTrafficCredential` 仍保留 `::lineId` 复合解析能力，一旦出现复合凭证也能正确映射回归属用户，便于后续扩展。
-- **来源 IP 白名单**：配置了 `whitelistIps` 的凭据会在 `route.rules` 中生成一条逻辑规则，语义为「命中该入站 + 命中该凭据 + 来源不在白名单」→ `reject`：
+- `Line.proxyPoolEnabled=true`、ACTIVE、真实有效入口和 MIXED 协议才参与；支持 `DIRECT` 本机直出与 `RELAY + UPSTREAM_NODE` 上游中继，其他中继/EXTERNAL/单HTTP/SOCKS不参与。新增线路开关默认关闭，上游入口必须 `params.usersEnabled=true`。
+- `ProxyPoolAccessService` 批量解析用户、有效套餐快照/额外授权、Key、线路/上游状态，列表、导出、Agent注入共用此解析和绑定分配，不按协议自动注入Key。私有线路仅额外授权可用，公共线路须满足 ALL/TAGS/EXPLICIT。有效权益含ACTIVE/CANCELED剩余期限、未耗尽、账号启用与邮箱策略；缺有效套餐明确拒绝。
+- 入口节点禁用、全局publicLinesEnabled关闭、源禁用/节点缺失/到期/耗尽/不可表达出站均不交付。OFFLINE单独显示，不等于权限不可用或已部署；列表表示期望配置资格，不宣称Agent已应用。
+- 每用户最多20Key；每节点最多512个Key-Line绑定，先过滤资格再按Key createdAt/id、Line createdAt/id稳定分配，不受sortOrder影响。被排除候选显示CAPACITY_EXCLUDED，管理总览显示used/limit/excluded；列表/导出不能把未分配凭据标可用。
+- 地址/端口继承入口或显式覆盖，IPv6加方括号。TLS仅向标准客户端提供HTTPS代理，普通SOCKS5不支持TLS入口；text不能表达TLS所以拒绝该端点，JSON提供能力与TLS/SNI，URI保留https://。
 
-```json
-{
-  "route": {
-    "rules": [
-      {
-        "type": "logical",
-        "mode": "and",
-        "rules": [
-          { "inbound": ["line-<lineId>"] },
-          { "auth_user": ["pk_0123456789abcdef01234567"] },
-          { "source_ip_cidr": ["203.0.113.10", "198.51.100.0/24"], "invert": true }
-        ],
-        "action": "reject"
-      }
-    ]
-  }
-}
-```
+### 5.2 派生登录名、白名单与账务
 
-> ⚠️ `invert` **必须**放在内层子规则上。若放在顶层规则，`NOT(inbound && auth_user && source_ok)` 会把其他凭据与订阅用户的流量一并反转命中，导致整条入站被误拒绝。相同白名单的多个凭据会合并进同一条规则的 `auth_user` 数组。
+- **BREAKING CHANGE**：裸 `pk_<24hex>` 仅为Key原始标识，不再接受新连接。实际登录名为 `pk_line_` +规范Base64URL JSON `[原始Key用户名,lineId]`（UUID、长度≤255、无冒号），每端点由服务端导出；Key ID/密码/exportToken保留，用户须重新导出旧脚本。
+- 仅为当前用户有权限且容量已分配的入口注入派生用户名/密码；订阅用户及内部探针凭据保持隔离，ProxyKey仍不参与订阅设备数量限制，不新增套餐级用户速率承诺，物理端口限速仍沿旧链路。
+- 来源IP白名单使用实际派生用户名和入站tag，logical/and内层invert拒绝不允许来源。拒绝规则放在中继转发前，不误伤其他Key/订阅用户，出口明确指定上游，无DIRECT故障兜底。
+- gRPC用户累计计数按派生身份独立注册，Master解码Key+lineId，验证属于上报节点入口，按线路倍率在既有短事务累计User/Subscription/ProxyKey、游标及遥测delta。新身份malformed/未知/跨节点不会回退节点首线路计费；旧裸Key迟到统计沿保留游标处理，不重置计数或重写历史账单，Key停用后的合法迟到统计仍结算。
+- Key启停/密码/白名单、用户资格/授权、线路/上游状态和套餐匹配变更触发原配置失效与WS/HTTP下发；到期由既有巡检处理。新连接撤销以Agent实际应用配置为准，网络分区不承诺即时撤销，也不承诺立即断开所有既有长连接。
 
-### 5.2 流量账务与熔断
+### 5.3 API与导出v2
 
-- Agent 心跳上报的 v2ray stats 累计快照中，`pk_` 前缀凭据会经 `ProxyKey.username` 映射回 `userId`，在**同一事务**内：
-  1. 写入 `TrafficLog`（同时落 `lineId` 与 `proxyKeyId`）；
-  2. 按线路倍率折算后累加 `User.trafficUsedBytes` 与 `Subscription.trafficUsedBytes`；
-  3. 累加 `ProxyKey.trafficUsedBytes` 并刷新 `lastUsedAt`。
-- **超额熔断**：本批次入账后触及配额的账号会触发一次全局 `config_sync` 重下发，`buildConfigSync` 的资格过滤会把该账号的 `ProxyKey` 与订阅凭证同时剔除，凭据在数秒内失效。账号停用、订阅过期等场景复用同一过滤链路。
+路径保持 `/user/proxy-pool/*` 与 `/admin/proxy-pool/*`，默认JWT/RBAC不变。Key管理仍提供GET/POST keys、PATCH/DELETE keys/:id、POST rotate-password/rotate-token；凭据响应no-store/no-referrer，禁止持久存入Web Storage。密码轮换不改线路用户名，Token轮换使旧拉取Token失效。
 
-### 5.3 管理与导出接口
+`GET /user/proxy-pool/nodes?keyId&lineIds`：绑定CurrentUser，返回 `{keyId:string|null,endpoints:[],excludedCount}`。缺省Key选创建最早的启用Key；无Key返回空列表，无权益返回403 `PROXY_POOL_ACCESS_DENIED`。keyId必须UUID；lineIds显式提供时须1~200个逗号分隔UUID、去重规范化，空/非法不扩大查询。
 
-| 方法 | 路径 | 说明 |
-| :--- | :--- | :--- |
-| `GET` | `/api/v1/user/proxy-pool/keys` | 列出凭据，返回 `{ keys[], limit }`（`limit` 为单账号上限 20） |
-| `POST` | `/api/v1/user/proxy-pool/keys` | 创建凭据，请求 `{ name, whitelistIps? }` |
-| `PATCH` | `/api/v1/user/proxy-pool/keys/:id` | 更新 `{ name?, whitelistIps?, isActive? }` |
-| `DELETE` | `/api/v1/user/proxy-pool/keys/:id` | 删除凭据（节点配置即时吊销） |
-| `POST` | `/api/v1/user/proxy-pool/keys/:id/rotate-password` | 轮换密码 |
-| `POST` | `/api/v1/user/proxy-pool/keys/:id/rotate-token` | 轮换免登录拉取令牌 |
-| `GET` | `/api/v1/user/proxy-pool/nodes?lineIds?` | 可用 Mixed 端点列表（含在线状态与延迟快照） |
-| `GET` | `/api/v1/user/proxy-pool/export` | 多格式导出（见下） |
-| `GET` | `/api/v1/admin/proxy-pool/overview` | 管理端总览 |
-| `GET` | `/api/v1/admin/proxy-pool/keys` | 管理端分页检索全部凭据 |
-| `POST` | `/api/v1/admin/proxy-pool/keys/:id/active` | 管理端启停凭据 |
-| `DELETE` | `/api/v1/admin/proxy-pool/keys/:id` | 管理端删除凭据 |
+端点白名单字段：lineId/name/region/tags/protocol=MIXED、host/port、nodeId/nodeName/nodeStatus/online、lineType、routeKind=DIRECT|UPSTREAM_RELAY、status=AVAILABLE|CAPACITY_EXCLUDED、reason、tls/serverName、supportedProtocols、trafficRate和安全lastProbe及其派生延迟/时间/状态。列表不含密码、用户名、来源配置或上游凭据；旧延迟及配置过期记录不能显示为当前成功。
 
-**导出接口 `GET /api/v1/user/proxy-pool/export`**
+`GET /user/proxy-pool/export?keyId&lineIds&format=text|uri|json&protocol=socks5|http&token`：登录用户或有效exportToken二选一；Token所属用户每次重查权益、Key、线路权限及容量，不因持有Token绕授权。停用/非法Token401，指定他人Key不暴露详情，Key停用409 `PROXY_POOL_KEY_DISABLED`。
 
-| 参数 | 取值 | 说明 |
-| :--- | :--- | :--- |
-| `format` | `text`（默认）/ `uri` / `json` | 导出格式 |
-| `protocol` | `socks5`（默认）/ `http` | 仅影响 `uri` 前缀 |
-| `keyId` | UUID | 指定凭据；省略时使用账号下最近创建的有效凭据 |
-| `lineIds` | 逗号分隔 UUID | 按端点过滤；省略时导出全部可用端点 |
-| `token` | 字符串 | 免登录拉取令牌（`ProxyKey.exportToken`） |
+- 显式lineIds包含无权限/失效/容量排除/协议不兼容端点时409 `{code:'PROXY_POOL_SELECTION_UNAVAILABLE',lineIds}`；省略选择时只导出可分配兼容端点，无结果404，不默认为其他线路替换选择。
+- JSON v2：`{version:2,generatedAt,key:{id,name,username},proxies:[...端点安全字段,username:实际派生登录名,password],excludedCount}`。顶层username只是原始标识，每个proxy才是登录凭据SSOT，代码示例必须消费它。
+- URI每行`socks5://`、`http://`或`https://`真实端点凭据；text每行`host:port:实际用户名:密码`，IPv6方括号，TLS端点不输出text/普通SOCKS5。
+- 所有导出no-store；text/URI排除数通过`X-Proxy-Pool-Excluded-Count`响应头提供，JSON在body提供。前端空选择不发默认全量请求，容量变化清理失效选择，不静默加入新线路。
 
-鉴权：该路由同时声明 `@Public()` 与 `@OptionalAuth()`，因此 **Cookie/Authorization 登录态与 `?token=` 二选一** 即可；两者都缺失返回 401。响应体：
+`GET /admin/proxy-pool/overview` 保留凭据规模/流量/endpointCount/endpoints，并新增 `nodeCapacities:[{nodeId,nodeName,used,limit,excluded}]`；管理Key分页/启停/删除接口保持原路径与ADMIN限制。
 
-- `format=text`（`Content-Type: text/plain; charset=utf-8`）：每行 `IP:Port:User:Pass`，可直接粘贴进 AdsPower / Hubstudio 等指纹浏览器批量导入框。
-- `format=uri`（`text/plain`）：每行 `socks5://user:pass@host:port` 或 `http://user:pass@host:port`。
-- `format=json`（`application/json`）：`{ version, generatedAt, key, proxies[] }`，`proxies[]` 含 `name`、`region`、`tags`、`node`、`nodeId`、`lineId`、`protocol`、`host`、`port`、`username`、`password`、`latencyMs`、`lastTestStatus`。
-
-所有导出响应均带 `Cache-Control: no-store`。免登录拉取令牌可通过 `rotate-token` 随时轮换，旧令牌立即失效；凭据停用或归属账号停用时令牌同样失效（401）。
+升级顺序：停止旧Master→备份双库→追加迁移→升级Master/Web→核对Agent应用新配置→重新导出客户端。迁移仅新增开关并回填旧公开启用的有效DIRECT/MIXED，不开放中继、不删除Key/余额/游标；回滚配套数据库备份，不能仅降级前端。

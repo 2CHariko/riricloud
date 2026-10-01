@@ -1,3 +1,5 @@
+import { encryptSecret } from '../common/secret-crypto';
+import { formatAuthUserName } from '../common/inbound';
 import { Test } from '@nestjs/testing';
 import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +13,8 @@ import {
 } from '../common/constants';
 import { AgentGatewayService } from './agent-gateway.service';
 import type { AgentOnlineDeviceReportItem, HeartbeatData } from './agent-message';
+import { ProxyPoolAccessService } from '../proxy-pool-access/proxy-pool-access.service';
+import { formatProxyLineUsername } from '../proxy-pool/proxy-key.util';
 
 describe('AgentGatewayService', () => {
   let service: AgentGatewayService;
@@ -44,6 +48,7 @@ describe('AgentGatewayService', () => {
   const deploymentCreate = jest.fn();
   const deploymentUpdate = jest.fn();
   const proxyKeyFindMany = jest.fn();
+  const poolBindings = { getNodeBindings: jest.fn(async () => []) };
   const userFindUnique = jest.fn();
   const prisma = {
     $transaction: jest.fn(async (callback: (value: typeof tx) => Promise<void>) => callback(tx)),
@@ -66,6 +71,7 @@ describe('AgentGatewayService', () => {
       providers: [
         AgentGatewayService,
         { provide: PrismaService, useValue: prisma },
+        { provide: ProxyPoolAccessService, useValue: poolBindings },
         { provide: SystemLogsService, useValue: { enqueue: systemLogEnqueue } }
       ]
     }).compile();
@@ -94,6 +100,7 @@ describe('AgentGatewayService', () => {
     txProxyKeyFindMany.mockResolvedValue([]);
     txProxyKeyUpdate.mockResolvedValue(undefined);
     proxyKeyFindMany.mockResolvedValue([]);
+    poolBindings.getNodeBindings.mockResolvedValue([]);
     prisma.line.findFirst.mockResolvedValue(null);
     deploymentFindUnique.mockResolvedValue(null);
     deploymentFindFirst.mockResolvedValue(null);
@@ -577,13 +584,14 @@ describe('AgentGatewayService', () => {
         serverHost: 'vmess.upstream.example.com',
         serverPort: 443,
         status: 'ACTIVE',
-        paramsJson: JSON.stringify({
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
+        paramsJson: encryptSecret(JSON.stringify({
           uuid: '11111111-2222-3333-4444-555555555555',
           alterId: 0,
           security: 'auto',
           tls: { enabled: true, serverName: 'sni.upstream.example.com', insecure: true, clientFingerprint: 'firefox' },
           transport: { type: 'grpc', serviceName: 'vmess-grpc' }
-        })
+        }))
       },
       landingNode: null
     });
@@ -604,7 +612,8 @@ describe('AgentGatewayService', () => {
         serverHost: 'jp.upstream.example.com',
         serverPort: 443,
         status: 'ACTIVE',
-        paramsJson: JSON.stringify({
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
+        paramsJson: encryptSecret(JSON.stringify({
           uuid: '22222222-3333-4444-5555-666666666666',
           flow: 'xtls-rprx-vision',
           tls: {
@@ -613,7 +622,7 @@ describe('AgentGatewayService', () => {
             clientFingerprint: 'safari',
             reality: { enabled: true, publicKey: 'pbk_123', shortId: 'abcd' }
           }
-        })
+        }))
       },
       landingNode: null
     });
@@ -634,14 +643,15 @@ describe('AgentGatewayService', () => {
         serverHost: 'us.upstream.example.com',
         serverPort: 8443,
         status: 'ACTIVE',
-        paramsJson: JSON.stringify({
+        presenceStatus: 'PRESENT', subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null },
+        paramsJson: encryptSecret(JSON.stringify({
           password: 'hy2_secret',
           upMbps: 100,
           downMbps: 500,
           obfs: 'salamander',
           obfsPassword: 'obfs_secret',
           tls: { enabled: true, serverName: 'us.upstream.example.com' }
-        })
+        }))
       },
       landingNode: null
     });
@@ -716,8 +726,7 @@ describe('AgentGatewayService', () => {
       },
       tls: {
         enabled: true,
-        server_name: 'us.upstream.example.com',
-        insecure: false
+        server_name: 'us.upstream.example.com'
       }
     });
     expect(hy2Out).not.toHaveProperty('upMbps');
@@ -1373,36 +1382,19 @@ describe('AgentGatewayService', () => {
 
   describe('直连代理池（Mixed + ProxyKey）', () => {
     const mixedLine = () => line({
-      id: 'line-mixed',
+      id: '11111111-1111-4111-8111-111111111111', proxyPoolEnabled: true,
       name: '直连代理池',
       protocolType: 'MIXED',
       entryPort: 10808,
       paramsJson: JSON.stringify({ allowLan: false, usersEnabled: false })
     });
-    const proxyKey = (overrides: Record<string, unknown> = {}) => ({
-      id: 'key-1',
-      userId: 'user-1',
-      username: 'pk_0123456789abcdef01234567',
-      password: 'pwd-a',
-      whitelistIps: '203.0.113.10',
-      user: { uuid: 'uuid-1', isActive: true },
-      ...overrides
-    });
+    const rawKeyForTest = 'pk_0123456789abcdef01234567';
 
-    it('Mixed 直连线路强制鉴权并注入 ProxyKey 凭据与来源 IP 白名单路由规则', async () => {
+    it('显式Mixed代理池注入线路派生ProxyKey与来源IP规则，不下发旧裸Key', async () => {
       prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [mixedLine()], landingLines: [] });
       prisma.user.findMany.mockResolvedValue([user]);
-      proxyKeyFindMany.mockResolvedValue([
-        proxyKey(),
-        proxyKey({
-          id: 'key-2',
-          userId: 'user-2',
-          username: 'pk_fedcba9876543210fedcba98',
-          password: 'pwd-b',
-          whitelistIps: '',
-          user: { uuid: 'uuid-2', isActive: true }
-        })
-      ]);
+      const login = formatProxyLineUsername(rawKeyForTest, '11111111-1111-4111-8111-111111111111');
+      poolBindings.getNodeBindings.mockResolvedValue([{ lineId: '11111111-1111-4111-8111-111111111111', keyId: 'key-1', userId: 'user-1', username: login, password: 'pwd-a', whitelistIps: ['203.0.113.10'] }] as never);
 
       const { singboxConfig } = await service.buildConfigSync('node-1');
       const inbounds = singboxConfig.inbounds as Array<Record<string, unknown>>;
@@ -1411,14 +1403,14 @@ describe('AgentGatewayService', () => {
       expect(mixed).toBeDefined();
       // usersEnabled=false 也必须强制鉴权：空 users 的 mixed 入站等价于开放代理
       expect(mixed?.users).toEqual(expect.arrayContaining([
-        { username: 'user@example.com::line-mixed', password: 'secret' },
-        { username: 'pk_0123456789abcdef01234567', password: 'pwd-a' }
+        { username: formatAuthUserName({ email: 'user@example.com' }, '11111111-1111-4111-8111-111111111111'), password: 'secret' },
+        { username: login, password: 'pwd-a' }
       ]));
       // 未具备订阅资格的用户（uuid-2）凭据必须被剔除
       expect(mixed?.users).not.toEqual(expect.arrayContaining([expect.objectContaining({ username: 'pk_fedcba9876543210fedcba98' })]));
 
       expect((singboxConfig.experimental as { v2ray_api: { stats: { users: string[] } } }).v2ray_api.stats.users).toEqual(
-        expect.arrayContaining(['pk_0123456789abcdef01234567'])
+        expect.arrayContaining([login])
       );
       expect(singboxConfig.route).toEqual({
         rules: [
@@ -1426,8 +1418,8 @@ describe('AgentGatewayService', () => {
             type: 'logical',
             mode: 'and',
             rules: [
-              { inbound: ['line-line-mixed'] },
-              { auth_user: ['pk_0123456789abcdef01234567'] },
+              { inbound: ['line-11111111-1111-4111-8111-111111111111'] },
+              { auth_user: [login] },
               { source_ip_cidr: ['203.0.113.10'], invert: true }
             ],
             action: 'reject'
@@ -1444,7 +1436,7 @@ describe('AgentGatewayService', () => {
       const { singboxConfig } = await service.buildConfigSync('node-1');
       const mixed = (singboxConfig.inbounds as Array<Record<string, unknown>>).find((inbound) => inbound.type === 'mixed');
 
-      expect(mixed?.users).toEqual(expect.arrayContaining([{ username: 'user@example.com::line-mixed', password: 'secret' }]));
+      expect(mixed?.users).toEqual(expect.arrayContaining([{ username: formatAuthUserName({ email: 'user@example.com' }, '11111111-1111-4111-8111-111111111111'), password: 'secret' }]));
       expect(singboxConfig.route).toBeUndefined();
     });
 

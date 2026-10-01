@@ -13,15 +13,17 @@ import { type ProxyKey, useProxyPoolEndpoints, useProxyPoolKeys } from './use-pr
 export default function UserProxyPoolPage() {
   const { t } = useTranslation(['user', 'common']);
   const keysQuery = useProxyPoolKeys();
-  const endpointsQuery = useProxyPoolEndpoints();
+  const [selectedKeyId, setSelectedKeyId] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProxyKey | null>(null);
 
   const keys = keysQuery.data?.keys ?? [];
   const limit = keysQuery.data?.limit ?? 20;
-  const endpoints = endpointsQuery.data?.endpoints ?? [];
-  const activeKeys = keys.filter((k) => k.isActive);
-  const onlineEndpointsCount = endpoints.filter((e) => e.nodeStatus === 'ONLINE').length;
+  const activeKeys = keys.filter((key) => key.isActive);
+  const keyId = activeKeys.some((key) => key.id === selectedKeyId) ? selectedKeyId : activeKeys[0]?.id ?? '';
+  const endpointsQuery = useProxyPoolEndpoints(keyId || undefined);
+  const endpoints = !endpointsQuery.isError ? endpointsQuery.data?.endpoints ?? [] : [];
+  const onlineEndpointsCount = endpoints.filter((endpoint) => endpoint.status === 'AVAILABLE' && endpoint.online).length;
 
   const openCreate = () => {
     setEditing(null);
@@ -76,8 +78,8 @@ export default function UserProxyPoolPage() {
         />
         <StatCard
           title={t('user:proxyPool.availableEndpointsStat')}
-          value={t('user:proxyPool.nodesCount', { count: endpoints.length })}
-          hint={endpoints.length ? t('user:proxyPool.onlineCount', { count: onlineEndpointsCount || endpoints.length }) : t('user:proxyPool.noLinesAvailable')}
+          value={t('user:proxyPool.nodesCount', { count: endpoints.filter((endpoint) => endpoint.status === 'AVAILABLE').length })}
+          hint={t('user:proxyPool.onlineCount', { count: onlineEndpointsCount })}
           icon={<Globe className="text-sky-500" />}
         />
         <StatCard
@@ -117,8 +119,8 @@ export default function UserProxyPoolPage() {
         <TabsContent value="export" className="m-0 focus-visible:outline-none">
           <ProxyExportSection
             keys={keys}
-            endpoints={endpoints}
-            endpointsPending={endpointsQuery.isPending}
+            keyId={keyId}
+            onKeyChange={setSelectedKeyId}
             onOpenCreateKey={openCreate}
           />
         </TabsContent>

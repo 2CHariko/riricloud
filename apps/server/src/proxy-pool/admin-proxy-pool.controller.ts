@@ -1,15 +1,17 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
 import { QueryAdminProxyKeysDto } from './dto/query-admin-proxy-keys.dto';
 import { SetProxyKeyActiveDto } from './dto/set-proxy-key-active.dto';
 import { ProxyPoolService } from './proxy-pool.service';
+import { ProxyPoolNoStoreInterceptor } from './proxy-pool-no-store.interceptor';
 
 // 直连代理池管理端：全局凭据审计与熔断（契约见 docs/API_AND_PROTOCOLS.md §5）
 @ApiTags('admin')
 @ApiBearerAuth()
 @Roles('ADMIN')
 @Controller('admin/proxy-pool')
+@UseInterceptors(ProxyPoolNoStoreInterceptor)
 export class AdminProxyPoolController {
   constructor(private readonly proxyPoolService: ProxyPoolService) {}
 

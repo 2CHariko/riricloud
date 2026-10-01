@@ -48,9 +48,9 @@ WEB_URL="${WEB_URL:-http://localhost:5173}"
 SERVER_ENV_FILE="${SERVER_ENV_FILE:-$ROOT/apps/server/.env}"
 # 不读取 apps/server/.env 中的 DATABASE_URL 作为默认值：该文件通常指向 dev.db，
 # 而手动启动的开发主控可能正持有该文件的 WAL 写锁。显式 DATABASE_URL/E2E_DATABASE_URL
-E2E_DATABASE_URL="${E2E_DATABASE_URL:-${DATABASE_URL:-file:./dev-e2e.db}}"
+E2E_DATABASE_URL="$(node apps/server/prisma/sqlite-url.js "${E2E_DATABASE_URL:-${DATABASE_URL:-file:./dev-e2e.db}}" "$ROOT/apps/server/prisma")" || { printf '%s\n' '[dev-e2e] 主库 SQLite URL 无效' >&2; exit 1; }
 export DATABASE_URL="$E2E_DATABASE_URL"
-E2E_TELEMETRY_DATABASE_URL="${E2E_TELEMETRY_DATABASE_URL:-${TELEMETRY_DATABASE_URL:-file:./dev-e2e-telemetry.db}}"
+E2E_TELEMETRY_DATABASE_URL="$(node apps/server/prisma/sqlite-url.js "${E2E_TELEMETRY_DATABASE_URL:-${TELEMETRY_DATABASE_URL:-file:./dev-e2e-telemetry.db}}" "$ROOT/apps/server/prisma/telemetry")" || { printf '%s\n' '[dev-e2e] 观测库 SQLite URL 无效' >&2; exit 1; }
 export TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL"
 ADMIN_EMAIL="${ADMIN_EMAIL:-$(read_dotenv_value "$SERVER_ENV_FILE" ADMIN_EMAIL)}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-${SEED_ADMIN_EMAIL:-$(read_dotenv_value "$SERVER_ENV_FILE" SEED_ADMIN_EMAIL)}}"
@@ -100,6 +100,12 @@ LOGIN_RESPONSE_FILE=""
 
 say() { printf '\033[1;36m[dev-e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[dev-e2e]\033[0m %s\n' "$*" >&2; exit 1; }
+
+if [ -z "${MIHOMO_BINARY_PATH:-}" ]; then
+  say "准备本机 Mihomo 客户端拨测内核（固定版本/校验值）…"
+  MIHOMO_BINARY_PATH="$(node scripts/prepare-client-kernels.mjs)" || die "Mihomo 客户端资源准备失败"
+fi
+export MIHOMO_BINARY_PATH
 
 E2E_VERSION_RESOURCE_OVERRIDE=""
 if [ "$E2E_SYNC_RESOURCES" = "1" ]; then
@@ -218,17 +224,10 @@ master_agent_token() {
 
 server_up() { curl -fsS --max-time 2 "$SERVER_URL/api/v1/system/version" >/dev/null 2>&1; }
 
-# Prisma 的相对 SQLite URL 相对于 schema.prisma 所在目录解析；这里仅用于判断
-# 是否已经存在联调数据库，不能直接依赖 apps/server/.env 的 DATABASE_URL。
+# URL 已在启动时以对应 schema 目录规范化为绝对路径，所有调用方复用同一 URL。
 e2e_database_path() {
   local value="${E2E_DATABASE_URL#file:}"
-  value="${value%%\?*}"
-  case "$value" in
-    ./*) printf '%s/%s' "$ROOT/apps/server/prisma" "${value#./}" ;;
-    /*) printf '%s' "$value" ;;
-    '') return 1 ;;
-    *) printf '%s' "$value" ;;
-  esac
+  printf '%s' "${value%%\?*}"
 }
 web_up() { curl -fsS --max-time 2 "$WEB_URL" >/dev/null 2>&1; }
 
@@ -448,9 +447,10 @@ if [ "$SERVER_REUSE_ALLOWED" = "1" ] && server_up; then
   say "主控端已在 $SERVER_URL 运行，跳过数据库迁移并直接复用"
 else
   say "检查并应用数据库迁移（$E2E_DATABASE_URL / $E2E_TELEMETRY_DATABASE_URL）…"
+  DATABASE_URL="$E2E_DATABASE_URL" node apps/server/prisma/upstream-upgrade-preflight.js || die "旧上游数据不支持自动升级；请备份并显式处理上游源、节点与关联线路后再运行"
   TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" pnpm --dir apps/server exec prisma migrate deploy --schema=prisma/telemetry/schema.prisma || die "观测库迁移失败"
   DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" node apps/server/prisma/migrate-telemetry-data.js || true
-  DATABASE_URL="$E2E_DATABASE_URL" pnpm --dir apps/server exec prisma migrate deploy || die "数据库迁移失败；若你显式复用了 dev.db，请先停止占用该数据库的主控进程"
+  DATABASE_URL="$E2E_DATABASE_URL" pnpm --dir apps/server exec prisma migrate deploy || die "数据库迁移失败；请按上方 Prisma 错误处理（P3018/CHECK 为失败迁移或旧数据保护，不是端口或写锁问题）"
   if [ "$DB_WAS_PRESENT" = "0" ]; then
     say "初始化种子数据…"
     DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" pnpm --dir apps/server exec prisma db seed || die "数据库种子失败"

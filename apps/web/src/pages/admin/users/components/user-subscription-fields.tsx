@@ -230,10 +230,10 @@ export function UserSubscriptionFields({
                       <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
                         {lineOptions.length ? lineOptions.map((line) => {
                           const targetLandingNode = line.relayMode === 'TARGET_LINE' ? line.targetLine?.entryNode : line.landingNode;
-                          const available = line.status === 'ACTIVE' && line.entryNode.status === 'ONLINE' && (!targetLandingNode || targetLandingNode.status === 'ONLINE');
-                          const topologyText = line.type === 'DIRECT'
-                            ? `${line.entryNode.name} · ${line.protocolType}`
-                            : `${line.entryNode.name} ➔ ${targetLandingNode?.name ?? t('admin:lines.unbound')} · ${line.protocolType}`;
+                          const available = line.status === 'ACTIVE' && (line.type === 'EXTERNAL' ? line.upstreamSummary?.status === 'ACTIVE' && line.upstreamSummary.presenceStatus === 'PRESENT' : line.entryNode?.status === 'ONLINE' && (!targetLandingNode || targetLandingNode.status === 'ONLINE'));
+                          const topologyText = line.type === 'EXTERNAL' ? `${t('admin:upstream.externalType')} · ${line.protocolType}` : line.type === 'DIRECT'
+                            ? `${line.entryNode?.name} · ${line.protocolType}`
+                            : `${line.entryNode?.name} ➔ ${line.upstreamSummary?.name ?? targetLandingNode?.name ?? t('admin:lines.unbound')} · ${line.protocolType}`;
                           return (
                             <div key={line.id} className="flex items-start gap-2">
                               <Checkbox

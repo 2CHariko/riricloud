@@ -45,7 +45,7 @@ export function SelectField({ form, name, label, options, description, disabled,
     <FormField control={form.control} name={name} render={({ field }) => (
       <FormItem>
         <FormLabel>{label}</FormLabel>
-        <Select value={String(field.value ?? '')} onValueChange={(value) => { field.onChange(value); onValueChange?.(value); }} disabled={disabled}>
+        <Select value={String(field.value ?? '')} onValueChange={onValueChange ?? field.onChange} disabled={disabled}>
           <FormControl><SelectTrigger><SelectValue placeholder={t('admin:lineForm.selectPlaceholder')} /></SelectTrigger></FormControl>
           <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
         </Select>
