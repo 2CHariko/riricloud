@@ -161,8 +161,8 @@ export function ProxyPoolDrawer() {
                               {node.used} / {node.limit} ({pct}%)
                             </span>
                             {node.excluded > 0 && (
-                              <span className="text-destructive font-medium">
-                                -{node.excluded}
+                              <span className="text-destructive font-medium text-[11px]">
+                                {t('admin:lines.proxyPoolStatusExcluded')}: {node.excluded}
                               </span>
                             )}
                           </div>
