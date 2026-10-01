@@ -308,7 +308,7 @@ export default function AdminLinesPage() {
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-16">
+                  <TableHead className="w-14 shrink-0">
                     <div className="flex items-center gap-1.5">
                       <Checkbox
                         checked={allSelected}
@@ -320,32 +320,32 @@ export default function AdminLinesPage() {
                       </span>
                     </div>
                   </TableHead>
-                  <TableHead className="min-w-[200px]">
+                  <TableHead className="w-[22%] min-w-[200px]">
                     {t('admin:lines.colLineAndEndpoint')}
                   </TableHead>
-                  <TableHead className="min-w-[220px]">
+                  <TableHead className="w-[28%] min-w-[230px]">
                     {t('admin:lines.colPipelineTopology')}
                   </TableHead>
-                  <TableHead className="min-w-[140px]">
+                  <TableHead className="w-[20%] min-w-[170px]">
                     {t('admin:lines.colTagsRate')}
                   </TableHead>
-                  <TableHead className="w-28">
+                  <TableHead className="w-[10%] min-w-[105px]">
                     <div className="flex items-center gap-1">
                       <span>{t('admin:lines.colLatency')}</span>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <HelpCircle className="size-3.5 text-muted-foreground/70 cursor-help" />
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs space-y-1 text-xs">
-                          <p className="font-semibold">{t('admin:lines.latencyHelpTitle')}</p>
-                          <p>{t('admin:probes.description')}</p>
-                          <p className="text-primary text-[11px]">{t('admin:probes.closeHelp')}</p>
+                        <TooltipContent className="max-w-xs space-y-1 text-xs shadow-lg">
+                          <p className="font-semibold text-primary-foreground">{t('admin:lines.latencyHelpTitle')}</p>
+                          <p className="text-primary-foreground/80 leading-relaxed">{t('admin:probes.description')}</p>
+                          <p className="text-primary-foreground/65 text-[11px]">{t('admin:probes.closeHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
                   </TableHead>
-                  <TableHead className="w-24">{t('admin:lines.colStatus')}</TableHead>
-                  <TableHead className="w-28 text-right">{t('admin:lines.colActions')}</TableHead>
+                  <TableHead className="w-[8%] min-w-[80px]">{t('admin:lines.colStatus')}</TableHead>
+                  <TableHead className="w-[12%] min-w-[115px] text-right pr-4">{t('admin:lines.colActions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -393,7 +393,7 @@ export default function AdminLinesPage() {
                           <span className="font-mono text-[11px]">Lv.{line.level}</span>
                           <span>·</span>
                           <span
-                            className="font-mono text-[11px] truncate max-w-[220px]"
+                            className="font-mono text-[11px] truncate max-w-[260px] lg:max-w-xs"
                             title={`${line.serverHost}:${line.serverPort}`}
                           >
                             {line.serverHost}:{line.serverPort}
@@ -409,7 +409,7 @@ export default function AdminLinesPage() {
 
                     {/* 4. 规格与标签（限速、倍率、标签） */}
                     <TableCell>
-                      <div className="flex max-w-44 flex-wrap items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         {Boolean(line.speedLimitMbps) && (
                           <Badge
                             variant="outline"
@@ -465,7 +465,7 @@ export default function AdminLinesPage() {
                     </TableCell>
 
                     {/* 7. 行操作列（高频外置 + 更多操作下拉折叠） */}
-                    <TableCell className="text-right">
+                    <TableCell className="text-right pr-4">
                       <div className="flex items-center justify-end gap-0.5">
                         <IconButton
                           variant="ghost"
