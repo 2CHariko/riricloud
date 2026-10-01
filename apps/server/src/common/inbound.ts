@@ -9,6 +9,7 @@ import {
   TRAFFIC_CREDENTIAL_DELIMITER
 } from './constants';
 import { decryptSecret, encryptSecret, isEncryptedSecret } from './secret-crypto';
+import { parseProxyLineUsername } from '../proxy-pool/proxy-key.util';
 
 export { TRAFFIC_CREDENTIAL_DELIMITER };
 
@@ -43,6 +44,7 @@ export function parseTrafficCredential(credential: string): {
   rawCredential: string;
   lineId: string | null;
 } {
+  if (credential.startsWith('pk_line_')) return parseProxyLineUsername(credential) ?? { rawCredential: credential, lineId: null };
   if (credential.startsWith(AUTH_USER_PREFIX)) {
     const encoded = credential.slice(AUTH_USER_PREFIX.length);
     if (/^[A-Za-z0-9_-]+$/.test(encoded)) {

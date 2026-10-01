@@ -1980,6 +1980,16 @@ const admin = {
     }
   },
   lineForm: {
+    proxyPoolEnabled: '启用标准代理池接入',
+    proxyPoolDesc: '显式开启后纳入代理池；支持 Mixed 直连或 Mixed 上游中继，不影响现有订阅用户。',
+    proxyPoolInvalid: '仅 DIRECT + MIXED 或 RELAY + UPSTREAM_NODE + MIXED 可开启代理池。组合改变后必须关闭此开关才能保存。',
+    upstreamUsersRequired: '上游中继的 Mixed / HTTP / SOCKS 入口必须开启逐用户鉴权（usersEnabled=true），禁止无鉴权入口。',
+    proxyPoolOverview: '代理池节点凭据绑定容量',
+    proxyPoolCapacityDesc: '容量按节点的 Key × 端点绑定计算，不是 Key 数量；每节点上限不超过 512。',
+    proxyPoolEndpointCount: '端点数：{{count}}',
+    proxyPoolCapacity: '{{name}}：已用 {{used}} / {{limit}}，排除 {{excluded}}',
+    proxyPoolEnabledBadge: '代理池已开启',
+    proxyPoolDisabledBadge: '代理池关闭',
     namePlaceholder: '例如：香港高倍率线路',
     tabInbound: '入站配置',
     tabAdvanced: '线路高级设置',

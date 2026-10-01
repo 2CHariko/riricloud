@@ -1002,7 +1002,7 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 | `id` | String (UUID) | 凭据主键 |
 | `userId` | String | 归属用户；`User` 删除时 `onDelete: Cascade` 级联删除 |
 | `name` | String | 凭据备注名称，服务端清洗首尾空白并限制 ≤60 字符（如“爬虫项目 A”“AdsPower 环境 3”） |
-| `username` | String @unique | 高熵用户名，固定形态 `pk_<24 位小写十六进制>`（96 bit 熵）。**必须冒号安全**：Sing-box `mixed`/`socks`/`http` 入站的认证用户名会同时出现在 SOCKS5 用户名长度前缀与 HTTP `Proxy-Authorization` Basic 头中，而后者按首个 `:` 切分，因此不得追加 `::lineId` 后缀 |
+| `username` | String @unique | 原始Key标识 `pk_<24hex>`（96bit熵），不再直接登录；每线路派生 `pk_line_` +Base64URL规范JSON `[原始Key,lineId]`，冒号安全、长度≤255，不修改原字段或密码/Token |
 | `password` | String | 该凭据独立密码，24 字节 base64url（192 bit 熵）。因 Sing-box 入站校验需要，落库为明文（与 `User.password` 同口径）；可随时轮换 |
 | `whitelistIps` | String | 逗号分隔的 IP/CIDR 白名单，空串表示不限制来源；单条须为合法 IPv4/IPv6 地址或 CIDR（IPv4 前缀 0~32、IPv6 前缀 0~128），最多 64 条 |
 | `exportToken` | String @unique | 免登录动态拉取令牌，默认 `uuid()`；用于 `GET /api/v1/user/proxy-pool/export?token=`，可独立轮换且不影响代理密码 |
@@ -1018,14 +1018,14 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 - `User 1 ── n ProxyKey`（`onDelete: Cascade`）：账号删除时凭据一并清除。
 - `ProxyKey 1 ── n TrafficLog`（关系名 `ProxyKeyTrafficLogs`，`onDelete: SetNull`）：凭据删除后历史流水保留并置空 `proxyKeyId`，不影响主账户与线路维度的历史统计。
 - `TrafficLog.proxyKeyId` 为可空外键：订阅体系产生的流水为 `null`，直连代理池流量在 `pk_` 凭据经 `ProxyKey.username` 映射回 `userId` 后写入归属凭据。
-- 线路维度归属不变：直连代理流水的 `lineId` 由节点级活动线路解析（`resolveActiveLineForNode`）填充，因此同样参与线路倍率折算与线路排行统计。
+- 新代理池流水从派生用户名精确解码Key与lineId，验证线路属于上报节点入口后应用该线路倍率，不回退节点首线路。未知/跨节点/非法新身份只推进安全游标、不误计其他线路。旧裸Key迟到累计使用既有游标和兼容归属，不重置或重写历史。
 
 ### 7.3 生命周期与一致性
 
 1. **创建**：用户名在 `pk_` 命名空间内以 5 次重试规避唯一约束冲突（Prisma `P2002`）；单账号凭据上限 20 条。
-2. **注入**：`buildConfigSync` 只注入 `isActive = true` 且归属用户仍具备订阅资格（账号启用、邮箱核验通过、未超额、未过期）的凭据，单节点上限 512 条。
-3. **账务**：心跳累计快照的增量在同一 SQLite 事务内写入 `TrafficLog`、累加 `User` / `Subscription` / `ProxyKey` 用量并刷新 `lastUsedAt`；任一环节失败整批回滚。
-4. **熔断**：本批次入账后触及配额的账号触发全局 `config_sync`，凭据与订阅凭证在数秒内同步吊销；管理端启停/删除凭据同样即时重下发。
+2. **注入**：独立 `ProxyPoolAccessService` 复用订阅资格/有效套餐快照/额外授权与线路/上游可用性，按Key createdAt/id再Line createdAt/id分配每节点最多512个Key-Line绑定；列表/导出/Agent同源，容量排除明确反馈，不截断后仍导出。
+3. **账务**：累计快照增量在既有短事务累加User/Subscription/ProxyKey、lastUsedAt和TrafficCursor，再沿已有遥测delta路径聚合；重复快照、计数归零及迟到合法身份按原游标处理，内部探针免计费。
+4. **熔断**：资格/Key/密码/授权/线路状态变更触发配置失效与重下发，Agent实际应用前不宣称即时撤销；不保证网络分区或所有旧长连接立刻断开。
 
 ---
 
@@ -1195,3 +1195,9 @@ Line 与 UpstreamNode 新增 `lastProbeJson String?`，保存 schemaVersion=1 �
 任务只在 Master 内存保留，完成 15 分钟后清理、最多保留 50 个完成任务；重启丢失任务但保留资源最后有效测量。不新增数据库任务表或外部队列。系统新增 `probeSingboxFallbackEnabled`（默认 true），仅允许能力白名单兼容执行；既有 lineSpeedtestTargetUrl/Timeout 作为统一节点/线路拨测设置，默认目标 HTTPS generate_204，已有显式设置保留。
 
 线路探针版本还纳入关联证书的 `id/updatedAt`，包括 TARGET_LINE 的实际证书依赖；同 ID 更新 PEM 后，旧结果展示为 STALE，运行中旧结果不能写回。快照及列表只加载证书版本元信息，不为该验证读取或返回私钥。
+
+## 13. 代理池显式线路开关与非破坏升级
+
+`Line.proxyPoolEnabled Boolean @default(false)` 只支持DIRECT/MIXED和RELAY/UPSTREAM_NODE/MIXED，上游入口仍须usersEnabled=true；开关关闭后普通订阅业务不变，独立ProxyKey不注入单HTTP/SOCKS或未参与线路。
+
+追加迁移 `20261001020000_proxy_pool_line_access` 只新增字段、为旧ACTIVE/public/DIRECT/MIXED且真实入口端口有效的线路回填true，其余默认false，不自动开放上游中继。保留用户/订阅/Line/Key、密码/exportToken、余额/流量/TrafficCursor；旧登录名停止新连接，升级须重新导出，不清现有库或历史账务。全量schema见apps/server/prisma/schema.prisma，代理池绑定不新增持久化表。

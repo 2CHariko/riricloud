@@ -5,9 +5,10 @@ import { AgentSweepService } from './agent-sweep.service';
 import { AgentPollController } from './agent-poll.controller';
 import { SystemModule } from '../system/system.module';
 import { SystemLogsModule } from '../system-logs/system-logs.module';
+import { ProxyPoolAccessModule } from '../proxy-pool-access/proxy-pool-access.module';
 
 @Module({
-  imports: [SystemModule, SystemLogsModule],
+  imports: [SystemModule, SystemLogsModule, ProxyPoolAccessModule],
   controllers: [AgentPollController],
   providers: [AgentGateway, AgentService, AgentSweepService],
   exports: [AgentService]

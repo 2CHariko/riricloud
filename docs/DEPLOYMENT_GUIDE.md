@@ -621,3 +621,15 @@ Mihomo 固定 1.19.30，官方五平台资产与 SHA-256 在 `scripts/client-ker
 Windows 本机六门禁/隔离 E2E 已通过；本机 WSL2 Debian 13 amd64 已补验系统 Node20、Node22 Linux 测试容器、Mihomo 1.19.30/Sing-box 1.14.0 + Cronet，原生测试 83 项通过，真实 HTTP/TLS、JWT/RBAC、任务/STALE、EXTERNAL/VLESS/HTTP 中继及 Naive HTTP/2 CONNECT + padding 链路通过。正式 Master/Agent 镜像构建、双标签离线导出/摘要/重载，以及 Linux Master 发行包装配/解压后独立启动通过；生产 Master、隔离双库迁移/管理员引导、Cookie、内核画像、真实 Agent/Sing-box、异步 202/取消及格式对应模板检查均验证。所有运行使用临时库/数据目录，不操作现有部署；非 root 原生 Agent 须将 `RIRICLOUD_DATA_DIR` 指向可写目录。
 
 WSL 验证发现并修复 `docker-build.sh export` 引用未定义 HOST_UNAME（Linux-only 脚本不需要 Windows 路径转换），补 `node --test scripts/docker-export.test.mjs`；发现 Mihomo listener 早于 Running 的冷启动竞态，增加仅回环数据面就绪屏障，不访问目标或计入延迟，业务路由无 DIRECT 兜底；端口就绪轮询显式移除 abort listener。发布前其他平台仍须原生补验：Linux arm64/macOS 目前仅资产摘要/文件头通过，未实测原生运行；Naive 本轮未测 HTTP/3。视觉验证按需且仅限 Antigravity。
+
+## 12. 代理池统一授权与上游中继升级
+
+本轮BREAKING CHANGE：旧裸pk_用户名停止新连接，JSON导出改v2逐端点真实凭据，公开代理池线路也遵守套餐ALL/TAGS/EXPLICIT及额外授权；共享配额不再隐含所有线路访问权。Key记录/密码/exportToken不轮换、不删除，用户必须重新导出脚本/工具配置，不能手工将原始Key标识当登录名。
+
+部署顺序：停止旧Master与可能继续旧配置的入口服务→备份业务/观测SQLite（含WAL安全备份）→升级代码并执行追加迁移→同步Master/Web→检查线路proxyPoolEnabled、套餐匹配与额外授权→确认Agent已应用新配置→让用户重新导出。网络分区/离线Agent不承诺立刻撤销，控制面的期望配置和数据面实际应用分开核对；需要强制中断旧连接时使用既有维护操作，不新增踢连接协议。
+
+迁移20261001020000_proxy_pool_line_access只加开关、回填旧ACTIVE/public/DIRECT/MIXED且入口存在/端口有效线路，私有/停用/上游中继默认关闭；不改用户/Key/密码/Token/账务/游标。新增中继须手工开启代理池并开启用户鉴权；普通MIXED/HTTP/SOCKS不会仅因协议自动获得Key。先核对套餐权限，容量每节点512个Key-Line绑定，管理页面显示排除数量，改变UI排序不改变分配。
+
+回滚须同时恢复匹配代码与数据库备份，不能编辑已应用历史迁移；仅回退Web会无法使用v2导出。TLS入口只通过HTTPS或具备相应能力的JSON交付，不能导出普通SOCKS5/TXT冒充兼容；超过200端点须分批选择。原有exportToken可以继续拉取，但返回范围因正确授权收紧且用户名改变；日志/浏览器历史保护、必要时独立轮换Token。
+
+定向回归：`node --test scripts/proxy-pool-migration.test.cjs`、`node scripts/proxy-pool-integration.cjs`（真实Sing-box路径由SINGBOX_BINARY_PATH指定）。脚本使用正式schema临时绝对SQLite库和回环fixture，HTTP CONNECT/SOCKS5、Key/授权/白名单/上游失效、实际gRPC累计计数与倍率事务验证，不使用或清理默认dev/E2E库。无需新Agent协议、外部服务或依赖库。

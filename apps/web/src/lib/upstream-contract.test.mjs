@@ -11,7 +11,7 @@ function load(relative) {
   const source = readFileSync(new URL(relative, import.meta.url), 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const exports = {};
-  runInNewContext(output, { exports, require: (name) => name === '@/i18n/config' ? { default: { t: (key) => key } } : require(name), crypto: { randomUUID: () => '00000000-0000-0000-0000-000000000000' } });
+  runInNewContext(output, { exports, require: (name) => name === '@/i18n/config' ? { default: { t: (key) => key } } : name === './proxy-pool-line-capabilities' ? load('../pages/admin/lines/components/proxy-pool-line-capabilities.ts') : require(name), crypto: { randomUUID: () => '00000000-0000-0000-0000-000000000000' } });
   return exports;
 }
 const schema = load('../pages/admin/lines/components/line-form-schema.ts');
@@ -53,4 +53,19 @@ test('decimal byte formatting handles unknown, zero and values above safe intege
   assert.equal(usage.formatUpstreamBytes('0', 'unknown'), '0.00 B');
   assert.equal(usage.formatUpstreamBytes('9007199254740993', 'unknown'), '8.00 PiB');
   assert.equal(usage.formatUpstreamBytes('18446744073709551615', 'unknown'), '15.99 EiB');
+});
+
+test('proxy pool requires explicit eligible topology and upstream user authentication', () => {
+  const base = { ...schema.defaultLineFormValues('MIXED'), name: 'Pool', entryNodeId: 'entry' };
+  assert.equal(base.proxyPoolEnabled, false);
+  assert.equal(schema.lineFormSchema.safeParse({ ...base, proxyPoolEnabled: true }).success, true);
+  for (const protocolType of ['HTTP', 'SOCKS', 'VLESS']) {
+    assert.equal(schema.lineFormSchema.safeParse({ ...base, protocolType, proxyPoolEnabled: true }).success, false);
+  }
+  const relay = { ...base, type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNodeId: 'upstream', proxyPoolEnabled: true };
+  assert.equal(schema.lineFormSchema.safeParse(relay).success, false);
+  assert.equal(schema.lineFormSchema.safeParse({ ...relay, localUsersEnabled: true }).success, true);
+  assert.equal(schema.toLinePayload({ ...relay, localUsersEnabled: true }).proxyPoolEnabled, true);
+  assert.equal(schema.toLinePayload({ ...relay, localUsersEnabled: true }).params.usersEnabled, true);
+  assert.equal(schema.lineFormSchema.safeParse({ ...base, type: 'EXTERNAL', upstreamNodeId: 'upstream', proxyPoolEnabled: true }).success, false);
 });

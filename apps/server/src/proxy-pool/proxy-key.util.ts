@@ -79,3 +79,32 @@ export function normalizeProxyKeyName(raw: unknown): string {
   }
   return name;
 }
+
+export const PROXY_LINE_USERNAME_PREFIX = 'pk_line_';
+const RAW_PROXY_KEY_REGEX = /^pk_[0-9a-f]{24}$/;
+export const PROXY_LINE_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// 规范 JSON + base64url 保证 HTTP Basic Auth/SOCKS 用户名不含冒号，且可精确还原账务线路。
+export function formatProxyLineUsername(originalKey: string, lineId: string): string {
+  if (!RAW_PROXY_KEY_REGEX.test(originalKey) || !PROXY_LINE_UUID_REGEX.test(lineId)) {
+    throw new BadRequestException('代理池凭据或线路标识无效');
+  }
+  const value = PROXY_LINE_USERNAME_PREFIX + Buffer.from(JSON.stringify([originalKey, lineId]), 'utf8').toString('base64url');
+  if (value.length > 255) throw new BadRequestException('代理池用户名过长');
+  return value;
+}
+
+export function parseProxyLineUsername(value: string): { rawCredential: string; lineId: string } | null {
+  if (typeof value !== 'string' || value.length > 255 || !value.startsWith(PROXY_LINE_USERNAME_PREFIX)) return null;
+  const encoded = value.slice(PROXY_LINE_USERNAME_PREFIX.length);
+  if (!/^[A-Za-z0-9_-]+$/.test(encoded)) return null;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+    if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== 'string' || typeof parsed[1] !== 'string') return null;
+    const [rawCredential, lineId] = parsed as [string, string];
+    if (formatProxyLineUsername(rawCredential, lineId) !== value) return null;
+    return { rawCredential, lineId };
+  } catch {
+    return null;
+  }
+}

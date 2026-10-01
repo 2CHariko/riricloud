@@ -305,6 +305,7 @@ model Line {
   level                   Int       @default(0)
   sortOrder               Int       @default(0)
   isPublic                Boolean   @default(true)
+  proxyPoolEnabled        Boolean   @default(false) // 是否显式接入标准代理池，仅支持 MIXED 直连/上游中继
   status                  String    @default("ACTIVE") // ACTIVE | DISABLED
   lastLatencyMs           Int? // 最近测速延迟（毫秒），null 为未测速或失败
   lastTestedAt            DateTime? // 最近一次测速时间

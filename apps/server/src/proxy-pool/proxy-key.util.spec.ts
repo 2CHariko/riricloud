@@ -1,6 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import {
   PROXY_KEY_WHITELIST_LIMIT,
+  formatProxyLineUsername,
+  parseProxyLineUsername,
   generateProxyKeyPassword,
   generateProxyKeyUsername,
   isProxyKeyUsername,
@@ -83,5 +85,27 @@ describe('proxy-key.util', () => {
     expect(parseWhitelistIps('10.0.0.1,10.0.0.2')).toEqual(['10.0.0.1', '10.0.0.2']);
     expect(parseWhitelistIps('')).toEqual([]);
     expect(parseWhitelistIps(null)).toEqual([]);
+  });
+
+  it('派生用户名无冒号且可规范还原普通 UUID', () => {
+    const rawCredential = 'pk_0123456789abcdef01234567';
+    const lineId = '11111111-1111-4111-8111-111111111111';
+    const username = formatProxyLineUsername(rawCredential, lineId);
+    expect(username).toMatch(/^pk_line_[A-Za-z0-9_-]+$/);
+    expect(username.length).toBeLessThanOrEqual(255);
+    expect(parseProxyLineUsername(username)).toEqual({ rawCredential, lineId });
+    expect(parseProxyLineUsername(username + '=')).toBeNull();
+    expect(parseProxyLineUsername(' ' + username)).toBeNull();
+    expect(parseProxyLineUsername(rawCredential)).toBeNull();
+    expect(() => formatProxyLineUsername(rawCredential, 'not-uuid')).toThrow(BadRequestException);
+  });
+
+  it('拒绝非规范 JSON/base64url、非法 key/UUID 和超长用户名', () => {
+    const encoded = (json: string) => 'pk_line_' + Buffer.from(json).toString('base64url');
+    const key = 'pk_0123456789abcdef01234567';
+    const id = '11111111-1111-4111-8111-111111111111';
+    for (const value of [encoded(`[ "${key}","${id}"]`), encoded(JSON.stringify([key, id, 'extra'])), encoded(JSON.stringify(['pk_short', id])), encoded(JSON.stringify([key, 'bad'])), encoded('{}'), 'pk_line_!', 'pk_line_' + 'a'.repeat(256)]) {
+      expect(parseProxyLineUsername(value)).toBeNull();
+    }
   });
 });

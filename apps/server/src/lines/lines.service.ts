@@ -29,6 +29,7 @@ import { readLastProbe, safeProbeResult } from '../probe/probe-result';
 import { lineProbeVersion } from '../probe/probe-resource.service';
 import type { ProbeResult } from '../probe/probe.types';
 import { buildUpstreamOutbound } from '../common/upstream-connection';
+import { readUpstreamRelayConnection } from '../common/upstream-relay-connection';
 
 const nodeSummary = { select: { id: true, name: true, serverHost: true, status: true, isLocal: true, reachability: true, configOverride: true } } as const;
 const certificateSummary = {
@@ -105,6 +106,7 @@ type LineInput = {
   level?: number;
   sortOrder?: number;
   isPublic?: boolean;
+  proxyPoolEnabled?: boolean;
   status?: LineStatus;
   allowLanAccess?: boolean;
   tunnelType?: string | null;
@@ -213,6 +215,7 @@ export class LinesService {
       level: current.level,
       sortOrder: current.sortOrder + 1,
       isPublic: current.isPublic,
+      proxyPoolEnabled: current.proxyPoolEnabled,
       status: 'DISABLED'
     });
     const line = await this.prisma.line.create({ data: prepared as Prisma.LineUncheckedCreateInput, include: lineInclude });
@@ -227,9 +230,10 @@ export class LinesService {
         if (line.type === 'EXTERNAL') await this.assertUpstreamAvailable(line.upstreamNodeId);
         if (line.relayMode === 'UPSTREAM_NODE') {
           const upstream = await this.assertUpstreamAvailable(line.upstreamNodeId);
-          try { buildUpstreamOutbound(readUpstreamConnection(upstream), 'validate-agent'); } catch { throw new BadRequestException('上游节点不支持 Sing-box 中继出站'); }
+          try { buildUpstreamOutbound(readUpstreamRelayConnection(line, upstream), 'validate-agent'); } catch { throw new BadRequestException('上游节点或落地覆盖不支持 Sing-box 中继出站'); }
         }
         if (line.relayMode === 'UPSTREAM_NODE' && !isMeteredUpstreamEntry(line.protocolType, this.parseObject(line.paramsJson))) throw new BadRequestException('上游中继入口必须支持用户鉴权与流量归属');
+        if (line.proxyPoolEnabled) this.assertProxyPoolConfiguration(line.type, line.protocolType, line.relayMode, this.parseObject(line.paramsJson));
       }
     }
     const result = await this.prisma.line.updateMany({ where: { id: { in: dto.ids } }, data: { status: dto.status, lastProbeJson: null, lastLatencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null } });
@@ -327,7 +331,7 @@ export class LinesService {
   private async prepareExternal(input: LineInput, current?: LineWithRelations): Promise<Prisma.LineUncheckedCreateInput> {
     const nullable = ['entryNodeId', 'entryPort', 'landingNodeId', 'landingPort', 'targetLineId', 'relayMode', 'certificateId', 'serverHost', 'serverPort', 'serverName', 'host', 'landingServerHost', 'landingServerPort', 'tunnelType', 'tunnelPort', 'tunnelSecret', 'udpTimeout'] as const;
     for (const key of nullable) if (input[key] !== undefined && input[key] !== null && input[key] !== '') throw new BadRequestException(`EXTERNAL 不支持 ${key}`);
-    const toggles = ['endpointOverrideEnabled', 'landingEndpointOverrideEnabled', 'allowLanAccess', 'tcpFastOpen', 'tcpMultiPath', 'udpFragment', 'proxyProtocol', 'proxyProtocolAcceptNoHeader'] as const;
+    const toggles = ['proxyPoolEnabled', 'endpointOverrideEnabled', 'landingEndpointOverrideEnabled', 'allowLanAccess', 'tcpFastOpen', 'tcpMultiPath', 'udpFragment', 'proxyProtocol', 'proxyProtocolAcceptNoHeader'] as const;
     for (const key of toggles) if (input[key] === true) throw new BadRequestException(`EXTERNAL 不支持 ${key}`);
     if ((input.params && Object.keys(input.params).length) || (input.listen && input.listen !== DEFAULT_INBOUND_LISTEN) || (input.speedLimitMbps && input.speedLimitMbps !== 0) || (input.trafficRate !== undefined && input.trafficRate !== 1)) throw new BadRequestException('EXTERNAL 不支持本地协议、监听或限速参数');
     const upstreamNodeId = input.upstreamNodeId !== undefined ? input.upstreamNodeId : current?.upstreamNodeId;
@@ -344,6 +348,7 @@ export class LinesService {
       tagsJson: input.tags ? JSON.stringify(input.tags.map((tag) => tag.trim()).filter(Boolean)) : current?.tagsJson ?? '[]',
       sortOrder: input.sortOrder ?? current?.sortOrder ?? 0, level: input.level ?? current?.level ?? 0,
       isPublic: input.isPublic ?? current?.isPublic ?? false, status: input.status ?? current?.status ?? 'DISABLED',
+      proxyPoolEnabled: false,
       trafficRate: 1, speedLimitMbps: 0, endpointOverrideEnabled: false, landingEndpointOverrideEnabled: false,
       serverHost: null, serverPort: null, serverName: null, host: null, landingServerHost: null, landingServerPort: null,
       allowLanAccess: false, tunnelType: null, tunnelPort: null, tunnelSecret: null,
@@ -392,6 +397,8 @@ export class LinesService {
     if (type === 'RELAY' && (!relayMode || !RELAY_MODES.includes(relayMode))) {
       throw new BadRequestException('中继线路必须指定有效的中继机制');
     }
+    const proxyPoolEnabled = input.proxyPoolEnabled ?? current?.proxyPoolEnabled ?? false;
+    if (proxyPoolEnabled) this.assertProxyPoolConfiguration(type, protocolType, relayMode, params);
     if (type === 'RELAY' && relayMode === 'PROTOCOL_PROXY' && protocolType === 'SHADOWTLS') {
       throw new BadRequestException('ShadowTLS 仅支持直连或盲转发，不支持协议代理中继');
     }
@@ -415,7 +422,7 @@ export class LinesService {
         upstreamNodeId = input.upstreamNodeId !== undefined ? input.upstreamNodeId : current?.upstreamNodeId ?? null;
         if (!upstreamNodeId) throw new BadRequestException('上游节点中继线路必须指定上游节点');
         const upstream = await this.assertUpstreamAvailable(upstreamNodeId);
-        try { buildUpstreamOutbound(readUpstreamConnection(upstream), 'validate-agent'); } catch { throw new BadRequestException('上游节点不支持 Sing-box 中继出站'); }
+        try { buildUpstreamOutbound(readUpstreamRelayConnection({ landingEndpointOverrideEnabled: input.landingEndpointOverrideEnabled ?? current?.landingEndpointOverrideEnabled, landingServerHost: input.landingServerHost !== undefined ? input.landingServerHost : current?.landingServerHost, landingServerPort: input.landingServerPort !== undefined ? input.landingServerPort : current?.landingServerPort }, upstream), 'validate-agent'); } catch { throw new BadRequestException('上游节点或落地覆盖不支持 Sing-box 中继出站'); }
         if (!isMeteredUpstreamEntry(protocolType, params)) throw new BadRequestException('上游中继入口必须支持用户鉴权与流量归属');
         landingNodeId = null;
         landingPort = null;
@@ -576,8 +583,14 @@ export class LinesService {
       level: input.level ?? current?.level ?? 0,
       sortOrder: input.sortOrder ?? current?.sortOrder ?? 0,
       isPublic: input.isPublic ?? current?.isPublic ?? true,
+      proxyPoolEnabled,
       status: input.status ?? current?.status ?? 'ACTIVE'
     };
+  }
+
+  private assertProxyPoolConfiguration(type: string, protocol: string, relayMode: string | null, params: Record<string, unknown>) {
+    if (protocol !== 'MIXED' || !(type === 'DIRECT' || (type === 'RELAY' && relayMode === 'UPSTREAM_NODE'))) throw new BadRequestException('代理池仅支持 MIXED 直连或上游中继，请先关闭代理池开关');
+    if (type === 'RELAY' && !isMeteredUpstreamEntry(protocol, params)) throw new BadRequestException('代理池上游中继必须开启用户鉴权');
   }
 
   private getPortTransportUsage(protocolType: ProtocolType, context?: PortEndpointContext): PortTransportUsage {

@@ -317,18 +317,18 @@ Master 将“应用发布”和“可分发二进制资源”拆成两条生命�
 
 ## 10. 直连代理池双轨架构（v0.9.0）
 
-RiriCloud 在同一套节点、线路与账务底座上并行承载**两条互不耦合的代理交付轨道**：
+RiriCloud 使用独立凭据的两条交付轨道，但共同复用线路授权、订阅资格及账务，不以共享配额替代套餐权限：
 
 | 维度 | 订阅轨道（客户端翻墙） | 直连代理池轨道（自动化环境） |
 | :--- | :--- | :--- |
 | 目标客户端 | Clash Meta / Sing-box / Shadowrocket | 爬虫框架、指纹浏览器、脚本与 CLI 工具 |
 | 协议 | VLESS+Reality、Hysteria2、TUIC、Trojan 等 | Sing-box `mixed` 单端口（SOCKS5 + HTTP CONNECT） |
-| 凭据 | 用户 `uuid` / `password` / 订阅 Token | 独立 `ProxyKey`：`pk_xxxx` 用户名 + 独立密码 |
+| 凭据 | 用户 uuid/password/订阅Token | 独立ProxyKey记录，实际登录为按线路派生的pk_line_用户名＋独立密码 |
 | 交付 | 多格式订阅链接与模板编译 | `IP:Port:User:Pass`、URI、JSON、免登录 RESTful 拉取 |
 | 准入控制 | 套餐线路匹配 + 邮箱核验 + 配额 | 同左，外加可选的来源 IP/CIDR 白名单 |
 | 计费 | `TrafficLog` → `User` / `Subscription` | 同一事务内额外累加 `ProxyKey.trafficUsedBytes` |
 
-两条轨道共用 `Line` 实体作为端点定义：管理员创建一条 `protocolType = MIXED` 的 `DIRECT` 线路，该线路的入口节点与端口即成为直连代理池端点，无需新增任何节点侧配置或第二个监听端口。
+线路仅在显式proxyPoolEnabled开启时参与代理池，支持DIRECT/MIXED本机直出及RELAY/UPSTREAM_NODE/MIXED受控上游出口；其他协议/中继不自动注入Key。独立ProxyPoolAccessModule只依赖Prisma/Settings/common，批量解析用户资格、套餐快照/额外授权、Key和线路状态，Agent与ProxyPoolModule共同消费，避免循环依赖和第二套权限规则。
 
 ```mermaid
 sequenceDiagram
@@ -344,7 +344,7 @@ sequenceDiagram
     Web->>Master: POST /api/v1/user/proxy-pool/keys
     Master->>DB: 写入 ProxyKey（pk_xxxx / 高熵密码 / exportToken）
     Master-->>Agent: config_sync（重建节点配置）
-    Agent->>Singbox: 重启内核，inbounds[].users 注入 pk_xxxx 与白名单 route.rules
+    Agent->>Singbox: 应用按Key-Line分配的派生用户名与优先白名单规则
 
     User->>Web: 选择节点与协议，导出多格式列表
     Web->>Master: GET /api/v1/user/proxy-pool/export?format=text|uri|json
@@ -352,7 +352,7 @@ sequenceDiagram
 
     loop 每 5~10 秒
         Agent->>Singbox: 查询 v2ray 累计用户流量
-        Agent->>Master: heartbeat（含 pk_xxxx 累计快照）
+        Agent->>Master: heartbeat（含pk_line_累计快照）
         Master->>DB: 同事务写 TrafficLog(proxyKeyId) + 累加 User/Subscription/ProxyKey
         alt 本批次触及配额或账号被停用
             Master-->>Agent: config_sync（剔除该账号全部凭据，快速熔断）
@@ -362,10 +362,10 @@ sequenceDiagram
 
 **关键架构约束**：
 
-1. **强制鉴权**：`mixed`/`socks`/`http` 入站在生成配置时一律启用用户认证。Sing-box 中 `users` 为空的这三类入站等价于开放代理，属于安全红线。
-2. **冒号安全的入站用户名**：HTTP CONNECT 的 Basic 认证按首个 `:` 切分用户名，因此代理池凭据使用裸 `pk_xxxx` 而非 `pk_xxxx::lineId` 复合形态；线路归属由节点级活动线路解析确定（详见 docs/API_AND_PROTOCOLS.md §5.1）。
-3. **白名单以逻辑路由规则表达**：`invert` 必须内嵌在 `logical/and` 子规则中，避免顶层反转误伤同入站的其他凭据与订阅用户。
-4. **零新增基础设施**：不引入额外数据库、缓存或守护进程；代理池与订阅共享同一 Agent 通道、同一 `config_sync` 热更新链路与同一 WAL 单写者事务模型。
+1. **统一绑定**：列表、登录/Token导出、Agent下发共用稳定Key-Line分配；每用户20Key，每节点512绑定，容量排除可见，不按UI排序改变分配。网络离线/应用状态与配置资格分开，不宣称即时撤销。
+2. **精确身份**：按线路登录编码规范Base64URL JSON[原Key,lineId]、保持冒号安全，统计解码并验证本节点入口，不按节点第一线路计费；旧裸Key停止新连接但旧累计游标保留。
+3. **安全路由**：IP白名单logical/and内层invert拒绝必须先于中继转发，按实际用户名/入站匹配；有效上游落地覆盖由保存、分配、Agent共享校验，出口失败无DIRECT回退。
+4. **零新增基础设施**：原Agent/WS/HTTP协议、内核统计和短事务/遥测路径复用；代理池Key不纳入订阅设备限制，不提供新增套餐级用户带宽承诺。
 
 ## 5. 上游订阅与外部交付架构
 

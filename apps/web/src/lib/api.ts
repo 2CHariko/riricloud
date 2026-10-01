@@ -83,6 +83,7 @@ export interface ApiLine {
   upstreamNodeId?: string | null;
   upstreamSummary?: Pick<ApiUpstreamNode, 'id' | 'name' | 'protocolType' | 'serverHost' | 'serverPort' | 'status' | 'presenceStatus'> | null;
   protocolType: ProtocolType;
+  proxyPoolEnabled: boolean;
   params: Record<string, unknown>;
   entryNodeId: string | null;
   entryPort: number | null;

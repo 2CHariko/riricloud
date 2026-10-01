@@ -28,6 +28,7 @@ import { ProbeTaskDialog } from '@/components/shared/probe-task-dialog';
 import { usePublicSettings } from '@/lib/public-settings';
 import { formatSpeedLimit, getSpeedTierBadgeClass } from '@/lib/speed-tier';
 import { useAdminLines, useLineMutations, type AdminLine } from './use-lines';
+import { ProxyPoolCapacity } from './components/proxy-pool-capacity';
 
 export default function AdminLinesPage() {
   const { t } = useTranslation(['admin', 'common']);
@@ -130,6 +131,7 @@ export default function AdminLinesPage() {
   return (
     <PageContainer>
       <PageHeader title={t('admin:lines.title')} description={t('admin:lines.subtitle')} />
+      <ProxyPoolCapacity />
       <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-1 flex-wrap items-center gap-2">
           <div className="relative w-full min-w-0 flex-1 sm:min-w-52 sm:max-w-xs">
@@ -216,7 +218,7 @@ export default function AdminLinesPage() {
                   <TableRow key={line.id}>
                     <TableCell><Checkbox checked={selected.has(line.id)} onCheckedChange={(checked) => toggleSelected(line.id, checked === true)} aria-label={`${t('common:actions.select')} ${line.name}`} /></TableCell>
                     <TableCell className="w-16"><span className="font-mono text-xs text-muted-foreground tabular-nums font-medium">#{line.sortOrder}</span></TableCell>
-                    <TableCell><div className="font-medium">{line.name}</div><div className="text-xs text-muted-foreground">Lv.{line.level}</div></TableCell>
+                    <TableCell><div className="font-medium">{line.name}</div><div className="text-xs text-muted-foreground">Lv.{line.level}</div><Badge variant={line.proxyPoolEnabled ? 'secondary' : 'outline'}>{t(line.proxyPoolEnabled ? 'admin:lineForm.proxyPoolEnabledBadge' : 'admin:lineForm.proxyPoolDisabledBadge')}</Badge></TableCell>
                     <TableCell><Badge variant="outline" title={line.relayMode === 'TARGET_LINE' ? relayDescription(line) : undefined}>{typeLabels[line.type]}{line.relayMode ? ` · ${relayDescription(line)}` : ''}</Badge></TableCell>
                     <TableCell className="min-w-36"><div className="font-mono text-xs">{line.serverHost}:{line.serverPort}</div><div className="text-xs text-muted-foreground">{line.endpointOverrideEnabled ? t('admin:lines.overrideEnabled') : t('admin:lines.reuseUnderlying')}</div>{line.serverName && <div className="text-xs text-muted-foreground">SNI {line.serverName}</div>}{line.host && <div className="text-xs text-muted-foreground">Host {line.host}</div>}</TableCell>
                     <TableCell>

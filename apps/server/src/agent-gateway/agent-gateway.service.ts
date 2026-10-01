@@ -1,5 +1,6 @@
 import { buildUpstreamOutbound } from '../common/upstream-connection';
-import { getUpstreamUnavailableReason, readUpstreamConnection, isMeteredUpstreamEntry, type UpstreamAvailabilityNode } from '../common/upstream-availability';
+import { getUpstreamUnavailableReason, isMeteredUpstreamEntry, type UpstreamAvailabilityNode } from '../common/upstream-availability';
+import { readUpstreamRelayConnection } from '../common/upstream-relay-connection';
 import { ConflictException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -21,7 +22,8 @@ import {
   type ProxyPoolCredential,
   type SharedListenOptions
 } from '../common/inbound';
-import { parseWhitelistIps } from '../proxy-pool/proxy-key.util';
+import { parseProxyLineUsername } from '../proxy-pool/proxy-key.util';
+import { ProxyPoolAccessService, type ProxyPoolBinding } from '../proxy-pool-access/proxy-pool-access.service';
 import { resolveLineTags } from '../common/line-tags';
 import { DEFAULT_INBOUND_LISTEN, getClashApiListen, getStatsApiListen } from '../common/ports';
 import {
@@ -129,19 +131,6 @@ type ResolvedTrafficLine = {
   trafficRate: number;
 };
 
-// 直连代理池凭据快照（含归属用户，用于资格二次过滤）
-type ProxyPoolKeySnapshot = {
-  id: string;
-  userId: string;
-  username: string;
-  password: string;
-  whitelistIps: string;
-  user?: { uuid: string; isActive: boolean } | null;
-};
-
-type ProxyKeyDelegate = {
-  findMany: (args: Record<string, unknown>) => Promise<ProxyPoolKeySnapshot[]>;
-};
 
 type TrafficProxyKeySnapshot = {
   id: string;
@@ -238,8 +227,6 @@ type VersionConfirmation = {
   warned: boolean;
 };
 
-// 单节点注入的直连代理池凭据上限：约束入站用户列表与白名单路由规则的配置体量
-const PROXY_POOL_KEYS_PER_NODE_LIMIT = 512;
 
 const SINGBOX_DIAGNOSTIC_DURATION_MS = 30 * 60 * 1000;
 const SINGBOX_DIAGNOSTIC_SWEEP_INTERVAL_MS = 30 * 1000;
@@ -317,12 +304,13 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     private readonly prisma: PrismaService,
     @Optional() private readonly settingsService?: SettingsService,
     @Optional() private readonly systemLogsService?: SystemLogsService,
-    @Optional() private readonly telemetryPrisma?: TelemetryPrismaService
+    @Optional() private readonly telemetryPrisma?: TelemetryPrismaService,
+    @Optional() private readonly proxyPoolAccess?: ProxyPoolAccessService
   ) {
     if (this.settingsService) {
       this.settingsService.onSettingsChange((patch) => {
         if (
-          patch.enforceEmailVerification !== undefined ||
+          patch.publicLinesEnabled !== undefined || patch.enforceEmailVerification !== undefined ||
           patch.agentLogMaxSizeMb !== undefined ||
           patch.agentLogMaxFiles !== undefined ||
           patch.deviceLimitEnabled !== undefined ||
@@ -902,15 +890,15 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       const proxyKeysByUsername = new Map(proxyKeys.map((key) => [key.username, key]));
 
       const lineDelegate = (tx as unknown as {
-        line?: { findMany: (args: Record<string, unknown>) => Promise<Array<{ id: string; trafficRate?: number | null }>> };
+        line?: { findMany: (args: Record<string, unknown>) => Promise<Array<{ id: string; trafficRate?: number | null; entryNodeId?: string | null }>> };
       }).line;
       const loadedLines = lineDelegate && referencedLineIds.size > 0
         ? await lineDelegate.findMany({
             where: { id: { in: [...referencedLineIds] } },
-            select: { id: true, trafficRate: true }
+            select: { id: true, trafficRate: true, entryNodeId: true }
           })
         : [];
-      const linesById = new Map(loadedLines.map((l) => [l.id, { id: l.id, trafficRate: this.normalizeTrafficRate(l.trafficRate) }]));
+      const linesById = new Map(loadedLines.map((l) => [l.id, { id: l.id, trafficRate: this.normalizeTrafficRate(l.trafficRate), entryNodeId: l.entryNodeId }]));
 
       const cursor = (tx as unknown as { trafficCursor?: TrafficCursorDelegate }).trafficCursor;
       if (!cursor) throw new Error('TrafficCursor delegate is unavailable');
@@ -926,6 +914,11 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       for (const [credential, current] of snapshotsByCredential) {
         cursorUpdates.set(credential, current);
         const parsed = parsedByCredential.get(credential) ?? { rawCredential: credential, lineId: null };
+        const proxyLineIdentity = credential.startsWith('pk_line_') ? parseProxyLineUsername(credential) : null;
+        if (credential.startsWith('pk_line_') && (!proxyLineIdentity || linesById.get(proxyLineIdentity.lineId)?.entryNodeId !== nodeId)) {
+          this.logger.warn('heartbeat: invalid proxy line identity');
+          continue;
+        }
         if (this.isInternalSystemCredential(parsed.rawCredential)) continue;
 
         const previous = cursorByCredential.get(credential);
@@ -950,9 +943,9 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         const total = upload + download;
         if (total === 0n) continue;
 
-        const activeLine = parsed.lineId
-          ? (linesById.get(parsed.lineId) ?? { id: parsed.lineId, trafficRate: 1 })
-          : line;
+        const activeLine = proxyLineIdentity
+          ? linesById.get(proxyLineIdentity.lineId)
+          : parsed.lineId ? (linesById.get(parsed.lineId) ?? { id: parsed.lineId, trafficRate: 1 }) : line;
         const targetLineId = activeLine?.id;
         const targetTrafficRate = activeLine?.trafficRate ?? 1;
 
@@ -1878,6 +1871,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       id: string;
       tag: string | null;
       listen: string;
+      proxyPoolEnabled?: boolean;
       type: string;
       relayMode: string | null;
       protocolType: string;
@@ -1946,18 +1940,11 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     const outbounds: Array<Record<string, unknown>> = [{ type: 'direct', tag: 'direct' }];
     const relayRules: Array<Record<string, unknown>> = [];
     const portSpeedLimits: Record<number, number> = {};
-    // 直连代理池：仅注入当前仍具备订阅资格的用户的 Proxy Key（超额/停用即时吊销）
-    const entitledUserUuids = new Set(entitledSubscriptions.map((subscription) => subscription.user.uuid));
-    const proxyPoolKeys = await this.loadProxyPoolKeys(entitledUserUuids);
-    const proxyPoolUsers: ProxyPoolCredential[] = proxyPoolKeys.map((key) => ({
-      username: key.username,
-      password: key.password
-    }));
-    const proxyPoolWhitelistCredentials = proxyPoolKeys.map((key) => ({
-      username: key.username,
-      whitelistIps: parseWhitelistIps(key.whitelistIps)
-    }));
-    const proxyPoolTags = new Set<string>();
+    // 与端点导出共用逐线路绑定分配，缺少解析器时拒绝注入而非回退旧裸 Key。
+    const bindings = this.proxyPoolAccess ? await this.proxyPoolAccess.getNodeBindings(nodeId) : [];
+    const bindingsByLine = new Map<string, ProxyPoolBinding[]>();
+    for (const binding of bindings) bindingsByLine.set(binding.lineId, [...(bindingsByLine.get(binding.lineId) ?? []), binding]);
+    const proxyPoolRules: Array<Record<string, unknown>> = [];
     const authorizedUsers = new Map<string, InboundUserCredential>();
     const usersForLine = (line: Pick<ConfigLine, 'id' | 'tagsJson' | 'isPublic' | 'status'>): InboundUserCredential[] => {
       const lineUsers = entitledSubscriptions
@@ -1981,13 +1968,12 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       if (line.type === 'EXTERNAL' || !line.entryNodeId || !line.entryPort) continue;
       if (!publicLinesEnabled) continue;
       const protocolType = line.protocolType as ProtocolType;
-      const isProxyPoolProtocol = line.relayMode !== 'UPSTREAM_NODE' && AUTHENTICATED_PROXY_PROTOCOLS.includes(protocolType);
+      const isProxyPoolProtocol = line.proxyPoolEnabled === true && protocolType === 'MIXED' && (line.type === 'DIRECT' || (line.type === 'RELAY' && line.relayMode === 'UPSTREAM_NODE'));
       const lineParams = this.buildLineParams(line);
       if (line.relayMode === 'UPSTREAM_NODE' && (!line.upstreamNode || getUpstreamUnavailableReason(line.upstreamNode) || !isMeteredUpstreamEntry(protocolType, lineParams))) continue;
-      // mixed/socks/http 是面向自动化的直连入口：无用户的入站在 Sing-box 中等价于开放代理，
-      // 因此强制启用鉴权，并注入当前有效的 Proxy Key 凭据数组。
-      const params = isProxyPoolProtocol ? { ...lineParams, usersEnabled: true } : lineParams;
-      const lineUsers = isProxyPoolProtocol ? proxyPoolUsers : [];
+      // 保留密码协议原有订阅鉴权；只有显式代理池开关才取得独立 Key。
+      const params = isProxyPoolProtocol || (line.relayMode !== 'UPSTREAM_NODE' && AUTHENTICATED_PROXY_PROTOCOLS.includes(protocolType)) ? { ...lineParams, usersEnabled: true } : lineParams;
+      const lineBindings = isProxyPoolProtocol ? bindingsByLine.get(line.id) ?? [] : [];
       const lineTags = resolveLineTags(line);
       const isEntry = line.entryNodeId === nodeId;
       const isLanding = line.landingNodeId === nodeId;
@@ -2003,9 +1989,9 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         ? [...inboundUsers, this.internalRelayTransitUser()]
         : inboundUsers;
       const proxyPoolUsersForTag = (tag: string): ProxyPoolCredential[] => {
-        if (!isProxyPoolProtocol || !lineUsers.length) return [];
-        proxyPoolTags.add(tag);
-        return lineUsers;
+        if (!lineBindings.length || !isEntry) return [];
+        proxyPoolRules.push(...buildProxyPoolWhitelistRules({ tag, credentials: lineBindings }));
+        return lineBindings.map(({ username, password }) => ({ username, password }));
       };
 
       const listenOptions: SharedListenOptions = {
@@ -2191,12 +2177,6 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       }
     }
 
-    // 直连代理池来源 IP 白名单：以逻辑规则拒绝「命中凭据但来源不在白名单」的连接
-    for (const tag of proxyPoolTags) {
-      relayRules.push(
-        ...buildProxyPoolWhitelistRules({ tag, credentials: proxyPoolWhitelistCredentials })
-      );
-    }
 
     if (relayRules.some((rule) => rule.outbound === 'block') && !outbounds.some((outbound) => outbound.tag === 'block')) {
       outbounds.push({ type: 'block', tag: 'block' });
@@ -2302,7 +2282,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
           }
         }
       },
-      ...(relayRules.length ? { route: { rules: relayRules } } : {})
+      ...((proxyPoolRules.length || relayRules.length) ? { route: { rules: [...proxyPoolRules, ...relayRules] } } : {})
     };
     if (node.configOverride) {
       singboxConfig = deepMerge(singboxConfig, JSON.parse(node.configOverride) as Record<string, unknown>);
@@ -2358,27 +2338,6 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     };
   }
 
-  // 载入可下发的直连代理池凭据：仅保留启用且归属用户仍具备订阅资格的 Proxy Key。
-  // 超额、过期、被禁用的用户在此被自然剔除，从而实现凭据快速熔断。
-  private async loadProxyPoolKeys(entitledUserUuids: Set<string>): Promise<ProxyPoolKeySnapshot[]> {
-    const delegate = (this.prisma as unknown as { proxyKey?: ProxyKeyDelegate }).proxyKey;
-    if (!delegate || !entitledUserUuids.size) return [];
-    const keys = await delegate.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        userId: true,
-        username: true,
-        password: true,
-        whitelistIps: true,
-        user: { select: { uuid: true, isActive: true } }
-      },
-      orderBy: { createdAt: 'asc' }
-    });
-    return keys
-      .filter((key) => Boolean(key.username) && Boolean(key.password) && key.user?.isActive && entitledUserUuids.has(key.user.uuid))
-      .slice(0, PROXY_POOL_KEYS_PER_NODE_LIMIT);
-  }
 
   private async getDesiredConfigSync(nodeId: string): Promise<ConfigSyncData> {
     const cached = this.configCache.get(nodeId);
@@ -2500,12 +2459,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     upstreamNode: { protocolType: string; serverHost: string; serverPort: number; paramsJson: string }
   ): Record<string, unknown> | undefined {
     try {
-      const connection = readUpstreamConnection(upstreamNode);
-      if (line.landingEndpointOverrideEnabled && line.landingServerHost) {
-        connection.serverHost = line.landingServerHost;
-        connection.serverPort = line.landingServerPort ?? connection.serverPort;
-      }
-      return buildUpstreamOutbound(connection, `relay-out-${line.id}`);
+      return buildUpstreamOutbound(readUpstreamRelayConnection(line, upstreamNode), `relay-out-${line.id}`);
     } catch {
       return undefined;
     }

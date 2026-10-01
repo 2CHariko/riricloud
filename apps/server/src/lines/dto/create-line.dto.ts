@@ -141,6 +141,11 @@ export class CreateLineDto {
   @IsOptional()
   allowLanAccess?: boolean;
 
+  @ApiPropertyOptional({ default: false, description: '显式接入标准代理池，仅支持 MIXED 直连或上游中继' })
+  @IsBoolean()
+  @IsOptional()
+  proxyPoolEnabled?: boolean;
+
   @ApiPropertyOptional({ enum: ['TCP_MUX', 'WIREGUARD'], nullable: true, description: '反向穿透隧道类型' })
   @IsIn(['TCP_MUX', 'WIREGUARD'])
   @IsOptional()

@@ -24,6 +24,7 @@ export interface ManagedLinePayload extends LineAttributes {
   listen?: string;
   type: 'DIRECT' | 'RELAY';
   protocolType: ProtocolType;
+  proxyPoolEnabled: boolean;
   params: Record<string, unknown>;
   relayMode?: RelayMode | null;
   targetLineId?: string | null;
@@ -105,6 +106,7 @@ export function useLineMutations() {
     void queryClient.invalidateQueries({ queryKey: ['admin', 'nodes'] });
     void queryClient.invalidateQueries({ queryKey: ['admin', 'plans'] });
     void queryClient.invalidateQueries({ queryKey: ['user'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin', 'proxy-pool'] });
   };
   const onError = (error: unknown, fallback: string) => toast.error(extractErrorMessage(error, fallback));
   const create = useMutation({

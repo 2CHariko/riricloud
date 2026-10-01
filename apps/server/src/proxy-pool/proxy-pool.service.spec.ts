@@ -1,19 +1,19 @@
-import { BadRequestException, ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ProxyPoolService, PROXY_KEY_PER_USER_LIMIT } from './proxy-pool.service';
+import { ProxyPoolAccessSnapshot, ProxyPoolEndpoint } from '../proxy-pool-access/proxy-pool-access.service';
+import { formatProxyLineUsername } from './proxy-key.util';
 
-const lineRecord = (overrides: Record<string, unknown> = {}) => ({
-  id: 'line-1',
-  name: '香港 Mixed 直连',
-  tagsJson: JSON.stringify(['HK', 'proxy']),
-  entryPort: 10808,
-  endpointOverrideEnabled: false,
-  serverHost: null,
-  serverPort: null,
-  lastLatencyMs: 42,
-  lastTestedAt: new Date('2026-09-10T08:00:00.000Z'),
-  lastTestStatus: 'SUCCESS',
-  entryNode: { id: 'node-1', name: '香港节点', serverHost: '203.0.113.7', status: 'ONLINE' },
-  ...overrides
+const lineId = '22222222-2222-4222-8222-222222222222';
+const otherLineId = '33333333-3333-4333-8333-333333333333';
+const endpoint = (overrides: Partial<ProxyPoolEndpoint> = {}): ProxyPoolEndpoint => ({
+  lineId, name: '香港 Mixed', region: 'HK', tags: ['HK'], protocol: 'MIXED', host: '2001:db8::1', port: 1080,
+  nodeId: 'node', nodeName: '香港节点', nodeStatus: 'OFFLINE', online: false, routeKind: 'DIRECT', lineType: 'DIRECT',
+  status: 'AVAILABLE', reason: null, tls: false, serverName: null, supportedProtocols: ['http', 'socks5'], trafficRate: 1,
+  lastProbe: null, latencyMs: 42, lastTestedAt: null, lastTestStatus: 'SUCCESS', ...overrides
+});
+const snapshot = (endpoints = [endpoint()]): ProxyPoolAccessSnapshot => ({
+  eligibleUserIds: new Set(['user-1', 'user-2']), endpoints, endpointsByKey: new Map([[keyRecord().id, endpoints]]),
+  bindingsByNode: new Map(), nodeCapacities: [{ nodeId: 'node', nodeName: '香港节点', used: 1, limit: 512, excluded: 0 }]
 });
 
 const keyRecord = (overrides: Record<string, unknown> = {}) => ({
@@ -47,12 +47,15 @@ describe('ProxyPoolService', () => {
     line: { findMany: jest.fn() }
   };
   const agentService = { pushConfigToAll: jest.fn().mockResolvedValue(1) };
+  const access = { getSnapshot: jest.fn() };
   let service: ProxyPoolService;
 
   beforeEach(() => {
     jest.resetAllMocks();
     agentService.pushConfigToAll.mockResolvedValue(1);
-    service = new ProxyPoolService(prisma as never, agentService as never);
+    access.getSnapshot.mockResolvedValue(snapshot());
+    prisma.proxyKey.findFirst.mockResolvedValue(keyRecord());
+    service = new ProxyPoolService(prisma as never, access as never, agentService as never);
   });
 
   describe('凭据管理', () => {
@@ -141,165 +144,76 @@ describe('ProxyPoolService', () => {
     });
   });
 
-  describe('节点端点检索', () => {
-    it('仅返回启用中的 Mixed 直连线路，并解析对外地址与端口覆盖', async () => {
-      prisma.line.findMany.mockResolvedValue([
-        lineRecord(),
-        lineRecord({
-          id: 'line-2',
-          name: '日本直连',
-          endpointOverrideEnabled: true,
-          serverHost: 'proxy.example.com',
-          serverPort: 19080,
-          tagsJson: JSON.stringify(['local']),
-          entryNode: { id: 'node-2', name: '日本节点', serverHost: '198.51.100.9', status: 'DISABLED' },
-          lastLatencyMs: null,
-          lastTestedAt: null,
-          lastTestStatus: null
-        })
-      ]);
-
-      const result = await service.listEndpoints();
-      expect(prisma.line.findMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ protocolType: 'MIXED', type: 'DIRECT', status: 'ACTIVE', isPublic: true })
-      }));
-      expect(result.endpoints[0]).toEqual(expect.objectContaining({
-        lineId: 'line-1',
-        region: 'HK',
-        tags: ['HK', 'proxy'],
-        host: '203.0.113.7',
-        port: 10808,
-        online: true,
-        latencyMs: 42,
-        lastTestedAt: '2026-09-10T08:00:00.000Z'
-      }));
-      expect(result.endpoints[1]).toEqual(expect.objectContaining({
-        lineId: 'line-2',
-        region: null,
-        host: 'proxy.example.com',
-        port: 19080,
-        online: false
-      }));
+  describe('授权节点列表与导出', () => {
+    it('列表不返回凭据，offline端点仍显示，默认Key与容量快照一致', async () => {
+      const result = await service.listEndpoints('user-1');
+      expect(result).toEqual({ keyId: keyRecord().id, endpoints: [endpoint()], excludedCount: 0 });
+      expect(JSON.stringify(result)).not.toMatch(/password|username|secret/);
     });
 
-    it('没有入口节点或端口的外部记录不能成为代理池端点', async () => {
-      prisma.line.findMany.mockResolvedValue([lineRecord({ type: 'EXTERNAL', entryNode: null, entryPort: null })]);
-      const result = await service.listEndpoints();
-      expect(result.endpoints).toEqual([]);
-    });
-
-    it('按 lineIds 过滤，空过滤结果直接返回空列表', async () => {
-      prisma.line.findMany.mockResolvedValue([]);
-      const result = await service.listEndpoints([]);
-      expect(result.endpoints).toEqual([]);
-      expect(prisma.line.findMany).not.toHaveBeenCalled();
-
-      await service.listEndpoints(['line-1']);
-      expect(prisma.line.findMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ id: { in: ['line-1'] } })
-      }));
-    });
-  });
-
-  describe('多格式导出与免登录拉取', () => {
-    beforeEach(() => {
-      prisma.proxyKey.findFirst.mockResolvedValue(keyRecord());
-      const availableLines = [
-        lineRecord(),
-        lineRecord({ id: 'line-2', name: '日本直连', entryPort: 10809, tagsJson: JSON.stringify(['JP']) })
-      ];
-      prisma.line.findMany.mockImplementation(
-        async ({ where }: { where?: { id?: { in: string[] } } } = {}) => {
-          const ids = where?.id?.in;
-          return ids ? availableLines.filter((line) => ids.includes(line.id)) : availableLines;
-        }
-      );
-    });
-
-    it('纯文本格式输出 IP:Port:User:Pass（指纹浏览器可直接导入）', async () => {
-      const result = await service.exportForUser('user-1', { format: 'text' });
-      expect(result.contentType).toBe('text/plain; charset=utf-8');
-      expect(result.body).toBe(
-        [
-          '203.0.113.7:10808:pk_0123456789abcdef01234567:secret-password',
-          '203.0.113.7:10809:pk_0123456789abcdef01234567:secret-password'
-        ].join('\n')
-      );
-      expect(result.count).toBe(2);
-    });
-
-    it('URI 格式支持 socks5:// 与 http:// 切换', async () => {
-      const socks = await service.exportForUser('user-1', { format: 'uri', protocol: 'socks5', lineIds: 'line-1' });
-      expect(socks.body).toBe('socks5://pk_0123456789abcdef01234567:secret-password@203.0.113.7:10808');
-
-      const http = await service.exportForUser('user-1', { format: 'uri', protocol: 'http', lineIds: 'line-1' });
-      expect(http.body).toBe('http://pk_0123456789abcdef01234567:secret-password@203.0.113.7:10808');
-    });
-
-    it('节点启用 TLS 时，HTTP 协议自动输出为 https:// 代理 URI', async () => {
-      const tlsLine = lineRecord({
-        id: 'line-tls',
-        name: '美国 HTTPS 直连',
-        entryPort: 10443,
-        paramsJson: JSON.stringify({ tls: { enabled: true, serverName: 'us-proxy.example.com' } })
-      });
-      prisma.line.findMany.mockResolvedValue([tlsLine]);
-
-      const http = await service.exportForUser('user-1', { format: 'uri', protocol: 'http', lineIds: 'line-tls' });
-      expect(http.body).toBe('https://pk_0123456789abcdef01234567:secret-password@203.0.113.7:10443');
-
-      const socks = await service.exportForUser('user-1', { format: 'uri', protocol: 'socks5', lineIds: 'line-tls' });
-      expect(socks.body).toBe('socks5://pk_0123456789abcdef01234567:secret-password@203.0.113.7:10443');
-    });
-
-    it('JSON 格式包含节点名称、地区、延迟快照、协议与凭证', async () => {
-      const result = await service.exportForUser('user-1', { format: 'json', lineIds: 'line-1' });
-      expect(result.contentType).toBe('application/json; charset=utf-8');
-      const payload = JSON.parse(result.body) as { proxies: Array<Record<string, unknown>> };
-      expect(payload.proxies).toEqual([
-        expect.objectContaining({
-          name: '香港 Mixed 直连',
-          region: 'HK',
-          node: '香港节点',
-          protocol: 'mixed',
-          host: '203.0.113.7',
-          port: 10808,
-          username: 'pk_0123456789abcdef01234567',
-          password: 'secret-password',
-          latencyMs: 42,
-          lastTestStatus: 'SUCCESS'
-        })
-      ]);
-    });
-
-    it('没有可用 Mix 线路时导出返回 NotFound', async () => {
-      prisma.line.findMany.mockResolvedValue([]);
-      await expect(service.exportForUser('user-1', { format: 'text' })).rejects.toThrow(NotFoundException);
-    });
-
-    it('未创建凭据时导出提示先创建 Proxy Key', async () => {
+    it('无Key为空；无权益返回403结构化code；他人Key不泄露', async () => {
       prisma.proxyKey.findFirst.mockResolvedValue(null);
-      await expect(service.exportForUser('user-1', {})).rejects.toThrow('尚未创建直连代理凭据');
+      expect(await service.listEndpoints('user-1')).toEqual({ keyId: null, endpoints: [], excludedCount: 0 });
+      await expect(service.listEndpoints('user-1', { keyId: 'other' })).rejects.toThrow(NotFoundException);
+      access.getSnapshot.mockResolvedValue({ ...snapshot(), eligibleUserIds: new Set() });
+      await expect(service.listEndpoints('user-1')).rejects.toMatchObject({ response: { code: 'PROXY_POOL_ACCESS_DENIED' } });
+      await expect(service.exportForUser('user-1', {})).rejects.toThrow(ForbiddenException);
     });
 
-    it('凭据停用后拒绝导出', async () => {
-      prisma.proxyKey.findFirst.mockResolvedValue(keyRecord({ isActive: false }));
-      await expect(service.exportForUser('user-1', { keyId: 'key-1' })).rejects.toThrow(ConflictException);
+    it.each(['', ' ', ',', 'bad', `${lineId},`, Array(201).fill(lineId).join(',')])('invalid selection不能扩大查询 %s', async (lineIds) => {
+      await expect(service.listEndpoints('user-1', { lineIds })).rejects.toThrow(BadRequestException);
+      await expect(service.exportForUser('user-1', { lineIds })).rejects.toThrow(BadRequestException);
+      expect(access.getSnapshot).not.toHaveBeenCalled();
     });
 
-    it('免登录令牌拉取：有效令牌直接导出，无效令牌 401', async () => {
-      prisma.proxyKey.findUnique.mockResolvedValue({ ...keyRecord(), user: { id: 'user-1', isActive: true } });
-      const result = await service.exportForToken('tok-1', { format: 'uri', protocol: 'http', lineIds: 'line-1' });
-      expect(result.body).toContain('http://pk_0123456789abcdef01234567');
+    it('JSON v2 每端点派生用户名、记录容量排除数量', async () => {
+      access.getSnapshot.mockResolvedValue(snapshot([endpoint(), endpoint({ lineId: otherLineId, status: 'CAPACITY_EXCLUDED', reason: 'CAPACITY' })]));
+      const result = await service.exportForUser('user-1', { format: 'json' });
+      expect(JSON.parse(result.body)).toMatchObject({ version: 2, excludedCount: 1, key: { username: keyRecord().username }, proxies: [{ ...endpoint(), username: formatProxyLineUsername(keyRecord().username, lineId), password: 'secret-password' }] });
+      const list = await service.listEndpoints('user-1');
+      expect(list.excludedCount).toBe(1);
+      expect(list.endpoints[1].status).toBe('CAPACITY_EXCLUDED');
+    });
 
+    it('URI/text IPv6有方括号，凭据按Line派生而非裸pk别名', async () => {
+      const username = formatProxyLineUsername(keyRecord().username, lineId);
+      expect((await service.exportForUser('user-1', { format: 'uri' })).body).toBe(`socks5://${username}:secret-password@[2001:db8::1]:1080`);
+      expect((await service.exportForUser('user-1', { format: 'text' })).body).toBe(`[2001:db8::1]:1080:${username}:secret-password`);
+    });
+
+    it('TLS http是https，socks5与text明确选择拒绝，默认全量过滤', async () => {
+      access.getSnapshot.mockResolvedValue(snapshot([endpoint({ tls: true, supportedProtocols: ['http'] })]));
+      expect((await service.exportForUser('user-1', { format: 'uri', protocol: 'http' })).body).toMatch(/^https:\/\//);
+      for (const query of [{ format: 'uri' as const, protocol: 'socks5' as const }, { format: 'text' as const, protocol: 'http' as const }, { format: 'json' as const, protocol: 'socks5' as const }]) {
+        await expect(service.exportForUser('user-1', { ...query, lineIds: lineId })).rejects.toMatchObject({ response: { code: 'PROXY_POOL_SELECTION_UNAVAILABLE', lineIds: [lineId] } });
+        await expect(service.exportForUser('user-1', query)).rejects.toThrow(NotFoundException);
+      }
+    });
+
+    it('明确选择missing/unauthorized/capacity统一409，不泄露原因', async () => {
+      access.getSnapshot.mockResolvedValue(snapshot([endpoint({ status: 'CAPACITY_EXCLUDED' })]));
+      await expect(service.exportForUser('user-1', { format: 'json', lineIds: `${lineId},${otherLineId}` })).rejects.toMatchObject({ response: { code: 'PROXY_POOL_SELECTION_UNAVAILABLE', lineIds: [lineId, otherLineId] } });
+    });
+
+    it('有效token每次检查权益、无效/停用401、不能用token选择他人Key', async () => {
+      prisma.proxyKey.findUnique.mockResolvedValue(keyRecord());
+      expect((await service.exportForToken('tok-1', { format: 'json' })).count).toBe(1);
+      await expect(service.exportForToken('tok-1', { keyId: 'other' })).rejects.toThrow(NotFoundException);
+      access.getSnapshot.mockResolvedValue({ ...snapshot(), eligibleUserIds: new Set() });
+      await expect(service.exportForToken('tok-1', {})).rejects.toThrow(ForbiddenException);
       prisma.proxyKey.findUnique.mockResolvedValue(null);
       await expect(service.exportForToken('bad', {})).rejects.toThrow(UnauthorizedException);
-
-      prisma.proxyKey.findUnique.mockResolvedValue({ ...keyRecord({ isActive: false }), user: { id: 'user-1', isActive: true } });
+      prisma.proxyKey.findUnique.mockResolvedValue(keyRecord({ isActive: false }));
       await expect(service.exportForToken('tok-1', {})).rejects.toThrow(UnauthorizedException);
+    });
 
-      prisma.proxyKey.findUnique.mockResolvedValue({ ...keyRecord(), user: { id: 'user-1', isActive: false } });
-      await expect(service.exportForToken('tok-1', {})).rejects.toThrow(UnauthorizedException);
+    it('无endpoint404、无Key需创建、停用Key不可导出', async () => {
+      access.getSnapshot.mockResolvedValue(snapshot([]));
+      await expect(service.exportForUser('user-1', {})).rejects.toThrow(NotFoundException);
+      prisma.proxyKey.findFirst.mockResolvedValue(null);
+      await expect(service.exportForUser('user-1', {})).rejects.toThrow(BadRequestException);
+      prisma.proxyKey.findFirst.mockResolvedValue(keyRecord({ isActive: false }));
+      await expect(service.exportForUser('user-1', { keyId: keyRecord().id })).rejects.toThrow(ConflictException);
     });
   });
 
@@ -333,7 +247,7 @@ describe('ProxyPoolService', () => {
     it('总览汇总凭据规模、累计流量与端点数量', async () => {
       prisma.proxyKey.count.mockResolvedValueOnce(5).mockResolvedValueOnce(3);
       prisma.proxyKey.aggregate.mockResolvedValue({ _sum: { trafficUsedBytes: 2048n } });
-      prisma.line.findMany.mockResolvedValue([lineRecord()]);
+      access.getSnapshot.mockResolvedValue(snapshot());
 
       const result = await service.adminOverview();
       expect(result).toEqual(expect.objectContaining({
@@ -341,13 +255,14 @@ describe('ProxyPoolService', () => {
         activeKeys: 3,
         disabledKeys: 2,
         trafficUsedBytes: 2048,
-        endpointCount: 1
+        endpointCount: 1,
+        nodeCapacities: [{ nodeId: 'node', nodeName: '香港节点', used: 1, limit: 512, excluded: 0 }]
       }));
     });
   });
 
   it('未注入 AgentService 时凭据变更不抛异常', async () => {
-    const isolated = new ProxyPoolService(prisma as never);
+    const isolated = new ProxyPoolService(prisma as never, access as never);
     prisma.proxyKey.count.mockResolvedValue(0);
     prisma.proxyKey.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => keyRecord(data));
     await expect(isolated.createKey('user-1', { name: '无网关' })).resolves.toBeDefined();

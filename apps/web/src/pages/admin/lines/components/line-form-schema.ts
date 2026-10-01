@@ -3,6 +3,7 @@ import i18n from '@/i18n/config';
 import type { ApiLine, ProtocolType } from '@/lib/api';
 import type { InboundParams } from '../../nodes/use-nodes';
 import type { LinePayload } from '../use-lines';
+import { canEnableProxyPool, requiresUpstreamUserAuth } from './proxy-pool-line-capabilities';
 
 export const PROTOCOL_TYPES = [
   'VLESS', 'VMESS', 'TROJAN', 'HYSTERIA2', 'TUIC', 'SHADOWSOCKS',
@@ -55,6 +56,7 @@ export const lineFormSchema = z.object({
   listen: z.string().trim().min(1, i18n.t('admin:lineForm.validation.listenRequired')).max(64, i18n.t('admin:lineForm.validation.listenMax')),
   type: z.enum(['DIRECT', 'RELAY', 'EXTERNAL']),
   protocolType: z.enum(PROTOCOL_TYPES),
+  proxyPoolEnabled: z.boolean().default(false),
   relayMode: z.enum(['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE', 'UPSTREAM_NODE']).optional(),
   targetLineId: z.string().optional(),
   upstreamNodeId: z.string().optional(),
@@ -159,6 +161,12 @@ export const lineFormSchema = z.object({
   tunnelPort: optionalPort,
   tunnelSecret: z.string().optional()
 }).superRefine((value, ctx) => {
+  if (value.proxyPoolEnabled && !canEnableProxyPool(value)) {
+    ctx.addIssue({ code: 'custom', path: ['proxyPoolEnabled'], message: i18n.t('admin:lineForm.proxyPoolInvalid') });
+  }
+  if (requiresUpstreamUserAuth(value) && !value.localUsersEnabled) {
+    ctx.addIssue({ code: 'custom', path: ['localUsersEnabled'], message: i18n.t('admin:lineForm.upstreamUsersRequired') });
+  }
   if (value.type === 'EXTERNAL') {
     if (!value.upstreamNodeId) ctx.addIssue({ code: 'custom', path: ['upstreamNodeId'], message: i18n.t('admin:lineForm.validation.upstreamNodeRequired') });
     return;
@@ -292,6 +300,7 @@ export function defaultLineFormValues(protocolType: ProtocolType = 'VLESS'): Lin
   return {
     name: '', tag: '', listen: '0.0.0.0', type: 'DIRECT', protocolType, relayMode: 'BLIND_FORWARD', targetLineId: '', upstreamNodeId: '',
     entryNodeId: '', entryPort: undefined, landingNodeId: '', landingPort: undefined,
+    proxyPoolEnabled: false,
     certificateId: MANUAL_CERTIFICATE_ID,
     transportType: 'tcp', wsPath: '/ws', wsHost: '', wsHeaders: [], wsMaxEarlyData: undefined,
     wsEarlyDataHeaderName: '', grpcServiceName: 'grpc', httpPath: '/http', httpHost: '', httpHeaders: [],
@@ -365,6 +374,7 @@ export function lineToFormValues(line: ApiLine): LineFormValues {
     listen: line.listen,
     type: line.type,
     protocolType: line.protocolType,
+    proxyPoolEnabled: line.proxyPoolEnabled === true,
     relayMode: line.relayMode ?? 'BLIND_FORWARD',
     targetLineId: line.targetLineId ?? '',
     upstreamNodeId: line.upstreamNodeId ?? '',
@@ -621,6 +631,7 @@ export function toLinePayload(values: LineFormValues): LinePayload {
     listen: values.listen.trim(),
     type: values.type,
     protocolType: values.protocolType,
+    proxyPoolEnabled: values.proxyPoolEnabled,
     params: buildParamsFromValues(values),
     relayMode: values.type === 'RELAY' ? values.relayMode : null,
     targetLineId: values.type === 'RELAY' && values.relayMode === 'TARGET_LINE' ? values.targetLineId || null : null,

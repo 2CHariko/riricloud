@@ -3,6 +3,8 @@ import { toast } from 'sonner';
 import { api, extractErrorMessage } from '@/lib/api';
 import i18n from '@/i18n/config';
 
+import type { ProbeResult } from '@/lib/probe-types';
+import { parseProxyPoolExport, type ProxyPoolExportV2 } from './proxy-pool-contract';
 export interface ProxyKey {
   id: string;
   userId: string;
@@ -33,8 +35,15 @@ export interface ProxyPoolEndpoint {
   latencyMs: number | null;
   lastTestedAt: string | null;
   lastTestStatus: string | null;
-  tls?: boolean;
-  serverName?: string | null;
+  routeKind: 'DIRECT' | 'UPSTREAM_RELAY';
+  lineType: 'DIRECT' | 'RELAY';
+  status: 'AVAILABLE' | 'CAPACITY_EXCLUDED';
+  reason: string | null;
+  tls: boolean;
+  serverName: string | null;
+  supportedProtocols: ProxyPoolExportProtocol[];
+  trafficRate: number;
+  lastProbe: ProbeResult | null;
 }
 
 export interface ProxyKeyPayload {
@@ -55,10 +64,14 @@ export function useProxyPoolKeys() {
   });
 }
 
-export function useProxyPoolEndpoints() {
+export function useProxyPoolEndpoints(keyId?: string, lineIds?: string[]) {
   return useQuery({
-    queryKey: ENDPOINTS_QUERY_KEY,
-    queryFn: async () => (await api.get<{ endpoints: ProxyPoolEndpoint[] }>('/user/proxy-pool/nodes')).data,
+    queryKey: [...ENDPOINTS_QUERY_KEY, keyId ?? null, (lineIds ?? []).join(',')],
+    queryFn: async () => (await api.get<{ keyId: string | null; endpoints: ProxyPoolEndpoint[]; excludedCount: number }>('/user/proxy-pool/nodes', {
+      params: { keyId, ...(lineIds?.length ? { lineIds: lineIds.join(',') } : {}) }
+    })).data,
+    retry: false,
+    refetchOnWindowFocus: true,
     refetchInterval: 30_000
   });
 }
@@ -76,7 +89,9 @@ export function useProxyPoolExport(params: ProxyPoolExportParams) {
   const lineIdsValue = (lineIds ?? []).join(',');
   return useQuery({
     queryKey: ['user', 'proxy-pool', 'export', keyId ?? '', format, protocol, lineIdsValue],
-    enabled: enabled && Boolean(keyId),
+    enabled: enabled && Boolean(keyId) && Boolean(lineIds?.length),
+    retry: false,
+    gcTime: 0,
     queryFn: async () => {
       const response = await api.get('/user/proxy-pool/export', {
         params: {
@@ -84,11 +99,32 @@ export function useProxyPoolExport(params: ProxyPoolExportParams) {
           format,
           protocol,
           ...(lineIdsValue ? { lineIds: lineIdsValue } : {})
-        }
+        },
+        responseType: 'text'
       });
       const raw: unknown = response.data;
-      if (typeof raw === 'string') return raw;
-      return JSON.stringify(raw, null, 2);
+      if (typeof raw !== 'string') throw new Error('PROXY_POOL_EXPORT_FORMAT_INVALID');
+      return raw;
+    }
+  });
+}
+
+export function useProxyPoolExportCredentials(params: Omit<ProxyPoolExportParams, 'format'>) {
+  const { keyId, protocol, lineIds, enabled = true } = params;
+  return useQuery<ProxyPoolExportV2>({
+    queryKey: ['user', 'proxy-pool', 'credentials-v2', keyId, protocol, (lineIds ?? []).join(',')],
+    enabled: enabled && Boolean(keyId) && Boolean(lineIds?.length),
+    retry: false,
+    gcTime: 0,
+    staleTime: 0,
+    queryFn: async () => {
+      const response = await api.get('/user/proxy-pool/export', { params: { keyId, protocol, format: 'json', lineIds: lineIds!.join(',') } });
+      const result = parseProxyPoolExport(response.data, keyId!);
+      if (result && (result.proxies.length !== lineIds!.length || result.proxies.some((proxy) => !lineIds!.includes(proxy.lineId)))) {
+        throw new Error('PROXY_POOL_SELECTION_UNAVAILABLE');
+      }
+      if (!result) throw new Error('PROXY_POOL_REEXPORT_REQUIRED');
+      return result;
     }
   });
 }

@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { Prisma } from '@prisma/client';
+import { ProxyPoolAccessService, type ProxyPoolAccessSnapshot, type ProxyPoolEndpoint } from '../proxy-pool-access/proxy-pool-access.service';
+import { parseProxyPoolLineIds, QueryProxyPoolNodesDto } from './dto/query-proxy-pool-nodes.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentService } from '../agent-gateway/agent.service';
 import { CreateProxyKeyDto } from './dto/create-proxy-key.dto';
@@ -8,6 +9,7 @@ import { QueryAdminProxyKeysDto } from './dto/query-admin-proxy-keys.dto';
 import { QueryProxyPoolExportDto } from './dto/query-proxy-pool-export.dto';
 import { UpdateProxyKeyDto } from './dto/update-proxy-key.dto';
 import {
+  formatProxyLineUsername,
   generateProxyKeyPassword,
   generateProxyKeyUsername,
   normalizeProxyKeyName,
@@ -36,13 +38,6 @@ type ProxyKeyRecord = {
   updatedAt: Date;
 };
 
-type ProxyPoolLineRecord = Prisma.LineGetPayload<{
-  include: { entryNode: { select: { id: true; name: true; serverHost: true; status: true } } };
-}>;
-type ProxyPoolEndpointRecord = ProxyPoolLineRecord & {
-  entryNode: NonNullable<ProxyPoolLineRecord['entryNode']>;
-  entryPort: number;
-};
 
 export interface ProxyKeyView {
   id: string;
@@ -59,34 +54,16 @@ export interface ProxyKeyView {
   updatedAt: string;
 }
 
-export interface ProxyPoolEndpointView {
-  lineId: string;
-  name: string;
-  region: string | null;
-  tags: string[];
-  protocol: 'MIXED';
-  host: string;
-  port: number;
-  nodeId: string;
-  nodeName: string;
-  nodeStatus: string;
-  online: boolean;
-  latencyMs: number | null;
-  lastTestedAt: string | null;
-  lastTestStatus: string | null;
-  tls: boolean;
-  serverName: string | null;
-}
+export type ProxyPoolEndpointView = ProxyPoolEndpoint;
 
 export interface ProxyPoolExportResult {
   contentType: string;
   body: string;
   key: { id: string; name: string; username: string };
   count: number;
+  excludedCount: number;
 }
 
-// 地区标识：仅接受全大写 2-3 位国家/地区代码标签，其余功能性标签（local/relay 等）不参与地区归类
-const REGION_TAG_REGEX = /^[A-Z]{2,3}$/;
 
 @Injectable()
 export class ProxyPoolService {
@@ -94,6 +71,7 @@ export class ProxyPoolService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly accessService: ProxyPoolAccessService,
     @Optional() private readonly agentService?: AgentService
   ) {}
 
@@ -191,9 +169,15 @@ export class ProxyPoolService {
   // 用户侧：代理池节点检索
   // ==============================
 
-  async listEndpoints(lineIds?: string[]) {
-    const lines = await this.loadProxyPoolLines(lineIds);
-    return { endpoints: lines.map((line) => this.toEndpointView(line)) };
+  async listEndpoints(userId: string, query: QueryProxyPoolNodesDto = {}) {
+    const ids = parseProxyPoolLineIds(query.lineIds);
+    const snapshot = await this.accessService.getSnapshot();
+    this.requireEligibility(snapshot, userId);
+    const key = await this.selectKey(userId, query.keyId);
+    if (!key) return { keyId: null, endpoints: [], excludedCount: 0 };
+    this.requireActiveKey(key);
+    const endpoints = (snapshot.endpointsByKey.get(key.id) ?? []).filter((endpoint) => !ids || ids.includes(endpoint.lineId));
+    return { keyId: key.id, endpoints, excludedCount: endpoints.filter((endpoint) => endpoint.status === 'CAPACITY_EXCLUDED').length };
   }
 
   // ==============================
@@ -201,96 +185,69 @@ export class ProxyPoolService {
   // ==============================
 
   async exportForUser(userId: string, query: QueryProxyPoolExportDto): Promise<ProxyPoolExportResult> {
-    const key = query.keyId
-      ? await this.requireOwnedKey(userId, query.keyId)
-      : await this.prisma.proxyKey.findFirst({
-          where: { userId, isActive: true },
-          orderBy: { createdAt: 'desc' }
-        });
-    if (!key) {
-      throw new BadRequestException('尚未创建直连代理凭据，请先创建 Proxy Key');
-    }
-    if (!key.isActive) {
-      throw new ConflictException('该直连代理凭据已停用，无法导出');
-    }
-    return this.buildExport(key, query);
+    parseProxyPoolLineIds(query.lineIds);
+    const snapshot = await this.accessService.getSnapshot();
+    this.requireEligibility(snapshot, userId);
+    const key = await this.selectKey(userId, query.keyId);
+    if (!key) throw new BadRequestException('尚未创建直连代理凭据，请先创建 Proxy Key');
+    this.requireActiveKey(key);
+    return this.buildExport(key, query, snapshot);
   }
 
-  // 免登录拉取：以 ProxyKey.exportToken 作为 Bearer 语义的 query 令牌
   async exportForToken(token: string, query: QueryProxyPoolExportDto): Promise<ProxyPoolExportResult> {
-    const key = await this.prisma.proxyKey.findUnique({
-      where: { exportToken: token },
-      include: { user: { select: { id: true, isActive: true } } }
-    });
-    if (!key || !key.isActive || !key.user.isActive) {
-      throw new UnauthorizedException('拉取令牌无效或凭据已停用');
-    }
-    return this.buildExport(key, query);
+    parseProxyPoolLineIds(query.lineIds);
+    const key = await this.prisma.proxyKey.findUnique({ where: { exportToken: token } });
+    if (!key || !key.isActive) throw new UnauthorizedException('拉取令牌无效或凭据已停用');
+    if (query.keyId !== undefined && query.keyId !== key.id) throw new NotFoundException('直连代理凭据不存在');
+    const snapshot = await this.accessService.getSnapshot();
+    this.requireEligibility(snapshot, key.userId);
+    return this.buildExport(key, query, snapshot);
   }
 
-  private async buildExport(
-    key: ProxyKeyRecord,
-    query: QueryProxyPoolExportDto
-  ): Promise<ProxyPoolExportResult> {
-    const lineIds = query.lineIds
-      ? query.lineIds.split(',').map((item) => item.trim()).filter(Boolean)
-      : undefined;
-    const lines = await this.loadProxyPoolLines(lineIds);
-    const endpoints = lines.map((line) => this.toEndpointView(line));
-    if (!endpoints.length) {
-      throw new NotFoundException('当前没有可用的直连代理节点，请联系管理员配置 Mixed 线路');
+  private buildExport(key: ProxyKeyRecord, query: QueryProxyPoolExportDto, snapshot: ProxyPoolAccessSnapshot): ProxyPoolExportResult {
+    const ids = parseProxyPoolLineIds(query.lineIds);
+    const format = query.format ?? 'text';
+    const protocol = query.protocol ?? 'socks5';
+    const candidates = snapshot.endpointsByKey.get(key.id) ?? [];
+    const compatible = (endpoint: ProxyPoolEndpoint): boolean => endpoint.status === 'AVAILABLE'
+      && endpoint.supportedProtocols.includes(protocol)
+      && (format !== 'text' || !endpoint.tls);
+    if (ids) {
+      const unavailable = ids.filter((id) => !candidates.some((endpoint) => endpoint.lineId === id && compatible(endpoint)));
+      if (unavailable.length) throw new ConflictException({ code: 'PROXY_POOL_SELECTION_UNAVAILABLE', lineIds: unavailable });
     }
-
+    const selected = candidates.filter((endpoint) => !ids || ids.includes(endpoint.lineId));
+    const endpoints = selected.filter(compatible);
+    const excludedCount = selected.length - endpoints.length;
+    if (!endpoints.length) throw new NotFoundException('当前没有可导出的代理池端点');
     const keySummary = { id: key.id, name: key.name, username: key.username };
-    if (query.format === 'json') {
-      return {
-        contentType: 'application/json; charset=utf-8',
-        body: JSON.stringify({
-          version: 1,
-          generatedAt: new Date().toISOString(),
-          key: keySummary,
-          proxies: endpoints.map((endpoint) => ({
-            name: endpoint.name,
-            region: endpoint.region,
-            tags: endpoint.tags,
-            node: endpoint.nodeName,
-            nodeId: endpoint.nodeId,
-            lineId: endpoint.lineId,
-            protocol: 'mixed',
-            host: endpoint.host,
-            port: endpoint.port,
-            username: key.username,
-            password: key.password,
-            latencyMs: endpoint.latencyMs,
-            lastTestStatus: endpoint.lastTestStatus,
-            tls: endpoint.tls,
-            serverName: endpoint.serverName
-          }))
-        }),
-        key: keySummary,
-        count: endpoints.length
-      };
-    }
-
-    const isHttp = query.protocol === 'http';
-    const body = query.format === 'uri'
-      ? endpoints
-          .map((endpoint) => {
-            // HTTP 协议下自动识别节点是否开启 TLS，若是则自动生成标准 https:// 代理 URI
-            const scheme = isHttp ? (endpoint.tls ? 'https' : 'http') : 'socks5';
-            return `${scheme}://${encodeURIComponent(key.username)}:${encodeURIComponent(key.password)}@${endpoint.host}:${endpoint.port}`;
-          })
-          .join('\n')
-      : endpoints
-          .map((endpoint) => `${endpoint.host}:${endpoint.port}:${key.username}:${key.password}`)
-          .join('\n');
-
-    return {
-      contentType: 'text/plain; charset=utf-8',
-      body,
-      key: keySummary,
-      count: endpoints.length
+    const proxies = endpoints.map((endpoint) => ({ ...endpoint, username: formatProxyLineUsername(key.username, endpoint.lineId), password: key.password }));
+    if (format === 'json') return {
+      contentType: 'application/json; charset=utf-8',
+      body: JSON.stringify({ version: 2, generatedAt: new Date().toISOString(), key: keySummary, proxies, excludedCount }),
+      key: keySummary, count: proxies.length, excludedCount
     };
+    const body = proxies.map((endpoint) => {
+      const host = endpoint.host.includes(':') && !endpoint.host.startsWith('[') ? `[${endpoint.host}]` : endpoint.host;
+      if (format === 'text') return `${host}:${endpoint.port}:${endpoint.username}:${endpoint.password}`;
+      const scheme = protocol === 'http' ? (endpoint.tls ? 'https' : 'http') : 'socks5';
+      return `${scheme}://${encodeURIComponent(endpoint.username)}:${encodeURIComponent(endpoint.password)}@${host}:${endpoint.port}`;
+    }).join('\n');
+    return { contentType: 'text/plain; charset=utf-8', body, key: keySummary, count: proxies.length, excludedCount };
+  }
+
+  private selectKey(userId: string, keyId?: string): Promise<ProxyKeyRecord | null> {
+    return keyId !== undefined ? this.requireOwnedKey(userId, keyId) : this.prisma.proxyKey.findFirst({
+      where: { userId, isActive: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+    });
+  }
+
+  private requireEligibility(snapshot: ProxyPoolAccessSnapshot, userId: string): void {
+    if (!snapshot.eligibleUserIds.has(userId)) throw new ForbiddenException({ code: 'PROXY_POOL_ACCESS_DENIED', message: '当前账号没有有效代理池权益' });
+  }
+
+  private requireActiveKey(key: ProxyKeyRecord): void {
+    if (!key.isActive) throw new ConflictException({ code: 'PROXY_POOL_KEY_DISABLED', message: '该直连代理凭据已停用' });
   }
 
   // ==============================
@@ -349,10 +306,10 @@ export class ProxyPoolService {
   }
 
   async adminOverview() {
-    const [total, active, endpoints] = await Promise.all([
+    const [total, active, snapshot] = await Promise.all([
       this.prisma.proxyKey.count(),
       this.prisma.proxyKey.count({ where: { isActive: true } }),
-      this.loadProxyPoolLines()
+      this.accessService.getSnapshot()
     ]);
     const traffic = await this.prisma.proxyKey.aggregate({ _sum: { trafficUsedBytes: true } });
     return {
@@ -360,8 +317,9 @@ export class ProxyPoolService {
       activeKeys: active,
       disabledKeys: total - active,
       trafficUsedBytes: Number(traffic._sum.trafficUsedBytes ?? 0n),
-      endpointCount: endpoints.length,
-      endpoints: endpoints.map((line) => this.toEndpointView(line))
+      endpointCount: snapshot.endpoints.length,
+      endpoints: snapshot.endpoints,
+      nodeCapacities: snapshot.nodeCapacities
     };
   }
 
@@ -369,80 +327,6 @@ export class ProxyPoolService {
   // 内部工具
   // ==============================
 
-  private async loadProxyPoolLines(lineIds?: string[]): Promise<ProxyPoolEndpointRecord[]> {
-    const ids = lineIds?.filter(Boolean) ?? [];
-    if (lineIds && !ids.length) return [];
-    const lines = await this.prisma.line.findMany({
-      where: {
-        protocolType: 'MIXED',
-        type: 'DIRECT',
-        status: 'ACTIVE',
-        isPublic: true,
-        ...(ids.length ? { id: { in: ids } } : {}),
-        entryNode: { status: { not: 'DISABLED' } }
-      },
-      include: { entryNode: { select: { id: true, name: true, serverHost: true, status: true } } },
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
-    });
-    return lines.filter((line): line is ProxyPoolEndpointRecord => Boolean(line.entryNode) && line.entryPort !== null && line.type !== 'EXTERNAL');
-  }
-
-  private toEndpointView(line: ProxyPoolEndpointRecord): ProxyPoolEndpointView {
-    const tags = this.parseTags(line.tagsJson);
-    let tls = false;
-    let serverName: string | null = null;
-    if (line.paramsJson) {
-      try {
-        const parsed = JSON.parse(line.paramsJson) as Record<string, unknown>;
-        if (parsed.tls && typeof parsed.tls === 'object') {
-          const tlsObj = parsed.tls as Record<string, unknown>;
-          tls = tlsObj.enabled === true || Boolean(line.certificateId);
-          if (typeof tlsObj.serverName === 'string' && tlsObj.serverName.trim()) {
-            serverName = tlsObj.serverName.trim();
-          }
-        } else if (line.certificateId) {
-          tls = true;
-        }
-      } catch {
-        tls = Boolean(line.certificateId);
-      }
-    } else if (line.certificateId) {
-      tls = true;
-    }
-    if (!serverName) {
-      serverName = line.serverName || (line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode.serverHost);
-    }
-
-    return {
-      lineId: line.id,
-      name: line.name,
-      region: tags.find((tag) => REGION_TAG_REGEX.test(tag)) ?? null,
-      tags,
-      protocol: 'MIXED',
-      host: line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode.serverHost,
-      port: line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort,
-      nodeId: line.entryNode.id,
-      nodeName: line.entryNode.name,
-      nodeStatus: line.entryNode.status,
-      online: line.entryNode.status === 'ONLINE',
-      latencyMs: line.lastLatencyMs ?? null,
-      lastTestedAt: line.lastTestedAt ? line.lastTestedAt.toISOString() : null,
-      lastTestStatus: line.lastTestStatus ?? null,
-      tls,
-      serverName
-    };
-  }
-
-  private parseTags(raw: string | null | undefined): string[] {
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-    } catch {
-      return [];
-    }
-  }
 
   private toKeyView(key: ProxyKeyRecord): ProxyKeyView {
     return {
@@ -480,8 +364,8 @@ export class ProxyPoolService {
   // 凭据变动后异步重下发全部在线节点配置（吊销/注入即时生效）
   private scheduleConfigSync(reason: string): void {
     if (!this.agentService) return;
-    void this.agentService.pushConfigToAll().catch((error: unknown) => {
-      this.logger.warn(`proxy pool config sync failed: reason=${reason} error=${String(error)}`);
+    void this.agentService.pushConfigToAll().catch(() => {
+      this.logger.warn(`proxy pool config sync failed: reason=${reason}`);
     });
   }
 }

@@ -21,6 +21,7 @@ import { LineAdvancedFields } from './line-advanced-fields';
 import { LineInboundFields } from './line-inbound-fields';
 import { defaultLineFormValues, lineFormSchema, lineToFormValues, newLineFormValues, toLinePayload, type LineFormValues } from './line-form-schema';
 import type { ApiCertificate, ProtocolType, ApiUpstreamNode } from '@/lib/api';
+import { LineProxyPoolField } from './line-proxy-pool-field';
 
 interface LineFormDialogProps {
   open: boolean;
@@ -101,7 +102,8 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
       level: current.level,
       sortOrder: current.sortOrder,
       isPublic: current.isPublic,
-      status: current.status
+      status: current.status,
+      proxyPoolEnabled: current.proxyPoolEnabled
     });
   };
 
@@ -153,6 +155,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
             )} />
             {!ready ? <p>{detail.isError ? t('common:status.failed') : t('common:actions.loading')}</p> : <>
             <SelectField form={form} name="type" disabled={!!line} label={t('admin:lineForm.lineMode')} options={[{ value: 'DIRECT', label: t('admin:lineForm.modeDirect') }, { value: 'RELAY', label: t('admin:lineForm.modeRelay') }, { value: 'EXTERNAL', label: t('admin:upstream.createExternalLine') }]} onValueChange={(value) => { if (value === 'DIRECT' || value === 'RELAY' || value === 'EXTERNAL') changeType(value); }} />
+            <LineProxyPoolField form={form} />
             {form.watch('type') === 'EXTERNAL' ? <ExternalLineFields form={form} summary={initialUpstreamNode ?? detail.data?.upstreamSummary} /> :
             <Tabs value={tab} onValueChange={setTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2">
