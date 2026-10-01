@@ -74,30 +74,30 @@ export function ProbeMeasurementChip({
           </Badge>
         )}
       </TooltipTrigger>
-      <TooltipContent className="max-w-xs space-y-1.5 text-xs">
-        <div className="flex items-center justify-between gap-2 border-b pb-1 font-semibold">
+      <TooltipContent className="max-w-xs space-y-1.5 text-xs shadow-lg">
+        <div className="flex items-center justify-between gap-2 border-b border-primary-foreground/15 pb-1 font-semibold text-primary-foreground">
           <span>{result ? t(`admin:probes.status.${result.status}`) : t('admin:probes.measurement')}</span>
           {result?.latencyMs !== null && result?.latencyMs !== undefined && (
-            <span className="font-mono text-emerald-500">{result.latencyMs} ms</span>
+            <span className="font-mono text-emerald-600 dark:text-emerald-700 font-bold">{result.latencyMs} ms</span>
           )}
         </div>
         {result && (
           <>
-            <p className="text-muted-foreground">
+            <p className="text-primary-foreground/85 font-medium">
               {result.engine ? t(`admin:probes.engine.${result.engine}`) : t('admin:probes.noEngine')}
               {result.engineVersion ? ` · v${result.engineVersion}` : ''}
             </p>
-            <p className="font-mono text-[11px] text-muted-foreground">
+            <p className="font-mono text-[11px] text-primary-foreground/70">
               {result.targetHost} · {t(`admin:probes.route.${result.routeKind}`)}
             </p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-[11px] text-primary-foreground/65">
               {t('admin:probes.perspective')} · {formatDateTime(result.testedAt)}
             </p>
             {result.message && (
-              <p className="text-[11px] break-words text-foreground/80">{result.message}</p>
+              <p className="text-[11px] break-words text-primary-foreground/80">{result.message}</p>
             )}
             {result.engine === 'SINGBOX' && result.status === 'SUCCESS' && (
-              <p className="text-amber-500 text-[11px]">{t('admin:probes.fallbackWarning')}</p>
+              <p className="text-amber-600 dark:text-amber-700 text-[11px] font-medium">{t('admin:probes.fallbackWarning')}</p>
             )}
           </>
         )}
