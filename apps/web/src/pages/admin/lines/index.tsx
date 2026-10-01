@@ -3,7 +3,20 @@ import { useLocation } from 'react-router-dom';
 import type { ApiUpstreamNode } from '@/lib/api';
 import { ServerPagination } from '@/components/shared/server-pagination';
 import { LineTopology } from './components/line-topology';
-import { Activity, ArrowDown, ArrowUp, Copy, GitBranch, HelpCircle, Pencil, Plus, Search, Trash2, Zap } from 'lucide-react';
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  GitBranch,
+  HelpCircle,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  Zap
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PageContainer, PageHeader } from '@/components/shared/page-container';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -13,12 +26,41 @@ import { IconButton } from '@/components/ui/icon-button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { type LineStatus, type LineType, type RelayMode } from '@/lib/api';
+import { type LineStatus, type LineType } from '@/lib/api';
 import { useAdminNodes } from '../nodes/use-nodes';
 import { useAdminCertificates } from '../certificates/use-certificates';
 import { LineFormDialog } from './components/line-form-dialog';
@@ -28,8 +70,7 @@ import { ProbeTaskDialog } from '@/components/shared/probe-task-dialog';
 import { usePublicSettings } from '@/lib/public-settings';
 import { formatSpeedLimit, getSpeedTierBadgeClass } from '@/lib/speed-tier';
 import { useAdminLines, useLineMutations, type AdminLine } from './use-lines';
-import { ProxyPoolCapacity } from './components/proxy-pool-capacity';
-import { LineEgressBadge } from './components/line-egress-badge';
+import { ProxyPoolDrawer } from './components/proxy-pool-drawer';
 
 export default function AdminLinesPage() {
   const { t } = useTranslation(['admin', 'common']);
@@ -47,8 +88,11 @@ export default function AdminLinesPage() {
   const [batchProbeOpen, setBatchProbeOpen] = React.useState(false);
   const [initialUpstreamNode, setInitialUpstreamNode] = React.useState<ApiUpstreamNode | null>(null);
   const location = useLocation();
+
   React.useEffect(() => {
-    const state = location.state as { createUpstreamNode?: ApiUpstreamNode; createExternal?: boolean } | undefined;
+    const state = location.state as
+      | { createUpstreamNode?: ApiUpstreamNode; createExternal?: boolean }
+      | undefined;
     if (state?.createUpstreamNode) {
       setEditing(null);
       setInitialUpstreamNode(state.createUpstreamNode);
@@ -58,42 +102,25 @@ export default function AdminLinesPage() {
     }
   }, [location.state]);
 
-  const typeLabels: Record<LineType, string> = {
-    DIRECT: t('admin:lines.typeDirect'),
-    EXTERNAL: t('admin:upstream.externalType'),
-    RELAY: t('admin:lines.typeRelay')
-  };
-  const relayLabels: Record<RelayMode, string> = {
-    BLIND_FORWARD: t('admin:lines.relayBlindForward'),
-    PROTOCOL_PROXY: t('admin:lines.relayProtocolProxy'),
-    TARGET_LINE: t('admin:lines.relayTargetBridge'),
-    UPSTREAM_NODE: t('admin:lines.relayUpstreamNode')
-  };
+  const query = React.useMemo(
+    () => ({
+      page,
+      pageSize: 20,
+      ...(search.trim() ? { search: search.trim() } : {}),
+      ...(type !== 'ALL' ? { type } : {}),
+      ...(status !== 'ALL' ? { status } : {}),
+      ...(tag.trim() ? { tag: tag.trim() } : {})
+    }),
+    [search, status, tag, type, page]
+  );
 
-  function relayDescription(line: AdminLine) {
-    if (line.relayMode === 'TARGET_LINE' && line.targetLine) {
-      const targetPort = line.topology.landing?.port ?? line.targetLine.entryPort;
-      return `${t('admin:lines.relayTargetBridge')} ➔ [${line.targetLine.entryNode.name}] ${line.targetLine.protocolType}:${targetPort}`;
-    }
-    if (line.relayMode === 'UPSTREAM_NODE' && line.topology.landing?.node) {
-      return `${t('admin:lines.relayUpstreamNode')} ➔ ${line.topology.landing.node.name}`;
-    }
-    return line.relayMode ? relayLabels[line.relayMode] : '';
-  }
-
-  const query = React.useMemo(() => ({
-    page, pageSize: 20,
-    ...(search.trim() ? { search: search.trim() } : {}),
-    ...(type !== 'ALL' ? { type } : {}),
-    ...(status !== 'ALL' ? { status } : {}),
-    ...(tag.trim() ? { tag: tag.trim() } : {})
-  }), [search, status, tag, type, page]);
   const { data, isPending, isError } = useAdminLines(query);
   const { data: nodes } = useAdminNodes();
   const { data: certificates } = useAdminCertificates();
   const { data: publicSettings } = usePublicSettings();
   const unitConversion = publicSettings?.speedLimitUnitConversionEnabled !== false;
-  const { create, update, remove, duplicate, testResolve, batchStatus, reorder } = useLineMutations();
+  const { create, update, remove, duplicate, testResolve, batchStatus, reorder } =
+    useLineMutations();
   const lines = data?.data ?? [];
   const allSelected = lines.length > 0 && lines.every((line) => selected.has(line.id));
   const busy = create.isPending || update.isPending;
@@ -101,7 +128,8 @@ export default function AdminLinesPage() {
   const toggleSelected = (id: string, checked: boolean) => {
     setSelected((current) => {
       const next = new Set(current);
-      if (checked) next.add(id); else next.delete(id);
+      if (checked) next.add(id);
+      else next.delete(id);
       return next;
     });
   };
@@ -123,25 +151,73 @@ export default function AdminLinesPage() {
     ]);
   };
 
-  const openCreate = () => { setEditing(null); setCreateExternal(false); setInitialUpstreamNode(null); setFormOpen(true); };
-  const openEdit = (line: AdminLine) => { setEditing(line); setFormOpen(true); };
+  const openCreate = () => {
+    setEditing(null);
+    setCreateExternal(false);
+    setInitialUpstreamNode(null);
+    setFormOpen(true);
+  };
+  const openEdit = (line: AdminLine) => {
+    setEditing(line);
+    setFormOpen(true);
+  };
 
-  if (isPending) return <PageContainer><PageHeader title={t('admin:lines.title')} description={t('admin:lines.subtitle')} /><p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p></PageContainer>;
-  if (isError) return <PageContainer><PageHeader title={t('admin:lines.title')} /><EmptyState title={t('admin:lines.emptyLines')} description={t('admin:lines.subtitle')} /></PageContainer>;
+  if (isPending)
+    return (
+      <PageContainer>
+        <PageHeader title={t('admin:lines.title')} description={t('admin:lines.subtitle')} />
+        <p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p>
+      </PageContainer>
+    );
+  if (isError)
+    return (
+      <PageContainer>
+        <PageHeader title={t('admin:lines.title')} />
+        <EmptyState
+          title={t('admin:lines.emptyLines')}
+          description={t('admin:lines.subtitle')}
+        />
+      </PageContainer>
+    );
 
   return (
     <PageContainer>
       <PageHeader title={t('admin:lines.title')} description={t('admin:lines.subtitle')} />
-      <ProxyPoolCapacity />
-      <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+
+      {/* 搜索与多维度筛选工具栏 */}
+      <div className="flex min-w-0 flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-1 flex-wrap items-center gap-2">
           <div className="relative w-full min-w-0 flex-1 sm:min-w-52 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={t('admin:nodes.searchPlaceholder')} className="pl-9" />
+            <Input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder={t('admin:nodes.searchPlaceholder')}
+              className="pl-9"
+            />
           </div>
-          <Input value={tag} onChange={(event) => { setTag(event.target.value); setPage(1); }} placeholder={t('admin:lines.filterTag')} className="w-full sm:w-32" />
-          <Select value={type} onValueChange={(value) => { setType(value as 'ALL' | LineType); setPage(1); }}>
-            <SelectTrigger className="w-full sm:w-32"><SelectValue /></SelectTrigger>
+          <Input
+            value={tag}
+            onChange={(event) => {
+              setTag(event.target.value);
+              setPage(1);
+            }}
+            placeholder={t('admin:lines.filterTag')}
+            className="w-full sm:w-28"
+          />
+          <Select
+            value={type}
+            onValueChange={(value) => {
+              setType(value as 'ALL' | LineType);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-28">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">{t('admin:lines.typeAll')}</SelectItem>
               <SelectItem value="DIRECT">{t('admin:lines.typeDirect')}</SelectItem>
@@ -149,8 +225,16 @@ export default function AdminLinesPage() {
               <SelectItem value="EXTERNAL">{t('admin:upstream.externalType')}</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={status} onValueChange={(value) => { setStatus(value as 'ALL' | LineStatus); setPage(1); }}>
-            <SelectTrigger className="w-full sm:w-32"><SelectValue /></SelectTrigger>
+          <Select
+            value={status}
+            onValueChange={(value) => {
+              setStatus(value as 'ALL' | LineStatus);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-28">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">{t('admin:lines.statusAll')}</SelectItem>
               <SelectItem value="ACTIVE">{t('admin:lines.statusActive')}</SelectItem>
@@ -158,9 +242,13 @@ export default function AdminLinesPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+
+        {/* 右侧动作条：代理池抽屉、全量测速与新建线路 */}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <ProxyPoolDrawer />
           <Button
             variant="outline"
+            size="sm"
             disabled={!lines.length}
             onClick={() => setBatchProbeOpen(true)}
             className="w-full sm:w-auto"
@@ -168,34 +256,80 @@ export default function AdminLinesPage() {
             <Activity className="size-4" />
             {t('admin:probes.batchTitle')}
           </Button>
-          <Button className="w-full sm:w-auto" onClick={openCreate}><Plus />{t('admin:lines.createLine')}</Button>
+          <Button size="sm" className="w-full sm:w-auto" onClick={openCreate}>
+            <Plus className="size-4" />
+            {t('admin:lines.createLine')}
+          </Button>
         </div>
       </div>
+
+      {/* 批量操作卡片 */}
       {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm">
-          <span>{t('admin:lines.selectedCount', { count: selected.size })}</span>
-          <Button size="sm" variant="outline" disabled={batchStatus.isPending} onClick={() => batchStatus.mutate({ ids: [...selected], status: 'ACTIVE' }, { onSuccess: () => setSelected(new Set()) })}>
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-2.5 text-sm animate-in fade-in-50 duration-200">
+          <span className="font-medium text-xs">
+            {t('admin:lines.selectedCount', { count: selected.size })}
+          </span>
+          <div className="h-4 w-px bg-border mx-1" />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            disabled={batchStatus.isPending}
+            onClick={() =>
+              batchStatus.mutate(
+                { ids: [...selected], status: 'ACTIVE' },
+                { onSuccess: () => setSelected(new Set()) }
+              )
+            }
+          >
             {t('admin:lines.batchEnable')}
           </Button>
-          <Button size="sm" variant="outline" disabled={batchStatus.isPending} onClick={() => batchStatus.mutate({ ids: [...selected], status: 'DISABLED' }, { onSuccess: () => setSelected(new Set()) })}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            disabled={batchStatus.isPending}
+            onClick={() =>
+              batchStatus.mutate(
+                { ids: [...selected], status: 'DISABLED' },
+                { onSuccess: () => setSelected(new Set()) }
+              )
+            }
+          >
             {t('admin:lines.batchDisable')}
           </Button>
         </div>
       )}
-      <Card>
+
+      {/* 主数据表格：彻底收敛至 6 核心列 */}
+      <Card className="border shadow-none">
         <CardContent className="p-0">
           {lines.length ? (
-            <Table className="min-w-[980px]">
+            <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10"><Checkbox checked={allSelected} onCheckedChange={(checked) => toggleAll(checked === true)} aria-label={t('common:table.selectAll')} /></TableHead>
-                  <TableHead className="w-16">{t('admin:lines.colOrder')}</TableHead>
-                  <TableHead>{t('admin:lines.colLine')}</TableHead>
-                  <TableHead>{t('admin:lines.colType')}</TableHead>
-                  <TableHead>{t('admin:lines.colEndpoint')}</TableHead>
-                  <TableHead>{t('admin:lines.colTopology')}</TableHead>
-                  <TableHead>{t('admin:lines.colTagsRate')}</TableHead>
-                  <TableHead>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-16">
+                    <div className="flex items-center gap-1.5">
+                      <Checkbox
+                        checked={allSelected}
+                        onCheckedChange={(checked) => toggleAll(checked === true)}
+                        aria-label={t('common:table.selectAll')}
+                      />
+                      <span className="font-mono text-xs text-muted-foreground font-semibold">
+                        #
+                      </span>
+                    </div>
+                  </TableHead>
+                  <TableHead className="min-w-[200px]">
+                    {t('admin:lines.colLineAndEndpoint')}
+                  </TableHead>
+                  <TableHead className="min-w-[220px]">
+                    {t('admin:lines.colPipelineTopology')}
+                  </TableHead>
+                  <TableHead className="min-w-[140px]">
+                    {t('admin:lines.colTagsRate')}
+                  </TableHead>
+                  <TableHead className="w-28">
                     <div className="flex items-center gap-1">
                       <span>{t('admin:lines.colLatency')}</span>
                       <Tooltip>
@@ -210,36 +344,202 @@ export default function AdminLinesPage() {
                       </Tooltip>
                     </div>
                   </TableHead>
-                  <TableHead>{t('admin:lines.colStatus')}</TableHead>
-                  <TableHead className="text-right">{t('admin:lines.colActions')}</TableHead>
+                  <TableHead className="w-24">{t('admin:lines.colStatus')}</TableHead>
+                  <TableHead className="w-28 text-right">{t('admin:lines.colActions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {lines.map((line, index) => (
-                  <TableRow key={line.id}>
-                    <TableCell><Checkbox checked={selected.has(line.id)} onCheckedChange={(checked) => toggleSelected(line.id, checked === true)} aria-label={`${t('common:actions.select')} ${line.name}`} /></TableCell>
-                    <TableCell className="w-16"><span className="font-mono text-xs text-muted-foreground tabular-nums font-medium">#{line.sortOrder}</span></TableCell>
-                    <TableCell><div className="font-medium">{line.name}</div><div className="text-xs text-muted-foreground">Lv.{line.level}</div><Badge variant={line.proxyPoolEnabled ? 'secondary' : 'outline'}>{t(line.proxyPoolEnabled ? 'admin:lineForm.proxyPoolEnabledBadge' : 'admin:lineForm.proxyPoolDisabledBadge')}</Badge></TableCell>
-                    <TableCell><Badge variant="outline" title={line.relayMode === 'TARGET_LINE' ? relayDescription(line) : undefined}>{typeLabels[line.type]}{line.relayMode ? ` · ${relayDescription(line)}` : ''}</Badge></TableCell>
-                    <TableCell className="min-w-36"><div className="font-mono text-xs">{line.serverHost}:{line.serverPort}</div><div className="text-xs text-muted-foreground">{line.endpointOverrideEnabled ? t('admin:lines.overrideEnabled') : t('admin:lines.reuseUnderlying')}</div>{line.serverName && <div className="text-xs text-muted-foreground">SNI {line.serverName}</div>}{line.host && <div className="text-xs text-muted-foreground">Host {line.host}</div>}</TableCell>
+                  <TableRow key={line.id} className="hover:bg-muted/40 transition-colors">
+                    {/* 1. 复选框与排序合并 */}
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={selected.has(line.id)}
+                          onCheckedChange={(checked) => toggleSelected(line.id, checked === true)}
+                          aria-label={`${t('common:actions.select')} ${line.name}`}
+                        />
+                        <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                          #{line.sortOrder}
+                        </span>
+                      </div>
+                    </TableCell>
+
+                    {/* 2. 线路名称与端点双层整合 */}
+                    <TableCell>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium text-sm text-foreground">
+                            {line.name}
+                          </span>
+                          {!line.isPublic && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] px-1 py-0 text-muted-foreground font-normal"
+                            >
+                              {t('admin:lines.privateLine')}
+                            </Badge>
+                          )}
+                          {line.proxyPoolEnabled && (
+                            <Badge
+                              variant="secondary"
+                              className="text-[10px] px-1.5 py-0 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-normal"
+                            >
+                              {t('admin:lineForm.proxyPoolEnabledBadge')}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span className="font-mono text-[11px]">Lv.{line.level}</span>
+                          <span>·</span>
+                          <span
+                            className="font-mono text-[11px] truncate max-w-[220px]"
+                            title={`${line.serverHost}:${line.serverPort}`}
+                          >
+                            {line.serverHost}:{line.serverPort}
+                          </span>
+                        </div>
+                      </div>
+                    </TableCell>
+
+                    {/* 3. 链路拓扑流水线（融合直连/中继/桥接/外部） */}
                     <TableCell>
                       <LineTopology line={line} />
-                      <LineEgressBadge line={line} />
                     </TableCell>
-                    <TableCell><div className="flex max-w-40 flex-wrap gap-1">{Boolean(line.speedLimitMbps) && <Badge variant="outline" className={cn('gap-1', getSpeedTierBadgeClass(line.speedLimitMbps, publicSettings?.speedLimitColorTiers))}><Zap className="size-3" />{formatSpeedLimit(line.speedLimitMbps, unitConversion)}</Badge>}{line.tags.map((item) => <Badge key={item} variant="secondary">#{item}</Badge>)}<Badge variant="outline">{line.trafficRate}x</Badge></div></TableCell>
+
+                    {/* 4. 规格与标签（限速、倍率、标签） */}
                     <TableCell>
-                      <ProbeMeasurementChip value={line.lastProbe} onClick={() => setSpeedtestingLine(line)} />
+                      <div className="flex max-w-44 flex-wrap items-center gap-1">
+                        {Boolean(line.speedLimitMbps) && (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              'gap-1 text-[11px] px-1.5 py-0 font-normal',
+                              getSpeedTierBadgeClass(
+                                line.speedLimitMbps,
+                                publicSettings?.speedLimitColorTiers
+                              )
+                            )}
+                          >
+                            <Zap className="size-3" />
+                            {formatSpeedLimit(line.speedLimitMbps, unitConversion)}
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="text-[11px] px-1.5 py-0 font-mono">
+                          {line.trafficRate}x
+                        </Badge>
+                        {line.tags.map((item) => (
+                          <Badge
+                            key={item}
+                            variant="secondary"
+                            className="text-[10px] px-1.5 py-0 font-normal"
+                          >
+                            #{item}
+                          </Badge>
+                        ))}
+                      </div>
                     </TableCell>
-                    <TableCell><div className="flex flex-col items-start gap-1"><Badge variant={line.status === 'ACTIVE' ? 'default' : 'secondary'}>{line.status === 'ACTIVE' ? t('admin:lines.statusActive') : t('admin:lines.statusDisabled')}</Badge>{!line.isPublic && <span className="text-xs text-muted-foreground">{t('admin:lines.privateLine')}</span>}</div></TableCell>
+
+                    {/* 5. 端到端探测延迟（精炼指示微标） */}
                     <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.moveUp')} disabled={index === 0 || reorder.isPending} onClick={() => move(line, -1)}><ArrowUp /></IconButton>
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.moveDown')} disabled={index === lines.length - 1 || reorder.isPending} onClick={() => move(line, 1)}><ArrowDown /></IconButton>
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:probes.title')} tooltip={t('admin:probes.title')} onClick={() => setSpeedtestingLine(line)}><Activity className="size-4" /></IconButton>
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.testResolve')} disabled={testResolve.isPending} onClick={() => testResolve.mutate(line.id)}><Zap /></IconButton>
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.duplicateLine')} disabled={duplicate.isPending} onClick={() => duplicate.mutate(line.id)}><Copy /></IconButton>
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.editLine')} onClick={() => openEdit(line)}><Pencil /></IconButton>
-                        <IconButton variant="ghost" size="icon-sm" aria-label={t('admin:lines.deleteLine')} onClick={() => setDeleting(line)}><Trash2 className="text-destructive" /></IconButton>
+                      <ProbeMeasurementChip
+                        value={line.lastProbe}
+                        onClick={() => setSpeedtestingLine(line)}
+                      />
+                    </TableCell>
+
+                    {/* 6. 运行状态 */}
+                    <TableCell>
+                      <Badge
+                        variant={line.status === 'ACTIVE' ? 'default' : 'secondary'}
+                        className="text-[11px] px-2 py-0.5 cursor-pointer select-none"
+                        onClick={() => {
+                          const nextStatus = line.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
+                          batchStatus.mutate({ ids: [line.id], status: nextStatus });
+                        }}
+                      >
+                        {line.status === 'ACTIVE'
+                          ? t('admin:lines.statusActive')
+                          : t('admin:lines.statusDisabled')}
+                      </Badge>
+                    </TableCell>
+
+                    {/* 7. 行操作列（高频外置 + 更多操作下拉折叠） */}
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-0.5">
+                        <IconButton
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('admin:probes.title')}
+                          tooltip={t('admin:probes.title')}
+                          onClick={() => setSpeedtestingLine(line)}
+                        >
+                          <Activity className="size-4" />
+                        </IconButton>
+                        <IconButton
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('admin:lines.editLine')}
+                          tooltip={t('admin:lines.editLine')}
+                          onClick={() => openEdit(line)}
+                        >
+                          <Pencil className="size-4" />
+                        </IconButton>
+
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <IconButton
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={t('admin:lines.moreActions')}
+                              tooltip={t('admin:lines.moreActions')}
+                            >
+                              <MoreHorizontal className="size-4" />
+                            </IconButton>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-36">
+                            <DropdownMenuItem
+                              disabled={testResolve.isPending}
+                              onClick={() => testResolve.mutate(line.id)}
+                              className="gap-2 text-xs"
+                            >
+                              <Zap className="size-3.5 text-muted-foreground" />
+                              <span>{t('admin:lines.testResolve')}</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={duplicate.isPending}
+                              onClick={() => duplicate.mutate(line.id)}
+                              className="gap-2 text-xs"
+                            >
+                              <Copy className="size-3.5 text-muted-foreground" />
+                              <span>{t('admin:lines.duplicateLine')}</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={index === 0 || reorder.isPending}
+                              onClick={() => move(line, -1)}
+                              className="gap-2 text-xs"
+                            >
+                              <ArrowUp className="size-3.5 text-muted-foreground" />
+                              <span>{t('admin:lines.moveUp')}</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={index === lines.length - 1 || reorder.isPending}
+                              onClick={() => move(line, 1)}
+                              className="gap-2 text-xs"
+                            >
+                              <ArrowDown className="size-3.5 text-muted-foreground" />
+                              <span>{t('admin:lines.moveDown')}</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => setDeleting(line)}
+                              className="gap-2 text-xs text-destructive focus:text-destructive focus:bg-destructive/10"
+                            >
+                              <Trash2 className="size-3.5" />
+                              <span>{t('admin:lines.deleteLine')}</span>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -247,28 +547,95 @@ export default function AdminLinesPage() {
               </TableBody>
             </Table>
           ) : (
-            <EmptyState title={t('admin:lines.emptyLines')} description={t('admin:lines.subtitle')} className="border-0" />
+            <EmptyState
+              title={t('admin:lines.emptyLines')}
+              description={t('admin:lines.subtitle')}
+              className="border-0"
+            />
           )}
         </CardContent>
       </Card>
-      <ServerPagination page={page} pageSize={20} total={data?.total ?? 0} onPageChange={setPage} />
-      <LineFormDialog open={formOpen} createExternal={createExternal} onOpenChange={(open) => { setFormOpen(open); if (!open) setInitialUpstreamNode(null); }} line={editing} initialUpstreamNode={initialUpstreamNode} nodes={nodes ?? []} lines={lines} certificates={certificates?.data ?? []} pending={busy} onSubmit={(payload) => editing ? update.mutate({ id: editing.id, ...payload }, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } }) : create.mutate(payload, { onSuccess: () => { setFormOpen(false); setInitialUpstreamNode(null); } })} />
-      <LineSpeedtestDialog open={!!speedtestingLine} onOpenChange={(open) => !open && setSpeedtestingLine(null)} line={speedtestingLine} />
-      <ProbeTaskDialog open={batchProbeOpen} onOpenChange={setBatchProbeOpen} request={{ key: 'lines:all', endpoint: '/admin/lines/speedtest-all' }} title={t('admin:probes.batchTitle')} />
+
+      <ServerPagination
+        page={page}
+        pageSize={20}
+        total={data?.total ?? 0}
+        onPageChange={setPage}
+      />
+
+      <LineFormDialog
+        open={formOpen}
+        createExternal={createExternal}
+        onOpenChange={(open) => {
+          setFormOpen(open);
+          if (!open) setInitialUpstreamNode(null);
+        }}
+        line={editing}
+        initialUpstreamNode={initialUpstreamNode}
+        nodes={nodes ?? []}
+        lines={lines}
+        certificates={certificates?.data ?? []}
+        pending={busy}
+        onSubmit={(payload) =>
+          editing
+            ? update.mutate(
+                { id: editing.id, ...payload },
+                {
+                  onSuccess: () => {
+                    setFormOpen(false);
+                    setInitialUpstreamNode(null);
+                  }
+                }
+              )
+            : create.mutate(payload, {
+                onSuccess: () => {
+                  setFormOpen(false);
+                  setInitialUpstreamNode(null);
+                }
+              })
+        }
+      />
+
+      <LineSpeedtestDialog
+        open={!!speedtestingLine}
+        onOpenChange={(open) => !open && setSpeedtestingLine(null)}
+        line={speedtestingLine}
+      />
+
+      <ProbeTaskDialog
+        open={batchProbeOpen}
+        onOpenChange={setBatchProbeOpen}
+        request={{ key: 'lines:all', endpoint: '/admin/lines/speedtest-all' }}
+        title={t('admin:probes.batchTitle')}
+      />
+
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('admin:lines.deleteDialogTitle', { name: deleting?.name ?? '' })}</AlertDialogTitle>
-            <AlertDialogDescription>{t('admin:lines.deleteDialogDesc')}</AlertDialogDescription>
+            <AlertDialogTitle>
+              {t('admin:lines.deleteDialogTitle', { name: deleting?.name ?? '' })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('admin:lines.deleteDialogDesc')}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() =>
+                deleting &&
+                remove.mutate(deleting.id, {
+                  onSuccess: () => setDeleting(null)
+                })
+              }
+            >
               {t('common:actions.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
       <div className="flex flex-col gap-1.5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <GitBranch className="h-3.5 w-3.5 shrink-0" />
