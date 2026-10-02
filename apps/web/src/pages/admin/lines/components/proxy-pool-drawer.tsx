@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { Layers, Server, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Layers, Server, AlertTriangle, CheckCircle2, KeyRound, Network, Info } from 'lucide-react';
 import { api, extractErrorMessage } from '@/lib/api';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -71,7 +71,7 @@ export function ProxyPoolDrawer() {
           </SheetDescription>
         </SheetHeader>
 
-        <div className="mt-6 space-y-4">
+        <div className="mt-6 space-y-5">
           {query.isPending ? (
             <p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p>
           ) : query.isError ? (
@@ -80,56 +80,81 @@ export function ProxyPoolDrawer() {
             </p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3">
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">{t('admin:lineForm.proxyPoolOverview')}</p>
-                    <p className="mt-1 text-xl font-bold font-mono">
+              {/* 3 项紧凑概览仪表板 */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="rounded-lg border bg-muted/20 p-2.5 flex flex-col justify-between">
+                  <div className="flex items-center gap-1 text-muted-foreground text-xs">
+                    <Network className="size-3.5" />
+                    <span>{t('admin:lines.proxyPoolMetricEndpoints')}</span>
+                  </div>
+                  <div className="mt-1.5">
+                    <span className="text-xl font-bold font-mono tracking-tight">
                       {query.data?.endpointCount ?? 0}
+                    </span>
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      {t('admin:lines.proxyPoolMetricEndpointsSub')}
                     </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {t('admin:lineForm.proxyPoolEndpointCount', { count: query.data?.endpointCount ?? 0 })}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-muted/20 p-2.5 flex flex-col justify-between">
+                  <div className="flex items-center gap-1 text-muted-foreground text-xs">
+                    <KeyRound className="size-3.5" />
+                    <span>{t('admin:lines.proxyPoolMetricKeys')}</span>
+                  </div>
+                  <div className="mt-1.5">
+                    <span className="text-xl font-bold font-mono tracking-tight">
+                      {query.data?.activeKeys ?? 0}
+                    </span>
+                    <p className="text-[10px] text-muted-foreground truncate" title={t('admin:lines.proxyPoolMetricKeysSub', { active: query.data?.activeKeys ?? 0, total: query.data?.totalKeys ?? 0 })}>
+                      {t('admin:lines.proxyPoolMetricKeysSub', { active: query.data?.activeKeys ?? 0, total: query.data?.totalKeys ?? 0 })}
                     </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">{t('admin:lines.proxyPoolDetailTitle')}</p>
-                    <p className="mt-1 text-xl font-bold font-mono">
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-muted/20 p-2.5 flex flex-col justify-between">
+                  <div className="flex items-center gap-1 text-muted-foreground text-xs">
+                    <Server className="size-3.5" />
+                    <span>{t('admin:lines.proxyPoolMetricNodes')}</span>
+                  </div>
+                  <div className="mt-1.5">
+                    <span className="text-xl font-bold font-mono tracking-tight">
                       {capacities.length}
+                    </span>
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      {t('admin:lines.proxyPoolMetricNodesSub')}
                     </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {t('admin:nodes.title')}
-                    </p>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               </div>
 
+              {/* 各节点配额水位明细 */}
               <div className="space-y-3">
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  {t('admin:lines.proxyPoolDetailTitle')}
+                  {t('admin:lines.proxyPoolSectionWatermark')}
                 </h4>
                 {capacities.length === 0 ? (
                   <p className="text-xs text-muted-foreground">{t('admin:lines.proxyPoolEmptyNodes')}</p>
                 ) : (
                   capacities.map((node) => {
                     const limit = Math.max(1, node.limit);
-                    const pct = Math.min(100, Math.round((node.used / limit) * 100));
+                    const rawPct = (node.used / limit) * 100;
+                    const pct = Math.min(100, Math.round(rawPct));
                     const isOver = node.excluded > 0;
                     const isWarning = !isOver && pct >= 80;
 
                     return (
                       <Card key={node.nodeId} className="border shadow-none">
-                        <CardContent className="p-3.5 space-y-2">
+                        <CardContent className="p-3.5 space-y-2.5">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <Server className="size-4 text-muted-foreground" />
+                              <Server className="size-4 text-muted-foreground shrink-0" />
                               <span className="text-sm font-medium">{node.nodeName}</span>
                             </div>
                             {isOver ? (
                               <Badge variant="destructive" className="gap-1 text-[11px] py-0">
                                 <AlertTriangle className="size-3" />
-                                {t('admin:lines.proxyPoolStatusExcluded')}
+                                {t('admin:lines.proxyPoolStatusExcluded')}: {node.excluded}
                               </Badge>
                             ) : isWarning ? (
                               <Badge variant="outline" className="gap-1 text-[11px] py-0 border-amber-500/40 text-amber-500 bg-amber-500/10">
@@ -144,33 +169,41 @@ export function ProxyPoolDrawer() {
                             )}
                           </div>
 
-                          <Progress
-                            value={pct}
-                            className={cn(
-                              'h-1.5',
-                              isOver
-                                ? '[&>div]:bg-destructive'
-                                : isWarning
-                                  ? '[&>div]:bg-amber-500'
-                                  : '[&>div]:bg-primary'
-                            )}
-                          />
-
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>
-                              {node.used} / {node.limit} ({pct}%)
-                            </span>
-                            {node.excluded > 0 && (
-                              <span className="text-destructive font-medium text-[11px]">
-                                {t('admin:lines.proxyPoolStatusExcluded')}: {node.excluded}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>
+                                {t('admin:lines.proxyPoolUsedLimit', { used: node.used, limit: node.limit })}
                               </span>
-                            )}
+                              <span className="font-mono">
+                                {node.used > 0 && pct === 0 ? '< 1%' : `${pct}%`}
+                              </span>
+                            </div>
+
+                            <Progress
+                              value={node.used > 0 ? Math.max(pct, 2) : 0}
+                              className={cn(
+                                'h-1.5',
+                                isOver
+                                  ? '[&>div]:bg-destructive'
+                                  : isWarning
+                                    ? '[&>div]:bg-amber-500'
+                                    : '[&>div]:bg-primary'
+                              )}
+                            />
                           </div>
                         </CardContent>
                       </Card>
                     );
                   })
                 )}
+              </div>
+
+              {/* 底部使用指引与安全水位提示 */}
+              <div className="rounded-lg border bg-muted/20 p-3 flex items-start gap-2.5 text-xs text-muted-foreground">
+                <Info className="size-4 text-primary shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  {t('admin:lines.proxyPoolDrawerNotice')}
+                </p>
               </div>
             </>
           )}
