@@ -3,6 +3,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Info,
   KeyRound,
   MoreHorizontal,
   Pencil,
@@ -85,17 +86,20 @@ export function ProxyKeySection({ keys, limit, isPending, onCreate, onEdit }: Pr
           {t('user:proxyPool.newKeyButton')}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">{t('user:proxyPool.reexportRequired')}</p>
+      <div className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <Info className="size-4 shrink-0 text-primary" />
+        <span>{t('user:proxyPool.reexportRequired')}</span>
+      </div>
 
       {/* 响应式凭据卡片网格 */}
       {isPending ? (
-        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
           {[1, 2].map((i) => (
             <div key={i} className="h-44 rounded-lg border bg-muted/20 animate-pulse" />
           ))}
         </div>
       ) : keys.length ? (
-        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
           {keys.map((item) => (
             <Card
               key={item.id}
