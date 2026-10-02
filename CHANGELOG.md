@@ -15,6 +15,7 @@
 ### Added
 
 ### Changed
+- **订阅页公告横幅收敛为「标题 + 纯文本摘要」**：置顶/横幅公告在 `/subscription` 顶部不再展开渲染 Markdown 正文，仅展示分类徽章、标题、发布时间与按行取值的纯文本摘要（最多 3 行 / 160 字符，`line-clamp-3` 省略号收尾，悬浮展示全文），与公告中心下拉、后台公告表格的摘要口径统一；完整 GFM 仍由 `AnnouncementDetailDialog` 的 `MarkdownRenderer` 渲染；新增 `buildAnnouncementSummary()` 纯函数（跳过与标题重复的首行、剥离 Callout/引用/强调/链接语法、摘要为空时不渲染摘要行）并移除已无引用的轻量渲染器 `apps/web/src/components/shared/markdown-text.tsx`，消除「管理员编辑器预览 ≠ 用户横幅渲染」的口径漂移；补 `apps/web/src/lib/announcements-contract.test.mjs` 摘要契约用例。
 
 ### Fixed
 
