@@ -302,13 +302,13 @@ export default function AdminLinesPage() {
       )}
 
       {/* 主数据表格：彻底收敛至 6 核心列 */}
-      <Card className="border shadow-none">
-        <CardContent className="p-0">
+      <Card>
+        <CardContent className="min-w-0 p-0">
           {lines.length ? (
-            <Table>
+            <Table className="min-w-[900px] table-fixed">
               <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-14 shrink-0">
+                <TableRow>
+                  <TableHead className="w-14">
                     <div className="flex items-center gap-1.5">
                       <Checkbox
                         checked={allSelected}
@@ -320,16 +320,16 @@ export default function AdminLinesPage() {
                       </span>
                     </div>
                   </TableHead>
-                  <TableHead className="w-[22%] min-w-[200px]">
+                  <TableHead className="w-1/4 min-w-56">
                     {t('admin:lines.colLineAndEndpoint')}
                   </TableHead>
-                  <TableHead className="w-[28%] min-w-[230px]">
+                  <TableHead className="w-1/3 min-w-64">
                     {t('admin:lines.colPipelineTopology')}
                   </TableHead>
-                  <TableHead className="w-[20%] min-w-[170px]">
+                  <TableHead className="w-48 min-w-40">
                     {t('admin:lines.colTagsRate')}
                   </TableHead>
-                  <TableHead className="w-[10%] min-w-[105px]">
+                  <TableHead className="w-28">
                     <div className="flex items-center gap-1">
                       <span>{t('admin:lines.colLatency')}</span>
                       <Tooltip>
@@ -344,13 +344,13 @@ export default function AdminLinesPage() {
                       </Tooltip>
                     </div>
                   </TableHead>
-                  <TableHead className="w-[8%] min-w-[80px]">{t('admin:lines.colStatus')}</TableHead>
-                  <TableHead className="w-[12%] min-w-[115px] text-right pr-4">{t('admin:lines.colActions')}</TableHead>
+                  <TableHead className="w-24">{t('admin:lines.colStatus')}</TableHead>
+                  <TableHead className="w-28 text-right">{t('admin:lines.colActions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {lines.map((line, index) => (
-                  <TableRow key={line.id} className="hover:bg-muted/40 transition-colors">
+                  <TableRow key={line.id} data-state={selected.has(line.id) ? 'selected' : undefined}>
                     {/* 1. 复选框与排序合并 */}
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -393,7 +393,7 @@ export default function AdminLinesPage() {
                           <span className="font-mono text-[11px]">Lv.{line.level}</span>
                           <span>·</span>
                           <span
-                            className="font-mono text-[11px] truncate max-w-[260px] lg:max-w-xs"
+                            className="font-mono text-[11px] truncate block"
                             title={`${line.serverHost}:${line.serverPort}`}
                           >
                             {line.serverHost}:{line.serverPort}
@@ -465,7 +465,7 @@ export default function AdminLinesPage() {
                     </TableCell>
 
                     {/* 7. 行操作列（高频外置 + 更多操作下拉折叠） */}
-                    <TableCell className="text-right pr-4">
+                    <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-0.5">
                         <IconButton
                           variant="ghost"
