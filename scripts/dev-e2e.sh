@@ -107,6 +107,9 @@ if [ -z "${MIHOMO_BINARY_PATH:-}" ]; then
 fi
 export MIHOMO_BINARY_PATH
 
+say "准备订阅预览固定离线地理资源（校验缓存，无运行时下载）…"
+node scripts/prepare-validation-resources.mjs || die "订阅预览地理资源准备失败"
+
 E2E_VERSION_RESOURCE_OVERRIDE=""
 if [ "$E2E_SYNC_RESOURCES" = "1" ]; then
   E2E_VERSION_RESOURCE_OVERRIDE="${E2E_RESOURCE_VERSION:-}"

@@ -37,6 +37,14 @@ export interface ProbeTask extends ProbeTaskAccepted {
   phase?: string;
 }
 export interface ProbeResultsPage { data: ProbeResult[]; total: number; page: number; pageSize: number; }
+export interface KernelResourceRequirement {
+  kind: 'GEOIP' | 'GEOSITE' | 'RULE_PROVIDER' | 'PROXY_PROVIDER' | 'RULE_SET' | 'CERTIFICATE' | 'EXTERNAL_FILE' | 'REMOTE_RESOURCE';
+  location: string;
+  state: 'AVAILABLE' | 'MISSING' | 'UNREADABLE' | 'INVALID' | 'UNSUPPORTED' | 'REMOTE_DISABLED';
+  reasonCode: string;
+  actionCode: 'PREPARE_RESOURCE' | 'FIX_RESOURCE' | 'CHECK_CLIENT' | 'NONE';
+  references: number;
+}
 export interface KernelCheckResult {
   engine: ProbeEngine;
   engineVersion: string | null;
@@ -44,6 +52,8 @@ export interface KernelCheckResult {
   executed: boolean;
   scope: 'FULL' | 'PARTIAL';
   diagnostics: string[];
+  resourceRequirements?: KernelResourceRequirement[];
+  resourceRequirementsTruncated?: number;
 }
 export interface ClientKernelProfile { engine: ProbeEngine; version: string | null; available: boolean; reason: string | null; }
 export type ClientKernelStatus = ClientKernelProfile[];
@@ -81,4 +91,24 @@ export function probeTone(result: Pick<ProbeResult, 'status' | 'engine'>): 'succ
 }
 export function kernelCheckPassed(check: KernelCheckResult): boolean {
   return check.executed && check.scope === 'FULL' && check.status === 'PASSED';
+}
+
+export function kernelCheckTone(check: KernelCheckResult): 'success' | 'warning' | 'danger' | 'muted' {
+  if (kernelCheckPassed(check)) return 'success';
+  if (check.status === 'FAILED') return 'danger';
+  if (['PASSED', 'UNAVAILABLE', 'UNSUPPORTED', 'EXTERNAL_RESOURCES_REQUIRED'].includes(check.status)) return 'warning';
+  return 'muted';
+}
+
+const kernelDiagnosticCodes = [
+  'INVALID_CONFIG', 'KERNEL_UNAVAILABLE', 'NATIVE_CONFIG_CHECK_FAILED',
+  'KERNEL_EXECUTION_UNAVAILABLE', 'KERNEL_TIMEOUT', 'KERNEL_CANCELED',
+  'EXTERNAL_RESOURCES_REQUIRED', 'RESOURCE_PREPARATION_FAILED',
+  'RESOURCE_AVAILABLE', 'RESOURCE_MISSING', 'RESOURCE_UNREADABLE',
+  'RESOURCE_INVALID', 'RESOURCE_UNSUPPORTED', 'REMOTE_RESOURCE_DISABLED',
+] as const;
+
+// 旧响应可能包含原始内核日志；仅翻译完整匹配的安全代码，绝不回显原文。
+export function kernelDiagnosticCode(code: unknown): typeof kernelDiagnosticCodes[number] | 'UNKNOWN' {
+  return kernelDiagnosticCodes.find((known) => known === code) ?? 'UNKNOWN';
 }

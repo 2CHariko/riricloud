@@ -90,4 +90,14 @@ describe('TemplatesService', () => {
     expect(kernels.validate).toHaveBeenCalledTimes(1);
     expect(kernels.validate).toHaveBeenCalledWith('MIHOMO', preview.content);
   });
+  it('预览保留原契约并透传有界资源诊断，不篡改配置内容', async () => {
+    const kernelCheck = { engine: 'MIHOMO', engineVersion: '1.19.30', status: 'EXTERNAL_RESOURCES_REQUIRED', executed: false, scope: 'FULL', diagnostics: ['EXTERNAL_RESOURCES_REQUIRED'],
+      resourceRequirements: [{ kind: 'GEOIP', location: 'rules[0]', state: 'MISSING', reasonCode: 'RESOURCE_MISSING', actionCode: 'PREPARE_RESOURCE', references: 1 }], resourceRequirementsTruncated: 0 };
+    kernels.validate.mockResolvedValueOnce(kernelCheck);
+    const preview = await service.previewTemplate({ format: 'clash', template: { customInjectYaml: 'rules:\n  - GEOIP,CN,DIRECT\n  - MATCH,DIRECT' } });
+    expect(preview.kernelCheck).toEqual(kernelCheck);
+    expect(preview.content).toContain('GEOIP,CN,DIRECT');
+    expect(preview).toEqual(expect.objectContaining({ content: expect.any(String), stats: expect.any(Object), warnings: expect.any(Array) }));
+    expect(kernels.validate).toHaveBeenCalledWith('MIHOMO', preview.content);
+  });
 });

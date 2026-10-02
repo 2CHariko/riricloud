@@ -67,7 +67,12 @@ FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d
 
 ARG TARGETARCH=amd64
 WORKDIR /prepare
-COPY scripts/client-kernel-assets.json scripts/prepare-client-kernels.mjs ./scripts/
+COPY scripts/client-kernel-assets.json scripts/prepare-client-kernels.mjs scripts/prepare-validation-resources.mjs ./scripts/
+RUN --mount=type=cache,id=riricloud-validation-resources,target=/validation-cache,sharing=locked \
+    node scripts/prepare-validation-resources.mjs --output-root /validation-cache \
+    && mkdir -p /validation-resources \
+    && cp /validation-cache/Country.mmdb /validation-cache/geoip.dat /validation-cache/geosite.dat /validation-cache/ASN.mmdb /validation-cache/manifest.json /validation-resources/ \
+    && chmod 0755 /validation-resources && chmod 0644 /validation-resources/*
 RUN --mount=type=cache,id=riricloud-mihomo-downloads,target=/client-kernels,sharing=locked \
     node scripts/prepare-client-kernels.mjs --target "linux-${TARGETARCH}" --output-root /client-kernels \
     && version="$(node scripts/prepare-client-kernels.mjs --target "linux-${TARGETARCH}" --field version)" \
@@ -204,6 +209,8 @@ COPY --from=build /out/binaries/ ./binaries/
 COPY --from=singbox-build /sing-box /usr/local/bin/sing-box
 COPY --from=singbox-build /libcronet.so /usr/local/bin/libcronet.so
 COPY --from=mihomo-fetch /mihomo /usr/local/bin/mihomo
+COPY --from=mihomo-fetch --chown=65532:65532 /validation-resources/ /app/binaries/validation-resources/
+COPY scripts/client-kernel-assets.json /app/scripts/client-kernel-assets.json
 COPY scripts/docker-entrypoint.js ./docker-entrypoint.js
 
 USER 65532:65532

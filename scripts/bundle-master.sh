@@ -342,6 +342,12 @@ cp "$ARTIFACT_ROOT/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/mihomo" "$MASTER
 cp "$ARTIFACT_ROOT/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/manifest.json" "$MASTER_DIR/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/manifest.json"
 chmod +x "$MASTER_DIR/binaries/mihomo/$MIHOMO_VERSION/$TARGET_NORM/mihomo"
 
+echo "  -> 准备订阅预览固定离线地理资源..."
+"$NODE_BIN" "$RIRI_ROOT/scripts/prepare-validation-resources.mjs" --output-root "$(to_node_path "$ARTIFACT_ROOT/validation-resources")"
+"$NODE_BIN" "$RIRI_ROOT/scripts/prepare-validation-resources.mjs" --offline-dir "$(to_node_path "$ARTIFACT_ROOT/validation-resources")" --output-root "$(to_node_path "$MASTER_DIR/binaries/validation-resources")"
+mkdir -p "$MASTER_DIR/scripts"
+cp "$RIRI_ROOT/scripts/client-kernel-assets.json" "$MASTER_DIR/scripts/client-kernel-assets.json"
+
 echo "  -> 生成内置二进制资源 manifest..."
 "$NODE_BIN" -e '
   const fs = require("fs");

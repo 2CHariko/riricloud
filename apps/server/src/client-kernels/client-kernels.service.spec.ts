@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 describe('client kernel resolution and honest validation', () => {
   const original = process.env.MIHOMO_BINARY_PATH;
+  const originalResources = process.env.CLIENT_VALIDATION_RESOURCES_DIR;
+  afterEach(() => { if (originalResources === undefined) delete process.env.CLIENT_VALIDATION_RESOURCES_DIR; else process.env.CLIENT_VALIDATION_RESOURCES_DIR = originalResources; });
   afterEach(() => { if (original === undefined) delete process.env.MIHOMO_BINARY_PATH; else process.env.MIHOMO_BINARY_PATH = original; jest.restoreAllMocks(); });
   it('invalid explicit binary is terminal and missing validation never passes', async () => {
     process.env.MIHOMO_BINARY_PATH = 'not-installed/mihomo';
@@ -13,6 +15,7 @@ describe('client kernel resolution and honest validation', () => {
     expect(await service.validate('MIHOMO', '{}')).toMatchObject({ status: 'UNAVAILABLE', executed: false, scope: 'FULL' });
   });
   it('does not rewrite georules or pretend full validation without external resources', async () => {
+    process.env.CLIENT_VALIDATION_RESOURCES_DIR = join(__dirname, 'not-installed-resources');
     const service = new ClientKernelsService();
     jest.spyOn(service, 'resolve').mockResolvedValue({ path: 'unused', version: '1.19.30' });
     const config = { proxies: [], rules: ['GEOSITE,cn,DIRECT', 'MATCH,DIRECT'] };

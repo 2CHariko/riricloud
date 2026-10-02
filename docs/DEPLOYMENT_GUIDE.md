@@ -636,6 +636,25 @@ Windows 本机六门禁/隔离 E2E 已通过；本机 WSL2 Debian 13 amd64 已�
 
 WSL 验证发现并修复 `docker-build.sh export` 引用未定义 HOST_UNAME（Linux-only 脚本不需要 Windows 路径转换），补 `node --test scripts/docker-export.test.mjs`；发现 Mihomo listener 早于 Running 的冷启动竞态，增加仅回环数据面就绪屏障，不访问目标或计入延迟，业务路由无 DIRECT 兜底；端口就绪轮询显式移除 abort listener。发布前其他平台仍须原生补验：Linux arm64/macOS 目前仅资产摘要/文件头通过，未实测原生运行；Naive 本轮未测 HTTP/3。视觉验证按需且仅限 Antigravity。
 
+### 11.1 模板预览的离线校验资源
+
+「客户端配置校验」不等同于链路测速。黄色 EXTERNAL_RESOURCES_REQUIRED 表示校验环境尚不能完整复现依赖，不表示订阅必然不可用。先查看展开的资源明细和配置位置：MISSING 需准备资源；INVALID 需重新校验/准备；UNREADABLE 需修复目录权限；REMOTE_DISABLED/UNSUPPORTED 应在具备资源的客户端验证，不能通过删掉规则消除提示。
+
+```bash
+# 固定地理资源准备（开发机产物 artifacts/validation-resources/）
+node scripts/prepare-validation-resources.mjs
+# 离线准备：目录中须包含清单锁定的同版本、同 SHA-256 文件
+node scripts/prepare-validation-resources.mjs --offline-dir /path/to/offline-resources --output-root /opt/riri/binaries/validation-resources
+```
+
+固定文件与来源/版本/哈希统一定义在 `scripts/client-kernel-assets.json` 的 validationResources，构建/显式准备阶段下载，预览运行时不下载。Docker 与 Master 包携带 `binaries/validation-resources/`；开发自动发现 `artifacts/validation-resources/`。可通过 `CLIENT_VALIDATION_RESOURCES_DIR` 显式指定受控资源根目录（推荐绝对路径）；覆盖错误不会静默回退。目录只能由受信任部署者维护，服务 UID 需可读，禁止面向用户可写；Docker 默认仍为 65532:65532。
+
+受控目录需有 `manifest.json`：`{schemaVersion:1,version,files:[{path,size,sha256}]}`。Mihomo 默认 GEOIP 使用 `Country.mmdb`，DAT 模式使用 `geoip.dat`，GEOSITE 使用 `geosite.dat`，ASN 使用 `ASN.mmdb`。不能把自定义 geox-url 对应的数据静默替换成默认包。自行准备本地 domain/ipcidr provider 时，将 YAML（payload 数组）或 text 文件及其实际大小/SHA-256 加入受控清单，配置只允许例如 `rules/domains.yaml` 的相对路径；classical/MRS、远程 provider、Sing-box 外部 rule-set 和任意证书/私钥路径不在本轮本地映射支持范围。
+
+运行时拒绝绝对路径、目录穿越、文件/子目录符号链接、坏哈希及超限资源；单文件最多 32 MiB、单次快照最多 80 MiB、清单最多 256 项。两个校验任务限额包住资源读取和原生进程，进程仍共享全局两槽位；只向私有临时目录写独立副本，不向共享资源写回。配置检查超时为 5 秒，失败/取消后回收文件；API 只回安全诊断码，不暴露原始内核输出。
+
+验证命令：`VALIDATION_RESOURCE_FIXTURE_DIR=artifacts/validation-resources node --test scripts/client-kernels.test.mjs scripts/prepare-validation-resources.test.mjs`；准备固定内核与资源后运行 `RUN_NATIVE_CLIENT_TESTS=1 pnpm --filter @riricloud/server exec jest --runInBand client-kernels`。地理资源还须匹配随应用分发的 `scripts/client-kernel-assets.json`，不能在资源目录清单中随意替换数据；缺少应用清单会安全拒绝。本轮原生验证证据与环境受限项记录于对应规划归档，不沿用上一版本的 Docker/跨平台验证结论。
+
 ## 12. 代理池统一授权与上游中继升级
 
 本轮BREAKING CHANGE：旧裸pk_用户名停止新连接，JSON导出改v2逐端点真实凭据，公开代理池线路也遵守套餐ALL/TAGS/EXPLICIT及额外授权；共享配额不再隐含所有线路访问权。Key记录/密码/exportToken不轮换、不删除，用户必须重新导出脚本/工具配置，不能手工将原始Key标识当登录名。

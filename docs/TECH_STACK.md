@@ -116,6 +116,8 @@ Docker 与发行包中的 Sing-box 使用 `with_v2ray_api,with_utls,with_quic,wi
 
 主客户端 Mihomo 固定基线为 1.19.30，资产定义及官方 Release SHA-256 统一放在 `scripts/client-kernel-assets.json`，Docker、Master 发行包、本地准备与 E2E 共用；准备阶段校验归档与 ELF/PE/Mach-O 架构，运行时不自动下载或升级。Mihomo 不内嵌 Agent，也不改变服务端 Sing-box 技术栈。
 
+订阅预览地理资源同样由该清单的 `validationResources` 固定：MetaCubeX/meta-rules-dat 的不可变提交 `a6544a371c34182ecec0363eafccd4ab3b93a58f`，包含 Country.mmdb、geoip.dat、geosite.dat 与 ASN.mmdb，实际字节总计约 38.6 MiB。准备脚本验证固定 SHA-256/大小后产生离线资源目录；运行时还必须匹配应用随包携带的 `scripts/client-kernel-assets.json`，资源目录自身清单不能替换固定地理资产，避免格式损坏触发内核自动下载。无新增 npm/Go 依赖。来源仓库 GPL-3.0，数据库还须遵守各上游数据许可（含 ASN 的 MaxMind 条款），来源与许可提示保留在清单。
+
 连接结构/通用校验不依赖具体内核；Mihomo 和 Sing-box 客户端各自校验能力并独立编译。保留 Sing-box JSON 与 URI/Base64 为兼容/辅助格式，不因另一格式失败否定本格式。主拨测默认 Mihomo；仅明确不支持 Mihomo 且进入验证白名单的组合可回退 Sing-box，超时/鉴权/配置/环境错误不回退。缺 Cronet 等依赖应报环境不可用，不能标节点失效。
 
 Mihomo 1.19.30 实测 delay API 对 HTTP 500/302 仍返回 delay，因此项目采用独立 Mihomo 回环 mixed 代理和 Node 标准 HTTP CONNECT/TLS 客户端进行严格响应状态与证书验证。临时内核只绑定回环、禁 TUN/自动健康检查/规则下载；所有验证/拨测共用全局 2 进程、4 连接限额，取消/异常后回收进程与凭据配置，不引入额外外部服务。
