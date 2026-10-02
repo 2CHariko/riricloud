@@ -70,7 +70,6 @@ const admin = {
     details: 'Details',
     deleteDialogTitle: 'Delete node {{name}}?',
     deleteDialogDesc: 'Line associations and telemetry records will be removed, and connected Agents will be disconnected.',
-    // Detail page
     detailTitle: 'Node Details',
     backToNodes: 'Back to Nodes',
     liveLogs: 'Live Logs',
@@ -142,7 +141,6 @@ const admin = {
     systemNodeDesc: 'Master local node is a system-reserved node and cannot be deleted.',
     nodeNotFound: 'Node Not Found',
     nodeNotFoundDesc: 'This node may have been deleted',
-    // Dialogs & subcomponents
     rotateTokenTitle: 'Rotate AgentToken?',
     rotateTokenDesc: 'The previous token for node "{{name}}" will expire immediately, disconnecting connected Agents. You must update the token on the host to reconnect.',
     confirmRotate: 'Confirm Rotation',
@@ -207,7 +205,6 @@ const admin = {
     offlineCmdLabel: 'One-click Fetch & Offline Install Command',
     masterHasBinary: 'Master has built-in {{target}} binary, ready for direct installation.',
     masterNoBinary: 'Master lacks built-in {{target}} binary. Native install will fetch it from GitHub Releases/mirrors; for portable mode please acquire the binary first.',
-    // Mutations & Toasts
     toastSaved: 'Saved',
     toastFailed: 'Operation failed',
     toastCreateFailed: 'Failed to create node',
@@ -242,7 +239,6 @@ const admin = {
     toastTaskFailedAgentMsg: 'Agent reported failure',
     toastTaskRunning: '{{label}} is still running',
     toastTaskRunningDesc: 'You can check the node details later for results',
-    // Detail and Form Validation
     valNameReq: 'Node name is required',
     valNameMax: 'Node name cannot exceed 64 characters',
     valServerHostPublic: 'Public VPS must specify a valid public server address',
@@ -257,7 +253,6 @@ const admin = {
     uninstallWindows: 'Purge Uninstall (Windows, Admin PowerShell)',
     valName32Max: 'Name cannot exceed 32 characters',
     valServerHostReq: 'Public VPS requires a public server address',
-    // Deployment Hints & Command Picker
     deployHintNativePosix: 'Execute as root; automatically pulls the setup script and registers riri-agent as a system service (Linux systemd / macOS launchd) with auto-start on boot.',
     deployHintNativeWindows: 'Paste and run directly in CMD or PowerShell; or download the .bat script and run as Administrator. Elevates permissions and registers riri-agent service.',
     deployHintPortablePosix: 'Portable execution: data directory is ~/.riri-cloud, press Ctrl+C to stop. Sing-box binary downloaded automatically, no background service registered.',
@@ -272,7 +267,6 @@ const admin = {
     scriptDownloadFailed: 'Failed to download dedicated installation script',
     targetOsAria: 'Target Operating System',
     commModeHttpTab: 'HTTP / HTTPS (Polling)',
-    // Probe Dialog
     valTargetReq: 'Target address is required',
     customTarget: 'Custom Target',
     probeTypeTcp: 'TCP Connection',
@@ -283,7 +277,6 @@ const admin = {
     dnsResolved: 'Resolved: {{addrs}}',
     dnsNoAddr: 'No resolved addresses returned',
     probeFailedNoDetails: 'Probe failed with no error details',
-    // Upgrade Dialog
     valCustomVersionReq: 'Custom version is required',
     valDownloadUrlReq: 'Complete download URL is required',
     valSha256Hex: 'SHA-256 must be a 64-character hexadecimal string',
@@ -291,12 +284,30 @@ const admin = {
     defaultBadge: ' · Default',
     platformAssetsCount: ' · {{count}} platform assets',
     sha256Placeholder: '64-char hexadecimal SHA-256',
-    // Deployment History
     customUrlBadge: 'Custom URL',
     attemptsCount: '{{count}} attempts',
     upgradeOperation: 'Upgrade',
     emptyHistoryTitle: 'No Dispatch History',
-    emptyHistoryDesc: 'Audit records for upgrade and rollback tasks will appear here after execution.'
+    emptyHistoryDesc: 'Audit records for upgrade and rollback tasks will appear here after execution.',
+    batchUpgradeAction: 'Batch Upgrade Agent',
+    batchUpgradeTitle: 'Batch Upgrade Agent',
+    batchUpgradeDesc: 'Creates individual Agent upgrade tasks for all {{count}} selected nodes.',
+    batchUpgradeResource: 'Agent Resource Version',
+    batchUpgradeDefaultResource: 'Use Master Default Version for Each Architecture',
+    batchUpgradeResourceDesc: 'Only ACTIVE resources with available assets for all selected architectures are shown ({{count}} available).',
+    batchUpgradeOfflineNotice: 'Offline or HTTP-polling nodes will queue until their next connection/poll; disabled nodes are skipped and noted in results.',
+    batchUpgradeConfirm: 'Create Upgrade Tasks for {{count}} Nodes',
+    batchUpgradeResults: 'Batch Upgrade Results',
+    batchUpgradeSummary: 'Accepted {{succeeded}} tasks; failed to create tasks for {{failed}} nodes.',
+    batchUpgradeDispatched: 'Dispatched',
+    batchUpgradeQueued: 'Queued',
+    batchUpgradeFailed: 'Failed',
+    selectedNodes: '{{count}} nodes selected',
+    batchUpgradeStaleSelection: 'Selected nodes have changed. Please refresh your selection and try again.',
+    batchUpgradeMaxNodes: 'You can select up to 100 nodes at a time.',
+    batchUpgradeSelectLimit: 'Selection exceeds the 100-node limit. Please narrow down your filter.',
+    toastBatchUpgradePartial: 'Batch upgrade processed: {{succeeded}} created, {{failed}} failed',
+    toastBatchUpgradeAccepted: 'Upgrade tasks created for {{count}} nodes',
   },
   lines: {
     title: 'Line Management',
@@ -386,7 +397,26 @@ const admin = {
     speedtestFailed: 'Speedtest failed: {{message}}',
     speedtestRequestFailed: 'Speedtest request failed',
     speedtestAllSuccess: 'Full speedtest completed: {{total}} total, {{success}} succeeded, {{failed}} failed',
-    speedtestAllFailed: 'Batch speedtest request failed'
+    speedtestAllFailed: 'Batch speedtest request failed',
+    relayUpstreamNode: 'Upstream Relay',
+    colLineAndEndpoint: 'Line / Ingress Address',
+    colPipelineTopology: 'Network Topology',
+    proxyPoolTrigger: 'Proxy Pool Quota',
+    proxyPoolDrawerTitle: 'Proxy Pool Credentials & Node Quotas',
+    proxyPoolSectionWatermark: 'Node Quota Watermarks',
+    proxyPoolMetricEndpoints: 'Ingress Endpoints',
+    proxyPoolMetricEndpointsSub: 'Active Connection Endpoints',
+    proxyPoolMetricKeys: 'Authorized Keys',
+    proxyPoolMetricKeysSub: '{{active}} active · {{total}} total',
+    proxyPoolMetricNodes: 'Assigned Nodes',
+    proxyPoolMetricNodesSub: 'Allocated Edge Nodes',
+    proxyPoolUsedLimit: 'Used {{used}} / {{limit}} max',
+    proxyPoolEmptyNodes: 'No node quota telemetry available',
+    proxyPoolStatusNormal: 'Normal',
+    proxyPoolStatusWarning: 'High Load',
+    proxyPoolStatusExcluded: 'Quota Suspended',
+    proxyPoolDrawerNotice: 'Each edge node supports up to 512 credential endpoint bindings. When full, new keys are held in reserve while active connections remain unaffected.',
+    moreActions: 'More Actions',
   },
   users: {
     title: 'User Management',
@@ -456,7 +486,8 @@ const admin = {
     balanceAdjustFailed: 'Failed to adjust balance',
     batchOperateSingleSuccess: 'Updated 1 user',
     batchOperateSuccess: 'Batch updated {{count}} users',
-    batchOperatePartial: 'Completed: {{success}} succeeded, {{failed}} failed'
+    batchOperatePartial: 'Completed: {{success}} succeeded, {{failed}} failed',
+    onlineDevices: 'Active Devices',
   },
   plans: {
     title: 'Plan Management',
@@ -493,7 +524,10 @@ const admin = {
     savedSuccess: 'Plan saved successfully',
     saveFailed: 'Failed to save plan',
     deletedSuccess: 'Plan deleted successfully',
-    deleteFailed: 'Failed to delete plan'
+    deleteFailed: 'Failed to delete plan',
+    colDeviceLimit: 'Device Limit',
+    deviceLimitValue: '{{count}} Devices',
+    unlimitedDevices: 'Unlimited Devices',
   },
   redeemCodes: {
     title: 'Redeem Codes',
@@ -702,7 +736,7 @@ const admin = {
     updateFailed: 'Failed to save certificate',
     deleteSuccess: 'Certificate deleted',
     deleteFailed: 'Failed to delete certificate',
-    validUntil: 'until {{date}}'
+    validUntil: 'until {{date}}',
   },
   templates: {
     title: 'Subscription Templates',
@@ -740,7 +774,7 @@ const admin = {
     deleteFailed: 'Delete failed',
     previewFailed: 'Preview render failed',
     duplicateSuccess: 'Template duplicate created',
-    duplicateFailed: 'Duplicate template failed'
+    duplicateFailed: 'Duplicate template failed',
   },
   binaries: {
     title: 'Resource Center',
@@ -929,7 +963,47 @@ const admin = {
     colOperator: 'Operator',
     operatorSystem: 'System',
     emptyAuditTitle: 'No Audit Records',
-    emptyAuditDesc: 'Operation traces will appear here when resource changes occur.'
+    emptyAuditDesc: 'Operation traces will appear here when resource changes occur.',
+    viewSystemLogs: 'System Logs',
+    githubReleasesBtn: 'GitHub Release',
+    remoteImportBtn: 'Remote Import',
+    toggleStatusAria: 'Toggle active status for resource {{version}}',
+    sourceLocal: 'Local Package',
+    sourceGithub: 'GitHub Release',
+    upstreamVersionPlaceholder: 'Leave empty to detect automatically from binary tags or filename',
+    targetAutoDetect: 'Auto-detect Platform & Architecture (Recommended)',
+    selectedFilesCount: '{{count}} files selected',
+    autoDetectHint: 'Auto-detects platform and version',
+    urlPlaceholder: 'https://github.com/.../riri-agent-linux-amd64.tar.gz',
+    urlDesc: 'Accepts direct GitHub Release asset links or any HTTP(S) URL. Decompresses, computes SHA-256, and detects architecture automatically.',
+    githubDialogTitle: 'Import Agent Assets Remotely',
+    githubDialogDesc: 'Pull multi-architecture Agent binaries directly from the project GitHub Releases or import from a custom URL.',
+    tabGithubRelease: 'GitHub Release',
+    tabUrlImport: 'Custom URL Import',
+    githubCurrentRepo: 'Current Repository:',
+    githubRepoLabel: 'GitHub Repository URL',
+    githubRepoPlaceholder: 'https://github.com/owner/repo',
+    githubRepoSave: 'Save Repository',
+    githubRepoSaved: 'GitHub repository updated',
+    githubRepoSaveFailed: 'Failed to save GitHub repository',
+    githubRefresh: 'Refresh List',
+    githubGoSettings: 'Go to System Settings to edit repository and mirrors',
+    githubPrerelease: 'Pre-release',
+    githubImportedBadge: 'Imported',
+    githubPartialBadge: 'Imported {{imported}}/{{total}}',
+    githubPullAll: 'Pull All ({{count}})',
+    githubPullMissing: 'Pull Remaining Architectures ({{count}})',
+    githubRePullAll: 'Re-sync All',
+    githubPulling: 'Pulling…',
+    githubImportSuccess: 'Synced {{succeeded}} architecture assets from GitHub Release {{tag}}',
+    githubImportPartial: 'Sync completed: {{succeeded}} succeeded, {{failed}} failed{{error}}',
+    githubImportFailed: 'Failed to pull from GitHub Release',
+    githubEmptyTitle: 'No Releases with Agent Assets Found',
+    githubEmptyDesc: 'Ensure the repository has published Agent packages for linux/macos/windows, or check the repository URL in settings.',
+    githubLoadFailedTitle: 'Failed to Load GitHub Releases',
+    githubPublishedAt: 'Published at {{time}}',
+    githubCurrentSource: 'Default Source:',
+    githubOfficialSource: 'GitHub Official Direct (Auto-fallbacks if mirror fails)',
   },
   mirrors: {
     title: 'Mirrors',
@@ -995,7 +1069,7 @@ const admin = {
     valAllowedOrigins: 'Please specify at least one allowed upstream domain',
     valNodeIdReq: 'Please select an egress node',
     loadErrorTitle: 'Failed to load mirror sites',
-    loadErrorDesc: 'Please refresh and try again later.'
+    loadErrorDesc: 'Please refresh and try again later.',
   },
   traffic: {
     title: 'Traffic Telemetry',
@@ -1063,7 +1137,7 @@ const admin = {
     chartAvgDown: 'Avg Download',
     chartAvgUp: 'Avg Upload',
     chartPeakDown: 'Peak Download',
-    chartPeakUp: 'Peak Upload'
+    chartPeakUp: 'Peak Upload',
   },
   logs: {
     title: 'System Logs',
@@ -1173,7 +1247,7 @@ const admin = {
     cleanCount100k: 'Keep only latest 100,000 records',
     cleanNotice: 'Note: Master background worker automatically purges expired logs; manual purge is only recommended if disk space is low.',
     cleaning: 'Cleaning…',
-    cleanConfirm: 'Confirm Cleanup'
+    cleanConfirm: 'Confirm Cleanup',
   },
   settings: {
     title: 'System Settings',
@@ -1227,7 +1301,7 @@ const admin = {
       cpu: 'Cpu (Core / Compute)',
       radio: 'Radio (Signal / Broadcast)',
       layers: 'Layers (Multi-layer / Routing)',
-      sparkles: 'Sparkles (Features / Highlights)'
+      sparkles: 'Sparkles (Features / Highlights)',
     },
     labelFeatureTitle: 'Feature Title',
     labelFeatureDesc: 'Feature Description',
@@ -1260,8 +1334,6 @@ const admin = {
     resetConfirmTitle: 'Reset all settings to default?',
     resetConfirmDesc: 'All custom branding, registration, subscription, and ops settings will be reverted to safe defaults.',
     resetConfirm: 'Confirm Reset',
-
-    // Speed Tier Color Ladder
     speedTierTitle: 'Speed Tier Color Ladder',
     speedTierDesc: 'Automatically match tier colors based on node or plan maximum rate, rendered in user cards and admin lists.',
     speedTierReset: 'Reset to Default Tiers',
@@ -1278,8 +1350,6 @@ const admin = {
     speedColor_amber: 'Amber Gold',
     speedColor_violet: 'Starlight Violet',
     speedColor_rose: 'Rose Red',
-
-    // Probe Presets & Dialog
     probePresetTitle: 'Default Probe Targets',
     probePresetDesc: 'Preset quick targets for node diagnostics. Target ordering is preserved.',
     probePresetCount: '{{count}} / {{max}} items',
@@ -1307,8 +1377,6 @@ const admin = {
     probePresetErrPortRange: 'Port range must be 1-65535',
     probePresetErrTimeoutRange: 'Timeout range must be 100-10000 ms',
     probePresetErrMaxTargets: 'Maximum {{max}} probe targets allowed',
-
-    // Timezone
     tzShanghai: 'Asia/Shanghai (Beijing / Shanghai / Hong Kong / Taipei · UTC+8)',
     tzTokyo: 'Asia/Tokyo (Tokyo / Seoul · UTC+9)',
     tzSingapore: 'Asia/Singapore (Singapore · UTC+8)',
@@ -1327,8 +1395,6 @@ const admin = {
     tzPresetSelect: 'Common Timezones',
     tzIanaInput: 'IANA Timezone Identifier',
     tzIanaPlaceholder: 'e.g. Asia/Shanghai or UTC',
-
-    // Validations
     valSiteNameReq: 'Site name cannot be empty',
     valPublicBaseUrl: 'Please enter a valid public base URL',
     valTimezoneReq: 'Timezone cannot be empty',
@@ -1347,8 +1413,6 @@ const admin = {
     valGithubMirrorUrls: 'Each line must be a valid HTTP/HTTPS mirror URL (up to 32 entries)',
     valSpeedtestTargetUrl: 'Please enter a valid speedtest target URL',
     valFormInvalidToast: 'Invalid setting value: {{message}}',
-
-    // Toast and feedback
     vacuumSuccessReclaimed: 'Cleanup complete, reclaimed {{bytes}} of disk space',
     vacuumSuccessClean: 'Cleanup complete, no fragmentation detected',
     vacuumFailed: 'Failed to compact database',
@@ -1357,8 +1421,6 @@ const admin = {
     resetFailed: 'Failed to reset settings',
     smtpTestSuccess: 'Test email sent successfully{{duration}}',
     smtpTestFailed: 'SMTP test failed',
-
-    // Branding
     sectionBranding: 'General & Branding',
     sectionBrandingDesc: 'Synchronized with login page, sidebar, footer, and subscriber portals.',
     fieldSiteName: 'Site Name',
@@ -1379,8 +1441,6 @@ const admin = {
     fieldSupportTg: 'Telegram Support / Group',
     fieldSupportDiscord: 'Discord Support / Community',
     fieldSupportCustom: 'Custom Support Link',
-
-    // Users and Registration
     sectionUsers: 'Registration & User Policy',
     sectionUsersDesc: 'Manage new account registration constraints and initial privileges upon sign-up.',
     fieldRegistrationEnabled: 'Open Registration',
@@ -1410,8 +1470,6 @@ const admin = {
     optEmailDomainBlacklist: 'Blacklist (Reject listed domains)',
     fieldEmailDomainListText: 'Domain List',
     descEmailDomainListText: 'One domain per line (e.g. example.com); do not include @.',
-
-    // SMTP Mailer
     sectionSmtp: 'Outbound Mailer (SMTP)',
     descSmtp: 'Used for sending registration and verification codes; password remains masked.',
     btnSendSmtpTest: 'Send Test Email',
@@ -1429,8 +1487,6 @@ const admin = {
     descEmailVerificationEnabled: 'New users must verify via a 6-digit code valid for 5 minutes.',
     fieldEnforceEmailVerification: 'Strict Email Verification Enforcement',
     descEnforceEmailVerification: 'Users with unverified emails cannot pull subscriptions or connect to nodes (admins exempted). Useful to combat abuse.',
-
-    // Bot Protection
     sectionCaptcha: 'Bot Protection (CAPTCHA)',
     descCaptcha: 'Interception mechanism before dispatching verification codes. Local captcha requires no external services.',
     fieldCaptchaMode: 'Verification Mode',
@@ -1440,8 +1496,6 @@ const admin = {
     fieldTurnstileSiteKey: 'Site Key',
     fieldTurnstileSecretKey: 'Secret Key',
     placeholderTurnstileSecretKey: 'Leave blank to retain current key',
-
-    // Subscription & Distribution
     sectionSubscription: 'Subscription & Distribution',
     sectionSubscriptionDesc: 'Configure client subscription endpoint URLs, polling intervals, and default templates.',
     fieldSubscriptionBaseUrl: 'Subscription Base URL (Override, Optional)',
@@ -1464,8 +1518,6 @@ const admin = {
     descAppendSubscriptionSpeedBadge: 'Appends [50M] or similar tags to node names when rate limits are configured on plan or node.',
     fieldSpeedLimitUnitConversionEnabled: 'Convert >= 1000M to G Unit',
     descSpeedLimitUnitConversionEnabled: 'Converts 1000 Mbps and above to G units (e.g. 1G, 2.5G) across panel UI and node names.',
-
-    // Agent Ops & Probes
     sectionAgent: 'Agent Ops & Network Probes',
     sectionAgentDesc: 'Tune node heartbeat timeouts, configuration sync debouncing, and HTTP polling behavior.',
     fieldHeartbeatTimeoutSecs: 'Heartbeat Offline Timeout (Seconds)',
@@ -1487,8 +1539,6 @@ const admin = {
     descLineSpeedtestTimeoutMs: 'Default: 3000ms.',
     fieldLineSpeedtestTargetUrl: 'Speedtest Benchmark Target URL',
     descLineSpeedtestTargetUrl: 'Target endpoint requested via proxy tunnels; lightweight HTTP 204 endpoints recommended.',
-
-    // Storage & Maintenance
     sectionStorage: 'Telemetry Data Retention Policy',
     sectionStorageDesc: 'Configure automated purge cycles for metrics, node rates, and system logs. Saving will not immediately delete data.',
     fieldTrafficHourlyRetentionDays: 'Traffic Hourly Metric Retention (Days)',
@@ -1515,8 +1565,6 @@ const admin = {
     btnOpenCleanup: 'Open Cleanup Center',
     btnVacuum: 'Defragment & Compact Database (VACUUM)',
     vacuuming: 'Compacting…',
-
-    // Advanced & Security
     sectionAdvanced: 'Security & Advanced Customization',
     sectionAdvancedDesc: 'Manage session durations and inject custom styling or head scripts into authenticated panels.',
     fieldJwtSessionDays: 'JWT Session Validity (Days)',
@@ -1577,7 +1625,30 @@ const admin = {
     statusDisabled: 'Disabled',
     badgeBanner: 'Banner',
     badgePopup: 'Popup',
-    badgePinned: 'Pinned'
+    badgePinned: 'Pinned',
+    fieldDeviceLimitEnabled: 'Enable Multi-device Limiting',
+    descDeviceLimitEnabled: 'Enforces simultaneous active device limits per user or plan; when disabled, counts are recorded without interception.',
+    fieldDeviceOnlineWindowSecs: 'Device Online Window (seconds)',
+    descDeviceOnlineWindowSecs: 'Connections reported by Agents within this duration are considered active devices (15–600 seconds, default 60s).',
+    githubMirrorDefaultLabel: 'Current Default Download Source:',
+    githubMirrorOfficialDirect: 'GitHub Official (Direct https://github.com)',
+    githubMirrorFallbackHint: '(Automatically falls back to official source if unavailable)',
+    btnTestGithubMirrors: 'Run Speedtest',
+    testingGithubMirrors: 'Testing…',
+    btnUseOfficialDirect: 'Use Official Direct Only',
+    btnRestoreDefaultMirrors: 'Restore Default Mirrors',
+    mirrorTestResultTitle: 'GitHub Streaming Speedtest Results',
+    mirrorTestBestBadge: 'Fastest',
+    mirrorTestCurrentDefaultBadge: 'Current Default',
+    mirrorTestOfficialBadge: 'Official',
+    mirrorTestAvailable: '{{latency}} ms · {{speed}}/s',
+    mirrorTestUnavailable: 'Unavailable · {{error}}',
+    btnSetDefaultMirror: 'Set as Default Source',
+    btnApplyBestMirror: 'Apply Fastest Source ({{source}})',
+    toastMirrorTestDone: 'Speedtest completed; fastest source is {{source}}',
+    toastMirrorTestAllFailed: 'All mirror sources failed; recommending direct official GitHub source',
+    toastMirrorTestFailed: 'Failed to request speedtest for GitHub download sources',
+    toastDefaultMirrorSaved: 'Default download source updated to {{source}}',
   },
   userTraffic: {
     title: 'User Traffic Breakdown',
@@ -1600,7 +1671,7 @@ const admin = {
     noRecordsDesc: 'Switch the time range to view historical usage.',
     usageTrend: 'User Traffic Trend',
     lineDistribution: 'Line Distribution',
-    lineUsageList: 'Line Usage List'
+    lineUsageList: 'Line Usage List',
   },
   userForm: {
     manageTitle: 'Manage User · {{email}}',
@@ -1680,7 +1751,14 @@ const admin = {
     noPlan: 'No Plan',
     trafficResetPolicy: 'Reset Policy',
     nextResetTime: 'Next Reset Time',
-    notSet: 'Not Set'
+    notSet: 'Not Set',
+    deviceLimit: 'Simultaneous Active Device Limit',
+    deviceLimitDescription: 'Follow plan default, allow unlimited devices, or set a custom limit for this user.',
+    deviceLimitFollowPlan: 'Follow Plan Default',
+    deviceLimitUnlimited: 'Unlimited (User Override)',
+    deviceLimitCustom: 'Custom Limit',
+    deviceLimitCount: 'Max Active Devices',
+    deviceLimitRequired: 'Please enter a device count between 1 and 1000',
   },
   balanceForm: {
     title: 'Adjust User Balance · {{email}}',
@@ -1696,7 +1774,7 @@ const admin = {
     reasonLabel: 'Reason / Note',
     reasonPlaceholder: 'e.g. Compensation or manual calibration',
     submitting: 'Submitting…',
-    confirmAdjust: 'Confirm Adjustment'
+    confirmAdjust: 'Confirm Adjustment',
   },
   telemetryCleanup: {
     title: 'Historical Telemetry Cleanup',
@@ -1722,7 +1800,7 @@ const admin = {
       trafficHourly: 'Hourly Traffic Rollup',
       nodeRate: 'Node Rate Metrics',
       systemLog: 'System Logs',
-      legacyTraffic: 'Legacy Traffic Details'
+      legacyTraffic: 'Legacy Traffic Details',
     },
     generatePreview: 'Generate Preview',
     generatingPreview: 'Generating Preview…',
@@ -1750,7 +1828,7 @@ const admin = {
     cleanupFailed: 'Cleanup failed for the selected data types',
     reclaimedDiskSpace: ', freed {{bytes}} disk space',
     reclaimedVacuumSuccess: 'Executed VACUUM and freed {{bytes}} disk space',
-    reclaimedVacuumNoWaste: 'Completed checkpoint and VACUUM, no extra free pages reclaimed'
+    reclaimedVacuumNoWaste: 'Completed checkpoint and VACUUM, no extra free pages reclaimed',
   },
   planForm: {
     createTitle: 'Create Plan',
@@ -1790,7 +1868,7 @@ const admin = {
       holographic: 'Holographic Obsidian 3D',
       holographicDesc: 'Tech cold dark sheen',
       neon: 'Cyber Neon Lightguide',
-      neonDesc: 'High-contrast glowing rim'
+      neonDesc: 'High-contrast glowing rim',
     },
     advancedVisuals: 'Advanced Visual Tuning',
     collapse: 'Collapse',
@@ -1808,7 +1886,7 @@ const admin = {
       purple: 'Nebula Twilight',
       emerald: 'Emerald Chill',
       rose: 'Blazing Ruby',
-      indigo: 'Deep Cosmic Indigo'
+      indigo: 'Deep Cosmic Indigo',
     },
     iconsLabel: 'Card Dedicated Icon',
     iconsHint: 'Pure Lucide vector icons, no emojis',
@@ -1824,7 +1902,7 @@ const admin = {
       Gem: 'Black Diamond',
       Server: 'Dedicated Server',
       Cpu: 'Powerful Core',
-      Plane: 'Flight Gateway'
+      Plane: 'Flight Gateway',
     },
     beamColorLabel: 'Flowing Beam Color',
     beamColorTheme: 'Theme Monochromatic Glow',
@@ -1834,7 +1912,7 @@ const admin = {
       gradient: 'Glossy Gradient Highlight',
       glow: 'Soft Subtle Glow',
       outline: 'Refined Wireframe',
-      default: 'Classic Solid Color'
+      default: 'Classic Solid Color',
     },
     originalPrice: 'Strikethrough Original Price ($)',
     originalPricePlaceholder: 'e.g. 68.00',
@@ -1878,7 +1956,7 @@ const admin = {
     validation: {
       nameRequired: 'Please enter a plan name',
       priceDecimals: 'Up to 2 decimal places allowed',
-      trafficPositive: 'Traffic limit must be greater than 0'
+      trafficPositive: 'Traffic limit must be greater than 0',
     },
     presets: {
       zap: '[zap] 1000Mbps Ultra-fast Dedicated Line',
@@ -1887,8 +1965,10 @@ const admin = {
       shield: '[shield] Enterprise Anti-probe Protection',
       sparkles: '[sparkles] Full-format Smart Managed',
       star: '[star] Dedicated Native IP Unblocking Streaming',
-      sla: '!24/7 SLA High Availability Service'
-    }
+      sla: '!24/7 SLA High Availability Service',
+    },
+    deviceLimit: 'Active Device Limit (0 for unlimited)',
+    deviceLimitHint: 'Connections exceeding this limit will be automatically disconnected; range 0–1000.',
   },
   lineForm: {
     namePlaceholder: 'e.g. Hong Kong High-Multiplier Line',
@@ -1965,7 +2045,7 @@ const admin = {
       none: 'Disabled',
       file: 'Local Static Directory (File)',
       proxy: 'Reverse Proxy (Proxy)',
-      string: 'Custom Response String (String)'
+      string: 'Custom Response String (String)',
     },
     hy2MasqueradeFile: 'Absolute Path to Static Website Directory',
     hy2MasqueradeFilePlaceholder: '/var/www/html',
@@ -1982,7 +2062,7 @@ const admin = {
     ssMode: 'Authentication Mode',
     ssModes: {
       shared: 'Shared Password Mode',
-      multiUser: 'Multi-User Mode'
+      multiUser: 'Multi-User Mode',
     },
     ssPassword: 'Inbound Key / Password',
     ssPasswordPlaceholder: 'Leave empty to auto-generate',
@@ -2008,7 +2088,7 @@ const admin = {
       none: 'Disable TLS',
       tls: 'Standard TLS',
       reality: 'Reality',
-      acme: 'ACME Automated Certificate'
+      acme: 'ACME Automated Certificate',
     },
     tlsServerName: 'TLS SNI',
     tlsServerNamePlaceholder: 'example.com',
@@ -2060,7 +2140,7 @@ const admin = {
       ws: 'WebSocket',
       grpc: 'gRPC',
       http: 'HTTP',
-      httpupgrade: 'HTTPUpgrade'
+      httpupgrade: 'HTTPUpgrade',
     },
     wsPath: 'WebSocket Path',
     wsPathPlaceholder: '/ws',
@@ -2091,7 +2171,8 @@ const admin = {
       protocolProxyNat: 'Protocol Proxy: Terminate at entry and rebuild via reverse tunnel',
       blindForward: 'Blind Forward: Maintain end-to-end protocol',
       protocolProxy: 'Protocol Proxy: Terminate at entry and rebuild connection',
-      targetLine: 'Protocol Conversion: Bridge existing line'
+      targetLine: 'Protocol Conversion: Bridge existing line',
+      upstreamNode: 'Upstream Relay (Forward to external upstream node)',
     },
     natLandingTitle: 'NAT Penetration Landing Node Security & Settings',
     natLandingDesc: 'Selected landing node is an intranet NAT host. Connections will be bridged via Yamux TCP reverse tunnel from entry public VPS. Sing-box on this node binds to 127.0.0.1 only.',
@@ -2168,8 +2249,59 @@ const admin = {
       brutalUpRequired: 'TCP Brutal congestion control requires uplink rate > 0',
       brutalDownRequired: 'TCP Brutal congestion control requires downlink rate > 0',
       ssUotMutexError: 'Shadowsocks UDP over TCP and Multiplex are mutually exclusive and cannot be enabled together',
-      vlessFlowTcpOnly: 'XTLS Vision flow is restricted to raw TCP; WebSocket / gRPC transports cannot use flow'
-    }
+      vlessFlowTcpOnly: 'XTLS Vision flow is restricted to raw TCP; WebSocket / gRPC transports cannot use flow',
+      upstreamNodeRequired: 'Please select an upstream egress node',
+    },
+    egress: {
+      title: 'Final Egress Proxy',
+      enabled: 'Enable Final Egress Proxy',
+      description: 'Service traffic exits via this proxy on the final execution node without altering client ingress protocol or relay tunnels.',
+      protocol: 'Egress Protocol',
+      http: 'HTTP (Non-TLS)',
+      socks5: 'SOCKS5',
+      host: 'Proxy Host',
+      hostPlaceholder: 'Hostname, IPv4, or IPv6 (without scheme or path)',
+      port: 'Proxy Port',
+      auth: 'Enable Proxy Authentication',
+      authDesc: 'Saving with authentication disabled removes existing credentials.',
+      username: 'Proxy Username',
+      password: 'Proxy Password',
+      passwordKeep: 'Leave blank to keep existing password; enter new value to replace',
+      passwordNew: 'Password is required when enabling authentication',
+      udp: 'Enable SOCKS5 UDP',
+      udpDesc: 'Disabled by default; only supported for SOCKS5. Verify proxy supports UDP relay.',
+      dns: 'Target domain names are resolved proxy-side for SOCKS5.',
+      execution: 'Final Execution Node: {{name}}',
+      selectNode: 'Please select a final execution node first',
+      namespace: '127.0.0.1 / ::1 refers to Sing-box network namespace on the final execution node, not Master or browser.',
+      failClosed: 'Does not fall back to direct egress on proxy connection failure. Verify reachability.',
+      inherited: 'Inherited from Target Line',
+      inheritedDesc: 'Egress proxy is read-only and inherited from target line. Modify it on the target line.',
+      inheritedDirect: 'Target line has no proxy configured (Direct egress)',
+      inheritedPending: 'Select a target line to preview final egress',
+      unsupported: 'Direct external egress and upstream relays do not support custom final egress proxies.',
+      clearTitle: 'Clear Final Egress Configuration and Switch Topology?',
+      clearDesc: 'The target topology does not support custom final egress proxies. Current egress draft will be discarded.',
+      clearAction: 'Clear & Switch',
+      clearRequired: 'Please clear final egress proxy before switching topology',
+      hostRequired: 'Please enter a valid hostname or IP without scheme, path, or whitespace',
+      portRequired: 'Proxy port must be an integer between 1 and 65535',
+      usernameRequired: 'Please enter a username when authentication is enabled',
+      passwordRequired: 'Password is required when enabling proxy authentication',
+    },
+    proxyPoolEnabled: 'Enable Standard Proxy Pool Access',
+    proxyPoolDesc: 'Exposes line to the direct proxy pool; supports Mixed Direct or Mixed Upstream Relay without affecting existing subscriber accounts.',
+    proxyPoolInvalid: 'Only DIRECT + MIXED or RELAY + UPSTREAM_NODE + MIXED support the proxy pool.',
+    upstreamUsersRequired: 'Upstream Relay Mixed / HTTP / SOCKS ingresses must have per-user authentication enabled (usersEnabled=true).',
+    proxyPoolOverview: 'Proxy Pool Quota Allocation',
+    proxyPoolCapacityDesc: 'Quota is computed per bound credential endpoint, capped at 512 per node.',
+    proxyPoolEndpointCount: 'Active endpoints: {{count}}',
+    proxyPoolCapacity: '{{name}}: Used {{used}} / {{limit}} (Suspended: {{excluded}})',
+    proxyPoolEnabledBadge: 'Proxy Pool Enabled',
+    proxyPoolDisabledBadge: 'Proxy Pool Disabled',
+    upstreamNodeLabel: 'Upstream Egress Node',
+    upstreamNodeDesc: 'Select an imported external upstream node. The ingress VPS will manage this outbound and track telemetry.',
+    noUpstreamNode: 'No upstream nodes available. Please import a subscription in Upstream Management first.',
   },
   lineSpeedtest: {
     title: 'Line Speedtest Workflow',
@@ -2207,7 +2339,7 @@ const admin = {
       relayTransit: 'Relay Transit Forwarding',
       relayWaiting: 'Waiting validation',
       targetHttp: 'End-to-End HTTP Request',
-      targetWaiting: 'Waiting request'
+      targetWaiting: 'Waiting request',
     },
     troubleshootingTitle: 'Troubleshooting & Diagnostics Guide',
     troubleshooting1: 'Please check if the entry node firewall and security group allow listen port {{port}}.',
@@ -2216,7 +2348,7 @@ const admin = {
     troubleshooting4: 'If entry is Master localhost, check host NAT loopback and local routing policies.',
     strictFailureNotice: 'Note: Full-link speedtest requires 100% of stages to pass; any failure marks the line unavailable.',
     tcpHandshakeNotice: 'Note: Current result is entry TCP roundtrip latency, not end-to-end proxy latency.',
-    retest: 'Retest'
+    retest: 'Retest',
   },
   templateForm: {
     titleCreate: 'New Subscription Template',
@@ -2239,15 +2371,15 @@ const admin = {
     validation: {
       nameRequired: 'Please enter a template name',
       jsonArrayRequired: 'Must be a JSON array',
-      jsonObjectRequired: 'Must be a JSON object'
-    }
+      jsonObjectRequired: 'Must be a JSON object',
+    },
   },
   templateGroups: {
     types: {
       select: 'Manual Select',
       urlTest: 'Auto Speedtest',
       fallback: 'Fallback',
-      loadBalance: 'Load Balance'
+      loadBalance: 'Load Balance',
     },
     presets: {
       urlTestTitle: '⚡ Auto Best (url-test)',
@@ -2267,7 +2399,7 @@ const admin = {
       aiName: '🤖 AI Services',
       streamingTitle: '🎬 Global Streaming',
       streamingDesc: 'Dedicated lines for Netflix, YouTube, Disney+',
-      streamingName: '🎬 Global Streaming'
+      streamingName: '🎬 Global Streaming',
     },
     defaultGroupName: 'Proxy Group {{index}}',
     modeVisual: 'Visual Designer',
@@ -2304,7 +2436,7 @@ const admin = {
     syntaxErrorTitle: 'Proxy Group JSON Syntax Error',
     syntaxErrorDesc: 'Must be a valid JSON array',
     errorMustBeArray: 'Must be a JSON array',
-    errorSyntax: 'JSON syntax error'
+    errorSyntax: 'JSON syntax error',
   },
   templateRules: {
     types: {
@@ -2314,7 +2446,7 @@ const admin = {
       ipCidr: 'IP CIDR',
       geosite: 'GeoSite',
       remoteRuleSet: 'Remote Rule-Set',
-      match: 'Final Match'
+      match: 'Final Match',
     },
     presets: {
       adBlockTitle: '🛑 Ad & Tracking Block',
@@ -2334,7 +2466,7 @@ const admin = {
       finalMatchName: 'Final Fallback',
       remoteRuleSetTitle: '🌐 Remote Rule-Set',
       remoteRuleSetDesc: 'Subscribe to remote maintained rule-sets via HTTP',
-      remoteRuleSetName: 'Remote Rule-Set'
+      remoteRuleSetName: 'Remote Rule-Set',
     },
     defaultRuleName: 'Routing Rule {{index}}',
     modeVisual: 'Visual Designer',
@@ -2366,7 +2498,7 @@ const admin = {
     syntaxErrorTitle: 'Routing Rule JSON Syntax Error',
     syntaxErrorDesc: 'Must be a valid JSON array',
     errorMustBeArray: 'Must be a JSON array',
-    errorSyntax: 'JSON syntax error'
+    errorSyntax: 'JSON syntax error',
   },
   templateDns: {
     title: 'DNS Engine & Routing Strategy',
@@ -2389,7 +2521,7 @@ const admin = {
     removeProxyAria: 'Remove proxy DNS {{address}}',
     directPlaceholder: 'Enter IP or DoH link, e.g. 223.5.5.5 or https://223.5.5.5/dns-query',
     proxyPlaceholder: 'Enter secure overseas DNS, e.g. https://1.1.1.1/dns-query',
-    add: 'Add'
+    add: 'Add',
   },
   templateOverride: {
     clashTab: 'Clash YAML Top-Level Override',
@@ -2430,8 +2562,8 @@ const admin = {
       singboxLogTitle: 'Configure Log Level & Output',
       singboxLogDesc: 'Set Sing-box log level to info with timestamp enabled',
       singboxNtpTitle: 'Enable NTP Time Sync Service',
-      singboxNtpDesc: 'Synchronize system clock with Apple time servers periodically to ensure TLS validity'
-    }
+      singboxNtpDesc: 'Synchronize system clock with Apple time servers periodically to ensure TLS validity',
+    },
   },
   templateSource: {
     yamlTab: 'YAML Source',
@@ -2463,7 +2595,7 @@ const admin = {
     copyFailed: 'Copy failed',
     restoredDraft: 'Restored to current form draft state',
     syntaxErrorTitle: '{{lang}} Syntax Diagnostic Error',
-    syntaxErrorIsolation: 'Safety isolation protection active · dirty data will not sync'
+    syntaxErrorIsolation: 'Safety isolation protection active · dirty data will not sync',
   },
   templatePreview: {
     clashTab: 'Clash YAML',
@@ -2484,7 +2616,7 @@ const admin = {
     copyButton: 'Copy Config',
     drawerTitle: 'Quick Preview Subscription Configuration',
     drawerDesc: 'Generate actual client configuration using current template and available lines.',
-    selectTemplatePrompt: 'Please select a template.'
+    selectTemplatePrompt: 'Please select a template.',
   },
   docs: {
     title: 'Documentation Management',
@@ -2518,7 +2650,7 @@ const admin = {
       updatedAt: 'Updated At',
       actions: 'Actions',
       published: 'Published',
-      draft: 'Draft'
+      draft: 'Draft',
     },
     platforms: {
       all: 'All Platforms',
@@ -2528,7 +2660,7 @@ const admin = {
       android: 'Android',
       router: 'Router',
       faq: 'FAQ',
-      general: 'General'
+      general: 'General',
     },
     editor: {
       newTitle: 'New Article',
@@ -2559,7 +2691,7 @@ const admin = {
       insertShadowrocketUrl: 'Insert Shadowrocket Import URL',
       insertSiteName: 'Insert Site Name',
       insertPublicBaseUrl: 'Insert Public URL',
-      saveDoc: 'Save Article'
+      saveDoc: 'Save Article',
     },
     reset: {
       title: 'Restore Default Beginner Tutorials?',
@@ -2567,7 +2699,7 @@ const admin = {
       desc2: 'If you have modified these default articles, your changes will be overwritten. Any custom articles you created will remain untouched.',
       confirm: 'Confirm Restore',
       resetting: 'Restoring…',
-      success: 'Official default tutorials restored successfully'
+      success: 'Official default tutorials restored successfully',
     },
     validation: {
       slugMin: 'Slug must be at least 2 characters',
@@ -2575,8 +2707,8 @@ const admin = {
       slugRegex: 'Slug only allows lowercase letters, numbers, and hyphens',
       titleMin: 'Title must be at least 2 characters',
       titleMax: 'Title must be at most 128 characters',
-      contentRequired: 'Article content cannot be empty'
-    }
+      contentRequired: 'Article content cannot be empty',
+    },
   },
   announcements: {
     title: 'Announcements',
@@ -2609,14 +2741,14 @@ const admin = {
       actions: 'Actions',
       pinned: 'Pinned',
       banner: 'Banner',
-      popup: 'Popup'
+      popup: 'Popup',
     },
     types: {
       all: 'All Categories',
       NOTICE: 'Notice',
       MAINTENANCE: 'Maintenance',
       EVENT: 'Event',
-      URGENT: 'Urgent'
+      URGENT: 'Urgent',
     },
     editor: {
       newTitle: 'New Announcement',
@@ -2644,14 +2776,221 @@ const admin = {
       insertWarningAlert: 'Warning Alert',
       insertCodeBlock: 'Code Block',
       insertLink: 'Link',
-      saveAnnouncement: 'Save Announcement'
+      saveAnnouncement: 'Save Announcement',
     },
     validation: {
       titleMin: 'Title must be at least 2 characters',
       titleMax: 'Title must be at most 120 characters',
-      contentRequired: 'Announcement content cannot be empty'
-    }
-  }
+      contentRequired: 'Announcement content cannot be empty',
+    },
+  },
+  userDevices: {
+    kickSuccess: 'Device connection terminated',
+    kickAllSuccess: 'Requested disconnect for all active devices',
+    kickFailed: 'Failed to disconnect device',
+  },
+  probes: {
+    title: 'Line Speedtest',
+    description: 'Initiates real HTTP requests through proxy engines to verify connectivity and latency.',
+    policyLabel: 'Probe Engine Policy',
+    preferred: 'Mihomo Preferred (Fallback to Sing-box when required)',
+    only: 'Mihomo Only',
+    policyHelp: 'Attempts Sing-box compatible probing when config exceeds Mihomo support and allowed by system.',
+    start: 'Start Speedtest',
+    retest: 'Retest',
+    cancel: 'Cancel',
+    refresh: 'Refresh Progress',
+    globalBusy: 'A probe task is already running. Please view or cancel existing task.',
+    viewActive: 'View Active Task',
+    taskId: 'Task ID: {{id}}',
+    progress: 'Progress: {{completed}} / {{total}} · Succeeded {{success}} · Failed {{failed}} · Skipped {{skipped}}',
+    taskTimes: 'Created: {{created}} · Expires: {{expires}}',
+    phase: 'Phase: {{phase}}',
+    taskUnavailable: 'Task query failed or expired. Please refresh and try again.',
+    resultsUnavailable: 'Failed to load results. Please refresh.',
+    invalidResult: 'Invalid result format.',
+    closeHelp: 'Closing this dialog does not terminate the background probe task.',
+    measurement: 'HTTP Round-Trip Latency',
+    perspective: 'Master Initiated',
+    configuredTarget: 'Target Probe URL',
+    metadata: 'Kernel {{version}} · Target {{host}} · Route {{route}} · Duration {{duration}} ms',
+    timings: 'Latency {{latency}} ms · Duration {{duration}} ms',
+    fallbackWarning: 'Probed successfully using Sing-box fallback; does not imply full validation under Mihomo.',
+    fallbackReason: 'Fallback Reason: {{reason}}',
+    notApplied: 'Result not written to resource snapshot.',
+    noEngine: 'Kernel Not Started',
+    compatibility: 'Mihomo Compatibility: {{status}}',
+    engine: {
+      MIHOMO: 'Mihomo Primary',
+      SINGBOX: 'Sing-box Fallback',
+    },
+    compat: {
+      SUPPORTED: 'Supported',
+      UNSUPPORTED: 'Unsupported',
+    },
+    route: {
+      UPSTREAM_DIRECT: 'Upstream Direct',
+      MANAGED_DIRECT: 'Managed Direct',
+      MANAGED_RELAY: 'Managed Relay',
+    },
+    status: {
+      SUCCESS: 'Passed',
+      TIMEOUT: 'Timed Out',
+      ERROR: 'Failed',
+      UNSUPPORTED: 'Unsupported',
+      ENVIRONMENT_UNAVAILABLE: 'Environment Unavailable',
+      CANCELED: 'Canceled',
+      STALE: 'Configuration Changed, Retest Pending',
+      SKIPPED: 'Skipped',
+    },
+    statusShort: {
+      SUCCESS: 'Passed',
+      TIMEOUT: 'Timeout',
+      ERROR: 'Failed',
+      UNSUPPORTED: 'Unsupported',
+      ENVIRONMENT_UNAVAILABLE: 'Unavailable',
+      CANCELED: 'Canceled',
+      STALE: 'Pending',
+      SKIPPED: 'Skipped',
+    },
+    diagnosticDetails: 'Advanced Diagnostic Details',
+    policySettingsToggle: 'Kernel Compatibility & Fallback Rules',
+    state: {
+      QUEUED: 'Queued',
+      RUNNING: 'Running',
+      COMPLETED: 'Completed',
+      CANCELED: 'Canceled',
+      FAILED: 'Failed',
+    },
+    kernelsTitle: 'Probe Engine Status',
+    available: 'Available',
+    unavailable: 'Unavailable',
+    fallbackLabel: 'Allow Sing-box Fallback',
+    fallbackHelp: 'Enabled by default. When disabled, strictly forbids any Sing-box probing fallback.',
+    check: {
+      PASSED: 'Passed',
+      FAILED: 'Failed',
+      UNAVAILABLE: 'Kernel Unavailable',
+      UNSUPPORTED: 'Unsupported',
+      EXTERNAL_RESOURCES_REQUIRED: 'External Resources Required',
+    },
+    unexecuted: 'Not Executed',
+    partial: 'Partial Validation Only',
+    full: 'Full Scope',
+    batchTitle: 'Batch Speedtest',
+  },
+  upstream: {
+    nameRequired: 'Please enter a subscription name',
+    intervalInvalid: 'Refresh interval must be an integer between 10 and 43200 minutes',
+    urlRequired: 'Please enter a valid HTTP(S) subscription URL',
+    contentRequired: 'Please enter non-empty configuration content',
+    headersInvalid: 'Request headers must be a JSON object with string values',
+    headersHint: 'JSON object, e.g. {"User-Agent":"Client"}; enter {} to clear headers',
+    textKeepHint: 'Existing content is preserved when unchanged; replaced completely on edit',
+    showSecrets: 'Show / Replace Sensitive Config',
+    hideSecrets: 'Hide Sensitive Config',
+    secretsHidden: 'Sensitive configuration is hidden; untouched fields are not resubmitted',
+    maskedUrl: 'Subscription URL is masked',
+    detectedFormat: 'Detected Format: {{format}}',
+    lastSuccess: 'Last Successful Snapshot',
+    intervalMinutes: 'Refreshes every {{minutes}} minutes',
+    usageSnapshot: 'Usage reflects the upstream provider total account snapshot, not local user traffic.',
+    syncSummary: '{{format}} sync complete: created {{created}}, updated {{updated}}, missing {{missing}}; recognized {{recognized}}, duplicate {{duplicates}}, skipped {{skipped}}',
+    present: 'Active',
+    missing: 'Missing Upstream',
+    relatedLines: 'Related Lines',
+    masterProbeView: 'Node executes end-to-end HTTP probe through Mihomo primary kernel, including Hysteria2 / TUIC.',
+    createExternalLine: 'Create External Direct Line',
+    externalRisk: 'External direct lines distribute upstream shared credentials to users without local metering or limits.',
+    externalDefaults: 'New lines are private and disabled by default. Configure access via plan tags or user overrides.',
+    externalConfirm: 'Confirm External Credential Delivery Risk & Scope',
+    publicAllImpact: 'Once public and enabled, this line may be included automatically in ALL plans.',
+    externalType: 'External Direct',
+    rateRequired: 'Line traffic multiplier must be at least 0.01',
+    pageSummary: 'Page {{page}} / {{pages}}, {{total}} items total',
+    previous: 'Previous',
+    next: 'Next',
+    loadMore: 'Load More',
+    loadedCount: 'Loaded {{count}} existing nodes out of {{total}} candidates',
+    retry: 'Retry',
+    title: 'Upstream Subscriptions',
+    subtitle: 'Import external subscription resources and configure access via external direct or managed relays',
+    addSubscription: 'Add Upstream Subscription',
+    editSubscription: 'Edit Upstream Subscription',
+    nodesTitle: 'Upstream Node Pool',
+    nodesSubtitle: 'All proxy nodes parsed from the current subscription',
+    searchPlaceholder: 'Search subscription name…',
+    searchNodesPlaceholder: 'Search node name…',
+    filterFormat: 'Format',
+    filterStatus: 'Status',
+    statusAll: 'All Statuses',
+    statusActive: 'Normal',
+    statusDisabled: 'Disabled',
+    syncSuccess: 'Upstream subscription synchronized and diff reconciled successfully',
+    syncFailed: 'Sync Failed',
+    syncNow: 'Sync Now',
+    syncing: 'Syncing…',
+    probeAll: 'Probe All End-to-End',
+    probing: 'Probing…',
+    probeNode: 'Probe End-to-End',
+    exportNodes: 'Export Nodes',
+    exportUri: 'Export as URI Links',
+    exportJson: 'Export as JSON',
+    exportSuccess: 'Exported successfully; copied to clipboard',
+    createRelayLine: 'Create Relay Line',
+    createRelayLineDesc: 'Quickly create a managed relay line using this external node as egress target',
+    name: 'Subscription Name',
+    sourceType: 'Source Type',
+    sourceTypeUrl: 'Remote URL',
+    sourceTypeText: 'Paste Config Text',
+    format: 'Parser Format',
+    formatAuto: 'Auto Detection (AUTO)',
+    formatClash: 'Mihomo / Clash Meta (YAML)',
+    formatSingbox: 'Sing-box (JSON)',
+    formatUri: 'Standard URI List (Base64 / Plain Text)',
+    url: 'Subscription URL',
+    urlPlaceholder: 'https://airport.example.com/api/v1/client/subscribe?token=...',
+    content: 'Configuration Content',
+    contentPlaceholder: 'Paste Clash Meta YAML, Sing-box JSON, or URI list…',
+    autoUpdate: 'Background Auto Refresh',
+    autoUpdateDesc: 'Silently refreshes nodes and reconciles diffs at the configured interval',
+    updateIntervalMins: 'Refresh Interval (Minutes, 10–43200)',
+    customHeaders: 'Custom HTTP Headers',
+    customHeadersDesc: 'Configure custom headers if the upstream airport requires specific User-Agent checks',
+    lastSync: 'Last Sync',
+    syncStatus: 'Sync Status',
+    nodeCount: 'Nodes',
+    trafficUsed: 'Traffic Used',
+    trafficTotal: 'Total Quota',
+    expireTime: 'Expiration Time',
+    unlimited: 'Unlimited',
+    never: 'Never',
+    colName: 'Name',
+    colType: 'Type / Format',
+    colNodes: 'Nodes',
+    colQuota: 'Data Quota',
+    colLastSync: 'Last Sync',
+    colStatus: 'Status',
+    colActions: 'Actions',
+    colNodeName: 'Node Name',
+    colProtocol: 'Protocol',
+    colServer: 'Server:Port',
+    colLatency: 'Latency / Health',
+    emptyTitle: 'No Upstream Subscriptions',
+    emptyDesc: 'Click "Add Upstream Subscription" to import external proxy resources',
+    emptyNodesTitle: 'No Parsed Nodes',
+    emptyNodesDesc: 'No valid nodes were parsed from this subscription. Click "Sync Now" to retry.',
+    deleteTitle: 'Delete Upstream Subscription {{name}}?',
+    deleteDesc: 'All nodes under this subscription will be cascade-deleted. Relay lines depending on them will be disabled.',
+    deleteSuccess: 'Upstream subscription deleted successfully',
+    saveSuccess: 'Upstream subscription saved successfully',
+    copyLinkSuccess: 'Node link copied to clipboard',
+    statusSuccess: 'Node status updated',
+    probeSuccess: 'Probe complete: Latency {{latency}}ms',
+    probeTimeout: 'Probe Timed Out',
+    probeError: 'Probe Failed: {{error}}',
+    allTested: 'Batch speedtest complete: {{total}} nodes tested',
+  },
 } as const;
 
 export default admin;
