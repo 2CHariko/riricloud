@@ -4,7 +4,7 @@ const common = {
     mainNav: '主导航',
     console: '控制台',
     mySubscription: '我的订阅',
-    directProxy: '代理池',
+    directProxy: '直连代理',
     help: '使用文档',
     market: '套餐市场',
     profile: '个人中心',
