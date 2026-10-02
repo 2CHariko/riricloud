@@ -41,6 +41,14 @@ export interface ProbeTarget {
   url: string;
   expectedStatus: number;
 }
+export interface KernelResourceRequirement {
+  kind: 'GEOIP' | 'GEOSITE' | 'RULE_PROVIDER' | 'PROXY_PROVIDER' | 'RULE_SET' | 'CERTIFICATE' | 'EXTERNAL_FILE' | 'REMOTE_RESOURCE';
+  location: string;
+  state: 'AVAILABLE' | 'MISSING' | 'UNREADABLE' | 'INVALID' | 'UNSUPPORTED' | 'REMOTE_DISABLED';
+  reasonCode: string;
+  actionCode: 'PREPARE_RESOURCE' | 'FIX_RESOURCE' | 'CHECK_CLIENT' | 'NONE';
+  references: number;
+}
 export interface KernelCheckResult {
   engine: ProbeEngine;
   engineVersion: string | null;
@@ -48,4 +56,6 @@ export interface KernelCheckResult {
   executed: boolean;
   scope: 'FULL' | 'PARTIAL';
   diagnostics: string[];
+  resourceRequirements?: KernelResourceRequirement[];
+  resourceRequirementsTruncated?: number;
 }
