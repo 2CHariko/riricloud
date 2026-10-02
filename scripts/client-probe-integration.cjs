@@ -32,6 +32,8 @@ const { PrismaService } = load('prisma/prisma.service');
 const { JwtStrategy } = load('auth/jwt.strategy');
 const { JwtAuthGuard } = load('common/jwt-auth.guard');
 const { encryptSecret } = load('common/secret-crypto');
+const { TemplatesController } = load('subscription-templates/templates.controller');
+const { TemplatesService } = load('subscription-templates/templates.service');
 async function listen(server) { await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); return server.address().port; }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function main() {
@@ -90,13 +92,26 @@ async function main() {
     const settingsState = { lineSpeedtestTargetUrl: `http://127.0.0.1:${targetPort}/204`, lineSpeedtestTimeoutMs: 800, probeSingboxFallbackEnabled: true };
     tasks = new ProbeTaskService(resources, engine, { getSettings: async () => settingsState });
     const upstream = new UpstreamService(prisma, new UpstreamParserService(), { pushConfigToAll: async () => 0 });
-    const module = await Test.createTestingModule({ controllers: [ProbeController, UpstreamController], providers: [{ provide: PrismaService, useValue: prisma }, { provide: ProbeTaskService, useValue: tasks }, { provide: ClientKernelsService, useValue: kernels }, { provide: UpstreamService, useValue: upstream }, JwtStrategy] }).compile();
+    const module = await Test.createTestingModule({ controllers: [ProbeController, UpstreamController, TemplatesController], providers: [{ provide: PrismaService, useValue: prisma }, { provide: ProbeTaskService, useValue: tasks }, { provide: ClientKernelsService, useValue: kernels }, { provide: UpstreamService, useValue: upstream }, TemplatesService, JwtStrategy] }).compile();
     app = module.createNestApplication({ logger: false }); app.setGlobalPrefix('api/v1'); app.useGlobalGuards(new JwtAuthGuard(app.get(Reflector))); app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })); await app.listen(0, '127.0.0.1');
     const url = await app.getUrl();
     const admin = await prisma.user.create({ data: { email: 'admin@probe.invalid', passwordHash: 'fixture-hash', role: 'ADMIN' } });
     const user = await prisma.user.create({ data: { email: 'user@probe.invalid', passwordHash: 'fixture-hash' } });
     const jwt = new JwtService({ secret: process.env.JWT_SECRET }); const adminToken = jwt.sign({ sub: admin.id, sessionVersion: 0 }), userToken = jwt.sign({ sub: user.id, sessionVersion: 0 });
     async function api(method, route, body, token = adminToken, expected = 200) { const response = await fetch(`${url}/api/v1${route}`, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body) }); const text = await response.text(); assert.equal(response.status, expected, `${method} ${route}`); return JSON.parse(text); }
+    const previewRoute = '/admin/subscription-templates/preview';
+    const geoPreview = { format: 'clash', template: { customInjectYaml: 'dns: {enable: false}\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,DIRECT\n' } };
+    await api('POST', previewRoute, geoPreview, null, 401);
+    await api('POST', previewRoute, geoPreview, userToken, 403);
+    const preview = await api('POST', previewRoute, geoPreview, adminToken, 201);
+    assert.equal(preview.kernelCheck.status, 'PASSED'); assert.equal(preview.kernelCheck.executed, true); assert.equal(preview.kernelCheck.scope, 'FULL');
+    assert.ok(preview.kernelCheck.resourceRequirements.some(r => r.kind === 'GEOIP' && r.state === 'AVAILABLE'));
+    assert.ok(preview.content.includes('GEOIP,CN,DIRECT')); assert.ok(preview.stats); assert.ok(Array.isArray(preview.warnings));
+    const remotePreview = await api('POST', previewRoute, { format: 'clash', template: { customInjectYaml: 'rule-providers:\n  private-fixture:\n    type: http\n    behavior: domain\n    url: https://example.com/secret-token\n' } }, adminToken, 201);
+    assert.equal(remotePreview.kernelCheck.status, 'EXTERNAL_RESOURCES_REQUIRED'); assert.equal(remotePreview.kernelCheck.executed, false);
+    assert.ok(remotePreview.kernelCheck.resourceRequirements.some(r => r.kind === 'RULE_PROVIDER' && r.state === 'REMOTE_DISABLED'));
+    assert.ok(!JSON.stringify(remotePreview.kernelCheck).includes('secret-token'));
+    console.log('PASS: preview HTTP auth, native GeoIP check, original content, structured offline resource rejection');
     const source = await prisma.upstreamSubscription.create({ data: { name: 'fixture', sourceType: 'TEXT', content: encryptSecret('fixture'), customHeadersJson: encryptSecret('{}'), autoUpdate: false } });
     const node = await prisma.upstreamNode.create({ data: { subscriptionId: source.id, name: 'node', protocolType: 'HTTP', serverHost: '127.0.0.1', serverPort: proxyPort, paramsJson: encryptSecret(JSON.stringify(baseConnection.params)), rawConfigJson: encryptSecret('{}'), connectionHash: 'c1', configHash: 'v1' } });
     await api('GET', '/admin/client-kernels/status', undefined, null, 401); await api('GET', '/admin/client-kernels/status', undefined, userToken, 403);

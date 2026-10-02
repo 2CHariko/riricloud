@@ -10,5 +10,36 @@
       "darwin-amd64": { "file": "mihomo-darwin-amd64-v1.19.30.gz", "sha256": "99dfcfe454ed58fb95ee4ba222c39defd051b687ad3e5deabb1b9d6be3103e2f", "binary": "mihomo" },
       "darwin-arm64": { "file": "mihomo-darwin-arm64-v1.19.30.gz", "sha256": "2c7f3a7904fa1cee291e124123e630e7b1ebd13765dd9bf26c0a28432004d9f4", "binary": "mihomo" }
     }
+  },
+  "validationResources": {
+    "version": "a6544a371c34182ecec0363eafccd4ab3b93a58f",
+    "source": "https://github.com/MetaCubeX/meta-rules-dat/tree/a6544a371c34182ecec0363eafccd4ab3b93a58f",
+    "license": "GPL-3.0 (MetaCubeX/meta-rules-dat repository); bundled datasets retain their upstream licenses, including MaxMind GeoLite2 ASN terms",
+    "files": [
+      {
+        "path": "Country.mmdb",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/a6544a371c34182ecec0363eafccd4ab3b93a58f/country.mmdb",
+        "sha256": "b13f10cdb414b8db78a64c432d6cd511668415760ee0fb2d17ac9f42de5aba08",
+        "size": 7665601
+      },
+      {
+        "path": "geoip.dat",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/a6544a371c34182ecec0363eafccd4ab3b93a58f/geoip.dat",
+        "sha256": "391b522361c52804e486a98b53d97f3d9c1d3e4e4217bb34954774a0b456b9fd",
+        "size": 16515432
+      },
+      {
+        "path": "geosite.dat",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/a6544a371c34182ecec0363eafccd4ab3b93a58f/geosite.dat",
+        "sha256": "d8b751e6af6063bbacf0cbc23385fd37caac1c0e04e05292b5e97213a98ef5fc",
+        "size": 4253442
+      },
+      {
+        "path": "ASN.mmdb",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/a6544a371c34182ecec0363eafccd4ab3b93a58f/GeoLite2-ASN.mmdb",
+        "sha256": "e16e2db7ed72adc4443e16d7e33a25120ca58bd8d0f2e902b49ac6c50c3f4815",
+        "size": 12069758
+      }
+    ]
   }
 }

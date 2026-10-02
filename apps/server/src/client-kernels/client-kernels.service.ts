@@ -3,9 +3,12 @@ import { access, stat } from 'node:fs/promises';
 import { constants, existsSync } from 'node:fs';
 import { dirname, join, resolve, isAbsolute } from 'node:path';
 import { parseDocument } from 'yaml';
-import { proxyObject } from '../common/proxy-connection';
 import type { KernelCheckResult, ProbeEngine } from '../probe/probe.types';
-import { runKernelCommand, shutdownKernelProcesses } from './kernel-process';
+import { KernelExecutionError, ResourceSemaphore, runKernelCommand, shutdownKernelProcesses } from './kernel-process';
+import { analyzeConfigResources } from './config-resources';
+import { ValidationResourcesService } from './validation-resources.service';
+
+const validationSlots = new ResourceSemaphore(2);
 
 export const MIHOMO_VERSION = '1.19.30';
 export interface ResolvedClientKernel { path: string; version: string }
@@ -23,6 +26,7 @@ const platform = `${process.platform === 'win32' ? 'windows' : process.platform}
 
 @Injectable()
 export class ClientKernelsService implements OnModuleDestroy {
+  constructor(private readonly resources: ValidationResourcesService = new ValidationResourcesService()) {}
   private readonly versions = new Map<string, { stamp: number; kernel: ResolvedClientKernel; naive: boolean }>();
   private candidates(engine: ProbeEngine): string[] {
     const executable = `${engine === 'MIHOMO' ? 'mihomo' : 'sing-box'}${process.platform === 'win32' ? '.exe' : ''}`;
@@ -67,34 +71,40 @@ export class ClientKernelsService implements OnModuleDestroy {
     }));
   }
   async validate(engine: ProbeEngine, content: string, scope: 'FULL' | 'PARTIAL' = 'FULL', signal?: AbortSignal): Promise<KernelCheckResult> {
-    const kernel = await this.resolve(engine);
-    const result: KernelCheckResult = { engine, engineVersion: kernel?.version ?? null, status: 'UNAVAILABLE', executed: false, scope, diagnostics: [] };
-    if (!kernel) return { ...result, diagnostics: ['KERNEL_UNAVAILABLE'] };
+    let release: (() => void) | undefined;
+    try {
+      release = await validationSlots.acquire(signal);
+      return await this.validateConfig(engine, content, scope, signal);
+    } catch {
+      return { engine, engineVersion: null, status: 'UNAVAILABLE', executed: false, scope, diagnostics: [signal?.aborted ? 'KERNEL_CANCELED' : 'KERNEL_EXECUTION_UNAVAILABLE'] };
+    } finally { release?.(); }
+  }
+  private async validateConfig(engine: ProbeEngine, content: string, scope: 'FULL' | 'PARTIAL', signal?: AbortSignal): Promise<KernelCheckResult> {
+    const result: KernelCheckResult = { engine, engineVersion: null, status: 'UNAVAILABLE', executed: false, scope, diagnostics: [] };
     let config: Record<string, unknown>;
     try {
-      const parsed: unknown = engine === 'MIHOMO' ? parseDocument(content, { uniqueKeys: true }).toJS() : JSON.parse(content);
+      if (Buffer.byteLength(content) > 4 * 1024 * 1024) throw new Error();
+      const document = engine === 'MIHOMO' ? parseDocument(content, { uniqueKeys: true }) : undefined;
+      if (document?.errors.length) throw new Error();
+      const parsed: unknown = document ? document.toJS({ maxAliasCount: 50 }) : JSON.parse(content);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
       config = parsed as Record<string, unknown>;
     } catch { return { ...result, status: 'FAILED', diagnostics: ['INVALID_CONFIG'] }; }
-    if (requiresExternalResources(engine, config)) return { ...result, status: 'EXTERNAL_RESOURCES_REQUIRED', diagnostics: ['EXTERNAL_RESOURCES_REQUIRED'] };
+    const dependencies = await this.resources.resolve(analyzeConfigResources(engine, config));
+    result.resourceRequirements = dependencies.requirements;
+    result.resourceRequirementsTruncated = dependencies.truncated;
+    const kernel = await this.resolve(engine);
+    result.engineVersion = kernel?.version ?? null;
+    if (!kernel) return { ...result, diagnostics: ['KERNEL_UNAVAILABLE'] };
+    if (dependencies.blocked) return { ...result, status: 'EXTERNAL_RESOURCES_REQUIRED', diagnostics: ['EXTERNAL_RESOURCES_REQUIRED'] };
     try {
-      const native = await runKernelCommand(kernel.path, (file, directory) => engine === 'MIHOMO' ? ['-t', '-d', directory, '-f', file] : ['check', '-D', directory, '-c', file], JSON.stringify(config), 5_000, signal, false);
-      return { ...result, status: native.code === 0 ? 'PASSED' : 'FAILED', executed: true, diagnostics: native.code === 0 ? [] : ['NATIVE_CONFIG_CHECK_FAILED'] };
-    } catch { return { ...result, diagnostics: ['KERNEL_EXECUTION_UNAVAILABLE'] }; }
+      const native = await runKernelCommand(kernel.path, (file, directory) => engine === 'MIHOMO' ? ['-t', '-d', directory, '-f', file] : ['check', '-D', directory, '-c', file], JSON.stringify(config), 5_000, signal, false, dependencies.prepare);
+      result.executed = native.executed ?? true;
+      if (native.reason || native.code === null) return { ...result, diagnostics: [native.reason === 'TIMEOUT' ? 'KERNEL_TIMEOUT' : native.reason === 'CANCELED' ? 'KERNEL_CANCELED' : 'KERNEL_EXECUTION_UNAVAILABLE'] };
+      return { ...result, status: native.code === 0 ? 'PASSED' : 'FAILED', diagnostics: native.code === 0 ? [] : ['NATIVE_CONFIG_CHECK_FAILED'] };
+    } catch (error) {
+      return { ...result, diagnostics: [signal?.aborted ? 'KERNEL_CANCELED' : error instanceof KernelExecutionError && error.code === 'RESOURCE_PREPARATION_FAILED' ? 'RESOURCE_PREPARATION_FAILED' : 'KERNEL_EXECUTION_UNAVAILABLE'] };
+    }
   }
   async onModuleDestroy(): Promise<void> { await shutdownKernelProcesses(); }
-}
-
-function requiresExternalResources(engine: ProbeEngine, config: Record<string, unknown>): boolean {
-  if (engine === 'MIHOMO') {
-    if (Object.keys(proxyObject(config['rule-providers'])).length || Object.keys(proxyObject(config['proxy-providers'])).length) return true;
-    const rules = Array.isArray(config.rules) ? config.rules : [];
-    if (rules.some((rule: unknown) => typeof rule === 'string' && ['GEOIP', 'GEOSITE', 'RULE-SET'].includes(rule.split(',')[0].toUpperCase()))) return true;
-  }
-  const walk = (value: unknown): boolean => {
-    if (Array.isArray(value)) return value.some(walk);
-    if (!value || typeof value !== 'object') return false;
-    return Object.entries(value).some(([key, v]) => (['certificate_path', 'key_path', 'certificate-path', 'private-key-path', 'geosite', 'geoip', 'rule_set'].includes(key) && v !== undefined) || (key === 'type' && (v === 'remote' || v === 'local')) || walk(v));
-  };
-  return walk(config);
 }

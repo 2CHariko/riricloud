@@ -40,20 +40,23 @@ export class ManagedKernelProcess {
   private stopped?: Promise<void>;
   private readonly onAbort = () => { void this.stop(); };
   private timer?: ReturnType<typeof setTimeout>;
+  private spawned = false;
+  private endReason?: 'TIMEOUT' | 'CANCELED' | 'START_FAILED';
   private output = '';
   private constructor(path: string, args: string[], readonly directory: string, private readonly release: () => void, private readonly signal?: AbortSignal, timeoutMs = 35_000, captureOutput = false) {
     this.child = spawn(path, args, { cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', http_proxy: '', https_proxy: '', all_proxy: '' } });
     this.exited = new Promise((resolve) => {
-      this.child.once('error', () => resolve(null));
+      this.child.once('spawn', () => { this.spawned = true; });
+      this.child.once('error', () => { this.endReason = 'START_FAILED'; resolve(null); });
       this.child.once('close', (code) => resolve(code));
     });
     for (const stream of [this.child.stdout, this.child.stderr]) stream?.on('data', (data: Buffer) => { if (captureOutput && this.output.length < 16_384) this.output += data.toString().slice(0, 16_384 - this.output.length); });
-    this.timer = setTimeout(() => { void this.stop(); }, timeoutMs);
+    this.timer = setTimeout(() => { this.endReason = 'TIMEOUT'; void this.stop(); }, timeoutMs);
     signal?.addEventListener('abort', this.onAbort, { once: true });
     running.add(this);
-    void this.exited.then(() => this.stop());
+    void this.exited.then(() => this.stop()).catch(() => { /* 清理失败由调用方等待 stop 时收到；避免后台未处理拒绝。 */ });
   }
-  static async start(path: string, args: (configPath: string, directory: string) => string[], content: string, signal?: AbortSignal, timeoutMs = 35_000, captureOutput = false): Promise<ManagedKernelProcess> {
+  static async start(path: string, args: (configPath: string, directory: string) => string[], content: string, signal?: AbortSignal, timeoutMs = 35_000, captureOutput = false, prepare?: (directory: string) => Promise<void>): Promise<ManagedKernelProcess> {
     const release = await kernelProcessSlots.acquire(signal);
     let directory: string | undefined;
     try {
@@ -62,16 +65,22 @@ export class ManagedKernelProcess {
       await chmod(directory, 0o700);
       const configPath = join(directory, 'config.json');
       await writeFile(configPath, content, { mode: 0o600 });
+      try { await prepare?.(directory); } catch { throw new KernelExecutionError('RESOURCE_PREPARATION_FAILED'); }
+      if (signal?.aborted) throw new KernelExecutionError('CANCELED');
       const process = new ManagedKernelProcess(path, args(configPath, directory), directory, release, signal, timeoutMs, captureOutput);
       if (signal?.aborted) await process.stop();
       return process;
-    } catch {
-      if (directory) await rm(directory, { recursive: true, force: true });
-      release();
-      throw new KernelExecutionError(signal?.aborted ? 'CANCELED' : 'KERNEL_START_FAILED');
+    } catch (error) {
+      try { if (directory) await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }
+      catch { throw new KernelExecutionError('KERNEL_CLEANUP_FAILED'); }
+      finally { release(); }
+      throw new KernelExecutionError(signal?.aborted ? 'CANCELED' : error instanceof KernelExecutionError ? error.code : 'KERNEL_START_FAILED');
     }
   }
   get capturedOutput(): string { return this.output; }
+  get execution(): { executed: boolean; reason?: 'TIMEOUT' | 'CANCELED' | 'START_FAILED' } {
+    return { executed: this.spawned, reason: this.signal?.aborted ? 'CANCELED' : this.endReason };
+  }
   stop(): Promise<void> {
     if (!this.stopped) this.stopped = this.cleanup();
     return this.stopped;
@@ -89,9 +98,9 @@ export class ManagedKernelProcess {
     finally { running.delete(this); this.release(); }
   }
 }
-export async function runKernelCommand(path: string, args: (configPath: string, directory: string) => string[], content = '{}', timeoutMs = 5_000, signal?: AbortSignal, captureOutput = true): Promise<{ code: number | null; output: string }> {
-  const child = await ManagedKernelProcess.start(path, args, content, signal, timeoutMs, captureOutput);
-  try { const code = await child.exited; return { code, output: child.capturedOutput }; }
+export async function runKernelCommand(path: string, args: (configPath: string, directory: string) => string[], content = '{}', timeoutMs = 5_000, signal?: AbortSignal, captureOutput = true, prepare?: (directory: string) => Promise<void>): Promise<{ code: number | null; output: string; executed?: boolean; reason?: 'TIMEOUT' | 'CANCELED' | 'START_FAILED' }> {
+  const child = await ManagedKernelProcess.start(path, args, content, signal, timeoutMs, captureOutput, prepare);
+  try { const code = await child.exited; return { code, output: child.capturedOutput, ...child.execution }; }
   finally { await child.stop(); }
 }
 export async function shutdownKernelProcesses(): Promise<void> {
