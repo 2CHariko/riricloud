@@ -5,7 +5,7 @@
 **多节点 VPN / 代理管理系统**  
 *Master-Agent 分布式架构 · SQLite WAL 本地存储 · WSS/HTTP 双模式通信 · 多协议内核托管 · 多格式订阅输出*
 
-[![Version](https://img.shields.io/badge/version-0.9.10-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.11-blue.svg)](./CHANGELOG.md)
 [![Node](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?logo=node.js)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-%3E%3D9.0.0-F69220.svg?logo=pnpm)](https://pnpm.io)
 [![Go](https://img.shields.io/badge/Go-%3E%3D1.26-00ADD8.svg?logo=go)](https://go.dev)
