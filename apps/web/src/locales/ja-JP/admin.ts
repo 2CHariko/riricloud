@@ -70,7 +70,6 @@ const admin = {
     details: '詳細',
     deleteDialogTitle: 'ノード {{name}} を削除しますか？',
     deleteDialogDesc: 'このノードの回線収容関係とトラフィック記録もあわせて削除され、オンラインの Agent は切断されます。',
-    // Detail page
     detailTitle: 'ノード詳細',
     backToNodes: 'ノード一覧に戻る',
     liveLogs: 'リアルタイムログ',
@@ -142,7 +141,6 @@ const admin = {
     systemNodeDesc: 'マスターローカルノードはシステム予約ノードのため削除できません。回線は統合回線管理から引き続きメンテナンスできます。',
     nodeNotFound: 'ノードが存在しません',
     nodeNotFoundDesc: 'このノードはすでに削除されている可能性があります',
-    // Dialogs & subcomponents
     rotateTokenTitle: 'AgentToken をローテーションしますか？',
     rotateTokenDesc: 'ノード「{{name}}」の旧トークンは即座に失効し、オンラインの Agent は切断されます。ローテーション完了後、接続を復旧するには対象ホストに新しいトークンを再設定する必要があります。',
     confirmRotate: 'ローテーションを確認',
@@ -207,7 +205,6 @@ const admin = {
     offlineCmdLabel: 'ターミナル一括取得・オフラインインストールコマンド',
     masterHasBinary: 'マスターに {{target}} バイナリが内蔵されているため、マスターから直接ダウンロードしてインストールできます。',
     masterNoBinary: 'マスターに {{target}} バイナリが内蔵されていません。ネイティブインストールではスクリプトが GitHub Release（またはミラー）から自動取得します。ポータブル実行の場合は先にバイナリをご用意ください。',
-    // Mutations & Toasts
     toastSaved: '保存しました',
     toastFailed: '操作に失敗しました',
     toastCreateFailed: '作成に失敗しました',
@@ -242,7 +239,6 @@ const admin = {
     toastTaskFailedAgentMsg: 'Agent がエラーを返しました',
     toastTaskRunning: '{{label}}は実行中です',
     toastTaskRunningDesc: 'しばらくしてからノード詳細で結果をご確認ください',
-    // Detail and Form Validation
     valNameReq: 'ノード名を入力してください',
     valNameMax: '名前は最大 64 文字までです',
     valServerHostPublic: 'パブリック VPS には有効な公開サーバーアドレスを入力する必要があります',
@@ -257,7 +253,6 @@ const admin = {
     uninstallWindows: '完全アンインストール（Windows・管理者 PowerShell）',
     valName32Max: '名前は 32 文字以内で入力してください',
     valServerHostReq: 'パブリック VPS には公開サーバーアドレスを入力してください',
-    // Deployment Hints & Command Picker
     deployHintNativePosix: 'root 権限で実行してください。事前構成されたインストールスクリプトを自動取得し、riri-agent システムサービス（Linux systemd / macOS launchd）を登録・起動して自動起動を有効化します。',
     deployHintNativeWindows: 'CMD または PowerShell に直接貼り付けて実行するか、.bat スクリプトをダウンロードして管理者として実行してください。自動的に権限昇格し、riri-agent システムサービスを登録します。',
     deployHintPortablePosix: 'インストール不要で直接実行：データディレクトリは ~/.riri-cloud、Ctrl+C で停止します。sing-box カーネルは Agent が自動ダウンロードし、自動起動サービスは登録されません。',
@@ -272,7 +267,6 @@ const admin = {
     scriptDownloadFailed: '専用インストールスクリプトのダウンロードに失敗しました',
     targetOsAria: '対象オペレーティングシステム',
     commModeHttpTab: 'HTTP / HTTPS ポーリング',
-    // Probe Dialog
     valTargetReq: 'ターゲットアドレスを入力してください',
     customTarget: 'カスタムターゲット',
     probeTypeTcp: 'TCP 接続',
@@ -283,7 +277,6 @@ const admin = {
     dnsResolved: '解決結果：{{addrs}}',
     dnsNoAddr: '解決アドレスが返されませんでした',
     probeFailedNoDetails: 'プローブに失敗しました（エラー詳細なし）',
-    // Upgrade Dialog
     valCustomVersionReq: 'カスタムバージョン番号を入力してください',
     valDownloadUrlReq: '完全なダウンロード URL を入力してください',
     valSha256Hex: 'SHA-256 は 64 文字の 16 進数である必要があります',
@@ -291,12 +284,30 @@ const admin = {
     defaultBadge: ' · デフォルト',
     platformAssetsCount: ' · {{count}} 個のプラットフォームアセット',
     sha256Placeholder: '64 文字の 16 進数 SHA-256',
-    // Deployment History
     customUrlBadge: 'カスタム URL',
     attemptsCount: '試行 {{count}} 回',
     upgradeOperation: 'アップグレード',
     emptyHistoryTitle: '配信履歴はありません',
-    emptyHistoryDesc: 'アップグレードやロールバックタスクの実行後、ここに監査履歴が表示されます'
+    emptyHistoryDesc: 'アップグレードやロールバックタスクの実行後、ここに監査履歴が表示されます',
+    batchUpgradeAction: 'Agent一括アップグレード',
+    batchUpgradeTitle: 'Agentの一括アップグレード',
+    batchUpgradeDesc: '選択した {{count}} 台のノードに対して順次 Agent アップグレードタスクを作成します。',
+    batchUpgradeResource: 'Agent リソースバージョン',
+    batchUpgradeDefaultResource: 'アーキテクチャごとにマスター既定バージョンを使用',
+    batchUpgradeResourceDesc: '選択された全アーキテクチャに対応するアセットを持つ ACTIVE リソースのみ表示されます（{{count}} 件）。',
+    batchUpgradeOfflineNotice: 'オフラインまたはHTTPポーリングのノードは次回接続/ポーリング時に実行されます。無効なノードはスキップされ結果に表示されます。',
+    batchUpgradeConfirm: '{{count}} 台のノードにアップグレードタスクを作成',
+    batchUpgradeResults: '一括アップグレードタスク結果',
+    batchUpgradeSummary: '{{succeeded}} 件のタスクを作成しました。{{failed}} 台のノードで作成に失敗しました。',
+    batchUpgradeDispatched: '配信済み',
+    batchUpgradeQueued: 'キュー待機',
+    batchUpgradeFailed: '未作成',
+    selectedNodes: '{{count}} 台のノードを選択中',
+    batchUpgradeStaleSelection: '選択中のノード状態が変更されました。選択を更新してから再試行してください。',
+    batchUpgradeMaxNodes: '一度に選択できるノードは最大 100 台です。',
+    batchUpgradeSelectLimit: '選択ノード数が 100 台を超えています。絞り込み条件を調整してください。',
+    toastBatchUpgradePartial: '一括アップグレード処理完了：{{succeeded}} 件作成、{{failed}} 台失敗',
+    toastBatchUpgradeAccepted: '{{count}} 台のノードにアップグレードタスクを作成しました',
   },
   lines: {
     title: '回線管理',
@@ -386,7 +397,26 @@ const admin = {
     speedtestFailed: '測定失敗：{{message}}',
     speedtestRequestFailed: '測定リクエストに失敗しました',
     speedtestAllSuccess: '全回線テスト完了：計 {{total}} 件、成功 {{success}} 件、失敗 {{failed}} 件',
-    speedtestAllFailed: '一括測定リクエストに失敗しました'
+    speedtestAllFailed: '一括測定リクエストに失敗しました',
+    relayUpstreamNode: '上流中継',
+    colLineAndEndpoint: '回線 / 接続アドレス',
+    colPipelineTopology: 'ネットワーク構成',
+    proxyPoolTrigger: 'プロキシプール配分',
+    proxyPoolDrawerTitle: 'プロキシプール認証情報とノード配分',
+    proxyPoolSectionWatermark: '各ノードの割り当て水位',
+    proxyPoolMetricEndpoints: '接続エンドポイント',
+    proxyPoolMetricEndpointsSub: '有効な接続エンドポイント',
+    proxyPoolMetricKeys: '認可キー',
+    proxyPoolMetricKeysSub: '{{active}} 件稼働中 · 全 {{total}} 件',
+    proxyPoolMetricNodes: '対象ノード',
+    proxyPoolMetricNodesSub: '割り当て済みエッジノード',
+    proxyPoolUsedLimit: '使用中 {{used}} / 上限 {{limit}}',
+    proxyPoolEmptyNodes: 'プロキシプールノードの配分データがありません',
+    proxyPoolStatusNormal: '正常稼働',
+    proxyPoolStatusWarning: '高負荷',
+    proxyPoolStatusExcluded: '超過保留',
+    proxyPoolDrawerNotice: '各エッジノードの上限は 512 件の認証情報エンドポイント割り当てです。上限到達時は新しいキーが自動保留されますが、既存の接続には影響しません。',
+    moreActions: 'その他の操作',
   },
   users: {
     title: 'ユーザー管理',
@@ -456,7 +486,8 @@ const admin = {
     balanceAdjustFailed: '残高の調整に失敗しました',
     batchOperateSingleSuccess: '1 名のユーザーを操作しました',
     batchOperateSuccess: '{{count}} 名のユーザーを一括操作しました',
-    batchOperatePartial: '操作完了：成功 {{success}} 件、失敗 {{failed}} 件'
+    batchOperatePartial: '操作完了：成功 {{success}} 件、失敗 {{failed}} 件',
+    onlineDevices: 'オンライン端末',
   },
   plans: {
     title: 'プラン管理',
@@ -493,7 +524,10 @@ const admin = {
     savedSuccess: 'プランを保存しました',
     saveFailed: 'プランの操作に失敗しました',
     deletedSuccess: 'プランを削除しました',
-    deleteFailed: '削除に失敗しました'
+    deleteFailed: '削除に失敗しました',
+    colDeviceLimit: '端末上限',
+    deviceLimitValue: '{{count}} 台の端末',
+    unlimitedDevices: '端末数無制限',
   },
   redeemCodes: {
     title: 'ギフトコード管理',
@@ -702,7 +736,7 @@ const admin = {
     updateFailed: '証明書の保存に失敗しました',
     deleteSuccess: '証明書を削除しました',
     deleteFailed: '証明書の削除に失敗しました',
-    validUntil: '{{date}} まで'
+    validUntil: '{{date}} まで',
   },
   templates: {
     title: 'サブスクリプションテンプレート',
@@ -740,7 +774,7 @@ const admin = {
     deleteFailed: '削除に失敗しました',
     previewFailed: 'プレビューのレンダリングに失敗しました',
     duplicateSuccess: 'テンプレートのコピーを作成しました',
-    duplicateFailed: 'テンプレートの複製に失敗しました'
+    duplicateFailed: 'テンプレートの複製に失敗しました',
   },
   binaries: {
     title: 'リソースセンター',
@@ -929,7 +963,47 @@ const admin = {
     colOperator: '操作者',
     operatorSystem: 'システム',
     emptyAuditTitle: '監査ログはありません',
-    emptyAuditDesc: 'リソース操作が行われるとここに履歴が記録されます。'
+    emptyAuditDesc: 'リソース操作が行われるとここに履歴が記録されます。',
+    viewSystemLogs: 'システムログ',
+    githubReleasesBtn: 'GitHub Release',
+    remoteImportBtn: 'リモートインポート',
+    toggleStatusAria: 'リソース {{version}} の有効化状態を切り替え',
+    sourceLocal: 'ローカルパッケージ',
+    sourceGithub: 'GitHub Release',
+    upstreamVersionPlaceholder: '空欄の場合はバイナリタグまたはファイル名から自動認識',
+    targetAutoDetect: 'プラットフォームとアーキテクチャを自動検出（推奨）',
+    selectedFilesCount: '{{count}} 個のファイルを選択中',
+    autoDetectHint: 'プラットフォームとバージョンを自動認識',
+    urlPlaceholder: 'https://github.com/.../riri-agent-linux-amd64.tar.gz',
+    urlDesc: 'GitHub Release アセットや任意の HTTP(S) URL を指定可能。自動展開、SHA-256 計算、アーキテクチャ認識を行います。',
+    githubDialogTitle: 'Agent リソースをリモート取得',
+    githubDialogDesc: 'プロジェクト GitHub リポジトリの Release から各アーキテクチャの Agent を一括取得するか、カスタム URL からインポートします。',
+    tabGithubRelease: 'GitHub Release',
+    tabUrlImport: 'カスタム URL インポート',
+    githubCurrentRepo: '現在リポジトリ：',
+    githubRepoLabel: 'GitHub リポジトリ URL',
+    githubRepoPlaceholder: 'https://github.com/owner/repo',
+    githubRepoSave: 'リポジトリを保存',
+    githubRepoSaved: 'GitHub リポジトリを更新しました',
+    githubRepoSaveFailed: 'GitHub リポジトリの保存に失敗しました',
+    githubRefresh: '一覧を更新',
+    githubGoSettings: 'システム設定でリポジトリとミラーを変更',
+    githubPrerelease: 'プレリリース',
+    githubImportedBadge: 'インポート済み',
+    githubPartialBadge: 'インポート済み {{imported}}/{{total}}',
+    githubPullAll: 'すべて取得 ({{count}})',
+    githubPullMissing: '不足アーキテクチャを取得 ({{count}})',
+    githubRePullAll: 'すべて再同期',
+    githubPulling: '取得中…',
+    githubImportSuccess: 'GitHub Release {{tag}} から {{succeeded}} 件のアーキテクチャアセットを同期しました',
+    githubImportPartial: '同期完了：成功 {{succeeded}} 件、失敗 {{failed}} 件{{error}}',
+    githubImportFailed: 'GitHub Release からの取得に失敗しました',
+    githubEmptyTitle: 'Agent アセットを含む Release が見つかりません',
+    githubEmptyDesc: 'リポジトリに linux/macos/windows 向け Agent がリリースされているか、システム設定のリポジトリ URL を確認してください。',
+    githubLoadFailedTitle: 'GitHub Release 一覧の取得に失敗しました',
+    githubPublishedAt: '公開日時：{{time}}',
+    githubCurrentSource: '既定元：',
+    githubOfficialSource: 'GitHub 公式直結（ミラー失敗時は自動フォールバック）',
   },
   mirrors: {
     title: 'ミラーサイト',
@@ -995,7 +1069,7 @@ const admin = {
     valAllowedOrigins: '許可するアップストリームドメインを少なくとも 1 つ入力してください',
     valNodeIdReq: 'アウトバウンドノードを選択してください',
     loadErrorTitle: 'ミラーサイトを読み込めません',
-    loadErrorDesc: 'しばらくしてからページを更新して再試行してください。'
+    loadErrorDesc: 'しばらくしてからページを更新して再試行してください。',
   },
   traffic: {
     title: 'トラフィック統計',
@@ -1063,7 +1137,7 @@ const admin = {
     chartAvgDown: '平均下り',
     chartAvgUp: '平均上り',
     chartPeakDown: 'ピーク下り',
-    chartPeakUp: 'ピーク上り'
+    chartPeakUp: 'ピーク上り',
   },
   logs: {
     title: 'システムログ',
@@ -1173,7 +1247,7 @@ const admin = {
     cleanCount100k: '最新の 100,000 件のみ保持',
     cleanNotice: 'ヒント：Master サーバーのバックグラウンドで定期巡回による期限切れログの自動パージが行われています。緊急の調査やディスク逼迫時以外は、自動ローテーションに任せることを推奨します。',
     cleaning: '整理中...',
-    cleanConfirm: 'クリーンアップを実行'
+    cleanConfirm: 'クリーンアップを実行',
   },
   settings: {
     title: 'システム全体設定',
@@ -1227,7 +1301,7 @@ const admin = {
       cpu: 'Cpu（コア・計算リソース）',
       radio: 'Radio（シグナル・電波）',
       layers: 'Layers（マルチレイヤー・分流）',
-      sparkles: 'Sparkles（機能・ハイライト）'
+      sparkles: 'Sparkles（機能・ハイライト）',
     },
     labelFeatureTitle: '特徴タイトル',
     labelFeatureDesc: '特徴の説明文',
@@ -1260,8 +1334,6 @@ const admin = {
     resetConfirmTitle: 'すべての設定をデフォルトに戻しますか？',
     resetConfirmDesc: 'カスタマイズされたサイト、登録、サブスクリプション、および運用保守パラメータがすべて内蔵の安全なデフォルト値に戻り、保存後ただちに反映されます。',
     resetConfirm: '復元を確認',
-
-    // 速率分级色彩阶梯
     speedTierTitle: '速度ティア別カラーラダー',
     speedTierDesc: '回線やプランの最大速度に応じて対応するカラーを自動マッチングし、ユーザー画面のカードや管理画面の一覧に即時レンダリングします。',
     speedTierReset: 'デフォルトラダーに戻す',
@@ -1278,8 +1350,6 @@ const admin = {
     speedColor_amber: 'アンバーゴールド',
     speedColor_violet: 'スターバイオレット',
     speedColor_rose: 'ローズレッド',
-
-    // 默认探针目标与弹窗
     probePresetTitle: 'デフォルトプローブターゲット',
     probePresetDesc: '設定するとノードプローブダイアログのクイックプリセットとして表示され、リストの順序が保持されます。',
     probePresetCount: '{{count}} / {{max}} 件',
@@ -1307,8 +1377,6 @@ const admin = {
     probePresetErrPortRange: 'ポートの範囲は 1～65535 です',
     probePresetErrTimeoutRange: 'タイムアウトの範囲は 100～10000 ミリ秒です',
     probePresetErrMaxTargets: 'プローブターゲットは最大 {{max}} 件まで設定可能です',
-
-    // 时区相关
     tzShanghai: 'Asia/Shanghai（北京 / 上海 / 香港 / 台北 · UTC+8）',
     tzTokyo: 'Asia/Tokyo（東京 / ソウル · UTC+9）',
     tzSingapore: 'Asia/Singapore（シンガポール · UTC+8）',
@@ -1327,8 +1395,6 @@ const admin = {
     tzPresetSelect: '主要タイムゾーンのクイック選択',
     tzIanaInput: 'IANA タイムゾーン識別子',
     tzIanaPlaceholder: '例：Asia/Tokyo または UTC',
-
-    // 校验提示
     valSiteNameReq: 'サイト名は空にできません',
     valPublicBaseUrl: '有効なサイト全体アクセス URL を入力してください',
     valTimezoneReq: 'タイムゾーンは空にできません',
@@ -1347,8 +1413,6 @@ const admin = {
     valGithubMirrorUrls: '各行は有効な HTTP/HTTPS ミラー URL である必要があります（最大 32 件）',
     valSpeedtestTargetUrl: '有効な速度テストターゲット URL を入力してください',
     valFormInvalidToast: '一部の設定項目に誤りがあります：{{message}}',
-
-    // 提示与操作回执
     vacuumSuccessReclaimed: '最適化が完了し、{{bytes}} のディスク容量を解放しました',
     vacuumSuccessClean: '最適化が完了しました。現在データベースに不要な断片化領域はありません',
     vacuumFailed: 'データベースの最適化に失敗しました',
@@ -1357,8 +1421,6 @@ const admin = {
     resetFailed: 'リセットに失敗しました',
     smtpTestSuccess: 'テストメールを送信しました{{duration}}',
     smtpTestFailed: 'SMTP テストに失敗しました',
-
-    // 基础与品牌
     sectionBranding: '基本情報とブランディング',
     sectionBrandingDesc: 'これらの情報はログイン画面、サイドバー、フッター、およびユーザーのサブスクリプションコンソールに同期されます。',
     fieldSiteName: 'サイト名',
@@ -1379,8 +1441,6 @@ const admin = {
     fieldSupportTg: 'Telegram サポート / グループ',
     fieldSupportDiscord: 'Discord サポート / グループ',
     fieldSupportCustom: 'カスタムサポートリンク',
-
-    // 注册与用户策略
     sectionUsers: '登録とユーザーポリシー',
     sectionUsersDesc: '新規ユーザーの登録条件および初回ログイン時のデフォルト特典を制御します。',
     fieldRegistrationEnabled: '新規登録の受付',
@@ -1410,8 +1470,6 @@ const admin = {
     optEmailDomainBlacklist: 'ブラックリスト（リスト内のドメインを拒否）',
     fieldEmailDomainListText: 'メールドメインリスト',
     descEmailDomainListText: '1 行に 1 ドメイン（例：example.com）を入力してください。@ は不要です。',
-
-    // SMTP 服务
     sectionSmtp: 'メール配信サービス（SMTP）',
     descSmtp: '新規登録やメールアドレス変更時の認証コード送信に使用されます。パスワード欄はマスク保護されます。',
     btnSendSmtpTest: 'テストメールを送信',
@@ -1429,8 +1487,6 @@ const admin = {
     descEmailVerificationEnabled: '登録時に 6 桁のメール認証コードによる確認を必須とします（有効期限 5 分）。',
     fieldEnforceEmailVerification: 'メール認証の強制（サブスクリプションとノード接続を制限）',
     descEnforceEmailVerification: '有効にすると、メール未認証のユーザーはサブスクリプション設定の取得およびノードへの接続が制限されます（管理者アカウントは対象外）。既存ユーザーへの認証促進や不正利用防止に適しています。',
-
-    // CAPTCHA
     sectionCaptcha: '人間認証（CAPTCHA）',
     descCaptcha: '登録認証コードの取得前に自動化されたリクエストをブロックします。ローカル画像 CAPTCHA は外部サービス不要で利用できます。',
     fieldCaptchaMode: '認証モード',
@@ -1440,8 +1496,6 @@ const admin = {
     fieldTurnstileSiteKey: 'Site Key',
     fieldTurnstileSecretKey: 'Secret Key',
     placeholderTurnstileSecretKey: '空欄で現在のシークレットキーを保持',
-
-    // 订阅与客户端分发
     sectionSubscription: 'サブスクリプションとクライアント配信',
     sectionSubscriptionDesc: 'クライアントがサブスクリプションを取得する URL、更新間隔、およびデフォルトテンプレートを設定します。',
     fieldSubscriptionBaseUrl: 'サブスクリプションベース URL（オーバーライド、任意）',
@@ -1464,8 +1518,6 @@ const admin = {
     descAppendSubscriptionSpeedBadge: '有効にすると、プランまたは回線に速度制限が設定されている場合、配信されるサブスクリプションのノード名末尾に [50M] などの速度ラベルを自動追加します（プランごとに個別上書き可能）。',
     fieldSpeedLimitUnitConversionEnabled: '1000M 以上を自動的に G 単位へ換算',
     descSpeedLimitUnitConversionEnabled: '有効にすると、速度が 1000 Mbps 以上の場合に自動で G 単位（例：1G、2.5G）へ換算し、サイト全体の UI とサブスクリプションのノード名バッジに同期反映します。',
-
-    // Agent 运维与网络探针
     sectionAgent: 'Agent 運用保守とネットワークプローブ',
     sectionAgentDesc: 'ノードの死活判定、設定プッシュ、および HTTP ポーリング動作を調整します。',
     fieldHeartbeatTimeoutSecs: 'ハートビートオフライン判定タイムアウト（秒）',
@@ -1487,8 +1539,6 @@ const admin = {
     descLineSpeedtestTimeoutMs: 'デフォルトは 3000ms です。',
     fieldLineSpeedtestTargetUrl: '速度テストのプローブ対象 URL',
     descLineSpeedtestTargetUrl: 'エンドツーエンド測定時にプロキシ経由でリクエストする対象 URL です。軽量でボディのない 204 レスポンスを返すサイトを推奨します。',
-
-    // 观测数据保留策略
     sectionStorage: 'テレメトリデータ保持ポリシー',
     sectionStorageDesc: 'Master 側のトラフィック統計、ノード速度、およびシステムログの自動クリーンアップ周期を制御します。設定を保存しても履歴データは即座には削除されません。',
     fieldTrafficHourlyRetentionDays: '時間単位トラフィック集計の保持日数',
@@ -1515,8 +1565,6 @@ const admin = {
     btnOpenCleanup: 'クリーンアップセンターを開く',
     btnVacuum: 'データベースを整理・圧縮 (VACUUM)',
     vacuuming: '整理・圧縮中…',
-
-    // 安全与高级个性化
     sectionAdvanced: 'セキュリティと高度なカスタマイズ',
     sectionAdvancedDesc: 'セッションの有効期間を制御し、ログイン後のパネルにカスタムスタイルやヘッダーコードを注入します。',
     fieldJwtSessionDays: 'JWT セッション有効日数',
@@ -1577,7 +1625,30 @@ const admin = {
     statusDisabled: '無効',
     badgeBanner: 'バナー',
     badgePopup: 'ポップアップ',
-    badgePinned: '固定'
+    badgePinned: '固定',
+    fieldDeviceLimitEnabled: '複数端末制限を有効化',
+    descDeviceLimitEnabled: 'ユーザーまたはプラン設定に基づいて同時接続端末数を制限します。無効時は統計のみ記録し遮断は行いません。',
+    fieldDeviceOnlineWindowSecs: '端末オンライン判定ウィンドウ（秒）',
+    descDeviceOnlineWindowSecs: 'Agentから報告されたアクティブ接続がこの時間内であればオンライン端末とみなされます（15〜600秒、既定60秒）。',
+    githubMirrorDefaultLabel: '現在の既定ダウンロード元：',
+    githubMirrorOfficialDirect: 'GitHub 公式元（https://github.com 直結）',
+    githubMirrorFallbackHint: '（利用不可時は自動的に公式元へフォールバック）',
+    btnTestGithubMirrors: 'ワンクリック速度テスト',
+    testingGithubMirrors: '測定中…',
+    btnUseOfficialDirect: '公式元直結のみ使用',
+    btnRestoreDefaultMirrors: '既定ミラーを復元',
+    mirrorTestResultTitle: 'GitHub ダウンロード元の実測ストリーミング結果',
+    mirrorTestBestBadge: '最速推奨',
+    mirrorTestCurrentDefaultBadge: '現在既定',
+    mirrorTestOfficialBadge: '公式元',
+    mirrorTestAvailable: '{{latency}} ms · {{speed}}/s',
+    mirrorTestUnavailable: '利用不可 · {{error}}',
+    btnSetDefaultMirror: '既定元に設定',
+    btnApplyBestMirror: '最速元を適用 ({{source}})',
+    toastMirrorTestDone: '測定完了：現在の最速元は {{source}} です',
+    toastMirrorTestAllFailed: 'すべてのミラー元が利用不可でした。GitHub 公式元直結を推奨します',
+    toastMirrorTestFailed: 'GitHub ダウンロード元の速度テストリクエストに失敗しました',
+    toastDefaultMirrorSaved: '既定ダウンロード元を {{source}} に保存・適用しました',
   },
   userTraffic: {
     title: 'ユーザートラフィック詳細',
@@ -1600,7 +1671,7 @@ const admin = {
     noRecordsDesc: '期間を切り替えると過去の消費履歴を確認できます。',
     usageTrend: 'ユーザー通信量推移',
     lineDistribution: '回線別消費分布',
-    lineUsageList: 'ユーザー回線使用リスト'
+    lineUsageList: 'ユーザー回線使用リスト',
   },
   userForm: {
     manageTitle: 'ユーザー管理 · {{email}}',
@@ -1680,7 +1751,14 @@ const admin = {
     noPlan: 'プランなし',
     trafficResetPolicy: 'リセットポリシー',
     nextResetTime: '次回リセット日時',
-    notSet: '未設定'
+    notSet: '未設定',
+    deviceLimit: '同時接続端末数制限',
+    deviceLimitDescription: 'プラン既定に従うか、個別に無制限とするか、またはこのユーザー専用の上限を指定します。',
+    deviceLimitFollowPlan: 'プラン既定値に従う',
+    deviceLimitUnlimited: '個別に無制限に設定',
+    deviceLimitCustom: '個別の上限数を指定',
+    deviceLimitCount: '最大接続端末数',
+    deviceLimitRequired: '1〜1000 の範囲で端末数を入力してください',
   },
   balanceForm: {
     title: 'ユーザー残高の調整 · {{email}}',
@@ -1696,7 +1774,7 @@ const admin = {
     reasonLabel: '調整の備考 / 理由',
     reasonPlaceholder: '例：手動補填またはシステム調整',
     submitting: '送信中…',
-    confirmAdjust: '調整を確認'
+    confirmAdjust: '調整を確認',
   },
   telemetryCleanup: {
     title: '履歴テレメトリデータの整理',
@@ -1722,7 +1800,7 @@ const admin = {
       trafficHourly: '時間単位トラフィック集計',
       nodeRate: 'ノード速度メトリクス',
       systemLog: 'システムログ',
-      legacyTraffic: '旧版トラフィック明細'
+      legacyTraffic: '旧版トラフィック明細',
     },
     generatePreview: 'クリーンアッププレビューを生成',
     generatingPreview: 'プレビュー生成中…',
@@ -1750,7 +1828,7 @@ const admin = {
     cleanupFailed: 'クリーンアップ失敗：選択したデータ種別の削除を完了できませんでした',
     reclaimedDiskSpace: '（{{bytes}} のディスク容量を解放）',
     reclaimedVacuumSuccess: 'VACUUM を実行し、{{bytes}} のディスク容量を解放しました',
-    reclaimedVacuumNoWaste: 'checkpoint と VACUUM を完了しました（追加の空きページなし）'
+    reclaimedVacuumNoWaste: 'checkpoint と VACUUM を完了しました（追加の空きページなし）',
   },
   planForm: {
     createTitle: '新規プラン作成',
@@ -1790,7 +1868,7 @@ const admin = {
       holographic: 'ホログラフィック・オブシディアン 3D',
       holographicDesc: 'クールな輝きを放つダークテックカード',
       neon: 'サイバーネオン・クリスタル',
-      neonDesc: '高コントラストに発光するエッジデザイン'
+      neonDesc: '高コントラストに発光するエッジデザイン',
     },
     advancedVisuals: '高度なビジュアル微調整',
     collapse: '折りたたむ',
@@ -1808,7 +1886,7 @@ const admin = {
       purple: 'ネビュラトワイライト',
       emerald: 'エメラルドジェイド',
       rose: 'クリムゾンルビー',
-      indigo: 'ディープコスモス'
+      indigo: 'ディープコスモス',
     },
     iconsLabel: 'カード専用プロフェッショナルアイコン',
     iconsHint: '絵文字を使わない純粋な Lucide ベクターアイコン',
@@ -1824,7 +1902,7 @@ const admin = {
       Gem: 'ブラックダイヤ',
       Server: '専用サーバー',
       Cpu: 'パワフルコア',
-      Plane: 'ハイスピード'
+      Plane: 'ハイスピード',
     },
     beamColorLabel: 'グロウボーダーの発光色',
     beamColorTheme: 'テーマ単色グロウ',
@@ -1834,7 +1912,7 @@ const admin = {
       gradient: 'リッチグラデーション',
       glow: 'ソフトグロウ',
       outline: 'シャープアウトライン',
-      default: 'クラシックソリッド'
+      default: 'クラシックソリッド',
     },
     originalPrice: '取消線付き通常価格（元）',
     originalPricePlaceholder: '例：68.00',
@@ -1878,7 +1956,7 @@ const admin = {
     validation: {
       nameRequired: 'プラン名を入力してください',
       priceDecimals: '小数点以下は 2 桁までです',
-      trafficPositive: '通信量は 0 より大きい必要があります'
+      trafficPositive: '通信量は 0 より大きい必要があります',
     },
     presets: {
       zap: '[zap] 1000Mbps 超高速専用線アクセス',
@@ -1887,8 +1965,10 @@ const admin = {
       shield: '[shield] エンタープライズ級の高匿名・プローブ耐性保護',
       sparkles: '[sparkles] 全フォーマット対応のスマート管理',
       star: '[star] ストリーミング対応の専用ネイティブ IP',
-      sla: '!24時間365日 SLA 高可用性サービス保証'
-    }
+      sla: '!24時間365日 SLA 高可用性サービス保証',
+    },
+    deviceLimit: '同時接続端末数上限（0で無制限）',
+    deviceLimitHint: '上限を超えた新しい接続は自動切断されます。設定範囲：0〜1000。',
   },
   lineForm: {
     namePlaceholder: '例：香港 高倍率回線',
@@ -1965,7 +2045,7 @@ const admin = {
       none: '無効',
       file: 'ローカル静的ディレクトリ (File)',
       proxy: 'リバースプロキシ (Proxy)',
-      string: 'カスタム応答文字列 (String)'
+      string: 'カスタム応答文字列 (String)',
     },
     hy2MasqueradeFile: '静的サイトディレクトリの絶対パス',
     hy2MasqueradeFilePlaceholder: '/var/www/html',
@@ -1982,7 +2062,7 @@ const admin = {
     ssMode: '認証モード',
     ssModes: {
       shared: '共有パスワードモード',
-      multiUser: 'マルチユーザーモード'
+      multiUser: 'マルチユーザーモード',
     },
     ssPassword: 'インバウンド鍵 / パスワード',
     ssPasswordPlaceholder: '空欄で自動生成',
@@ -2008,7 +2088,7 @@ const admin = {
       none: 'TLS 無効',
       tls: '標準 TLS',
       reality: 'Reality',
-      acme: 'ACME 自動証明書'
+      acme: 'ACME 自動証明書',
     },
     tlsServerName: 'TLS SNI',
     tlsServerNamePlaceholder: 'example.com',
@@ -2060,7 +2140,7 @@ const admin = {
       ws: 'WebSocket',
       grpc: 'gRPC',
       http: 'HTTP',
-      httpupgrade: 'HTTPUpgrade'
+      httpupgrade: 'HTTPUpgrade',
     },
     wsPath: 'WebSocket Path',
     wsPathPlaceholder: '/ws',
@@ -2091,7 +2171,8 @@ const admin = {
       protocolProxyNat: 'プロトコルプロキシ：入口で終端後、リバーストンネル経由で再接続',
       blindForward: 'ブラインド転送：エンドツーエンドのプロトコルを維持',
       protocolProxy: 'プロトコルプロキシ：入口で終端後に接続を再確立',
-      targetLine: 'プロトコル変換：既存の回線へブリッジ'
+      targetLine: 'プロトコル変換：既存の回線へブリッジ',
+      upstreamNode: '上流中継（外部の上流ノードへ転送）',
     },
     natLandingTitle: 'NAT 貫通出口ノードのセキュリティと設定',
     natLandingDesc: '選択された出口ノードがプライベート NAT ホストとして検出されました。Yamux ベースの TCP リバーストンネルを通じて、入口のパブリック VPS からブリッジ貫通します。Sing-box はこのノード上で 127.0.0.1 ローカルループバックのみをリッスンします。',
@@ -2168,8 +2249,59 @@ const admin = {
       brutalUpRequired: 'TCP Brutal 輻輳制御を有効にする場合は、0 より大きい上り目標速度を入力してください',
       brutalDownRequired: 'TCP Brutal 輻輳制御を有効にする場合は、0 より大きい下り目標速度を入力してください',
       ssUotMutexError: 'Shadowsocks プロトコルでは UDP over TCP とマルチプレックス (Multiplex) は排他関係にあり、同時に有効化できません',
-      vlessFlowTcpOnly: 'XTLS Vision フロー制御はネイティブ TCP トランスポート専用であり、WebSocket / gRPC などのトランスポートプロトコルでは flow を有効にできません'
-    }
+      vlessFlowTcpOnly: 'XTLS Vision フロー制御はネイティブ TCP トランスポート専用であり、WebSocket / gRPC などのトランスポートプロトコルでは flow を有効にできません',
+      upstreamNodeRequired: '上流出口ノードを選択してください',
+    },
+    egress: {
+      title: '最終出路プロキシ',
+      enabled: '最終出路プロキシを有効化',
+      description: 'クライアントの接続プロトコルや中継トンネルを変更することなく、最終実行ノード上でこのプロキシを経由して外部に出ます。',
+      protocol: '出路プロトコル',
+      http: 'HTTP（非TLS）',
+      socks5: 'SOCKS5',
+      host: 'プロキシホスト',
+      hostPlaceholder: 'ホスト名、IPv4、または IPv6（プロトコルやパスを除く）',
+      port: 'プロキシポート',
+      auth: 'プロキシ認証を有効化',
+      authDesc: '認証を無効化して保存すると、既存のユーザー名とパスワードが削除されます。',
+      username: '認証ユーザー名',
+      password: '認証パスワード',
+      passwordKeep: '空欄で既存パスワードを維持。新しい値を入力すると置き換わります',
+      passwordNew: '新規で認証を有効化する場合はパスワードが必須です',
+      udp: 'SOCKS5 UDP を有効化',
+      udpDesc: '既定で無効。SOCKS5 のみ有効化可能。プロキシが UDP 転送に対応していることを確認してください。',
+      dns: 'SOCKS5 の宛先ドメインはプロキシ側で名前解決されます。',
+      execution: '最終実行ノード：{{name}}',
+      selectNode: '先に最終実行ノードを選択してください',
+      namespace: '127.0.0.1 / ::1 はブラウザやMasterではなく、最終実行ノード上のSing-boxネットワーク空間を指します。',
+      failClosed: 'プロキシ接続や認証の失敗時に直接接続へフォールバックしません。導通を確認してください。',
+      inherited: '対象回線から継承',
+      inheritedDesc: '出路プロキシは対象回線から読み取り専用で継承されます。対象回線側で変更してください。',
+      inheritedDirect: '対象回線にプロキシは設定されていません（直接出路）',
+      inheritedPending: '対象回線を選択して最終出路を確認してください',
+      unsupported: '外部直接回線および上流ノード中継では、個別の最終出路プロキシ設定は利用できません。',
+      clearTitle: '最終出路設定を消去してトポロジーを切り替えますか？',
+      clearDesc: '選択したトポロジーは個別出路プロキシに対応していません。現在の設定ドラフトは消去されます。',
+      clearAction: '消去して切り替え',
+      clearRequired: 'トポロジーを切り替える前に最終出路プロキシ設定を消去してください',
+      hostRequired: 'スキームやパスを含まない有効なホスト名またはIPアドレスを入力してください',
+      portRequired: 'プロキシポートは 1〜65535 の整数である必要があります',
+      usernameRequired: '認証有効時はユーザー名を入力してください',
+      passwordRequired: 'プロキシ認証有効時はパスワードを入力してください',
+    },
+    proxyPoolEnabled: '標準プロキシプール接続を有効化',
+    proxyPoolDesc: '有効にするとプロキシプールに組み込まれます。既存の購読ユーザーに影響を与えることなくMixed直結またはMixed上流中継を利用可能です。',
+    proxyPoolInvalid: 'DIRECT + MIXED または RELAY + UPSTREAM_NODE + MIXED のみプロキシプールを有効化できます。',
+    upstreamUsersRequired: '上流中継の Mixed / HTTP / SOCKS 入口は個別ユーザー認証が必須です（usersEnabled=true）。',
+    proxyPoolOverview: 'プロキシプール配分概要',
+    proxyPoolCapacityDesc: '配分は認証情報エンドポイント数で計算され、ノードごとに最大 512 件です。',
+    proxyPoolEndpointCount: '有効エンドポイント数：{{count}}',
+    proxyPoolCapacity: '{{name}}：使用中 {{used}} / {{limit}}（超過保留 {{excluded}}）',
+    proxyPoolEnabledBadge: 'プロキシプール有効',
+    proxyPoolDisabledBadge: 'プロキシプール無効',
+    upstreamNodeLabel: '上流出口ノード',
+    upstreamNodeDesc: 'インポート済みの外部上流ノードを選択します。入口VPSがこの出路を管理し通信量を計測します。',
+    noUpstreamNode: '利用可能な上流ノードがありません。「上流管理」で先にサブスクリプションをインポートしてください。',
   },
   lineSpeedtest: {
     title: '経路テストフロー',
@@ -2207,7 +2339,7 @@ const admin = {
       relayTransit: '中継リンク転送',
       relayWaiting: '検証待ち',
       targetHttp: 'エンドツーエンドリクエスト',
-      targetWaiting: 'リクエスト待ち'
+      targetWaiting: 'リクエスト待ち',
     },
     troubleshootingTitle: 'トラブルシューティングと診断ガイド',
     troubleshooting1: '入口ノードのファイアウォールおよびセキュリティグループでリスニングポート {{port}} が開放されているか確認してください。',
@@ -2216,7 +2348,7 @@ const admin = {
     troubleshooting4: '入口が Master ローカルノードの場合は、ホストマシンの NAT ループバックおよびローカルループバックポリシーを確認してください。',
     strictFailureNotice: 'ヒント：全区間速度テストはすべての段階が100%通過する必要があり、いずれかの段階が失敗した場合は利用不可と判定されます。',
     tcpHandshakeNotice: 'ヒント：現在の測定値は入口 TCP 往復遅延であり、エンドツーエンドのプロキシ遅延ではありません。',
-    retest: '再測定'
+    retest: '再測定',
   },
   templateForm: {
     titleCreate: '新規サブスクリプションテンプレート作成',
@@ -2239,15 +2371,15 @@ const admin = {
     validation: {
       nameRequired: 'テンプレート名を入力してください',
       jsonArrayRequired: 'JSON 配列である必要があります',
-      jsonObjectRequired: 'JSON オブジェクトである必要があります'
-    }
+      jsonObjectRequired: 'JSON オブジェクトである必要があります',
+    },
   },
   templateGroups: {
     types: {
       select: '手動選択',
       urlTest: '自動速度テスト',
       fallback: 'フォールバック',
-      loadBalance: 'ロードバランス'
+      loadBalance: 'ロードバランス',
     },
     presets: {
       urlTestTitle: '⚡ 自動最適選択 (url-test)',
@@ -2267,7 +2399,7 @@ const admin = {
       aiName: '🤖 AI サービス',
       streamingTitle: '🎬 海外ストリーミング',
       streamingDesc: 'Netflix、YouTube、Disney+ などのストリーミング専用グループ',
-      streamingName: '🎬 海外ストリーミング'
+      streamingName: '🎬 海外ストリーミング',
     },
     defaultGroupName: 'プロキシグループ {{index}}',
     modeVisual: 'ビジュアル設計',
@@ -2304,7 +2436,7 @@ const admin = {
     syntaxErrorTitle: 'プロキシグループ JSON 構文エラー',
     syntaxErrorDesc: '有効なフォーマットの JSON 配列である必要があります',
     errorMustBeArray: 'JSON 配列である必要があります',
-    errorSyntax: 'JSON 構文エラー'
+    errorSyntax: 'JSON 構文エラー',
   },
   templateRules: {
     types: {
@@ -2314,7 +2446,7 @@ const admin = {
       ipCidr: 'IP CIDR ブロック',
       geosite: 'GeoSite',
       remoteRuleSet: 'リモート Rule-Set',
-      match: '最終マッチ (Final)'
+      match: '最終マッチ (Final)',
     },
     presets: {
       adBlockTitle: '🛑 広告・トラッキングブロック',
@@ -2334,7 +2466,7 @@ const admin = {
       finalMatchName: '最終マッチ Final',
       remoteRuleSetTitle: '🌐 リモート Rule-Set ルールセット',
       remoteRuleSetDesc: 'HTTP 経由でリモート管理されているルールセットを購読します',
-      remoteRuleSetName: 'リモートルールセット'
+      remoteRuleSetName: 'リモートルールセット',
     },
     defaultRuleName: 'ルーティングルール {{index}}',
     modeVisual: 'ビジュアル設計',
@@ -2366,7 +2498,7 @@ const admin = {
     syntaxErrorTitle: 'ルーティングルール JSON 構文エラー',
     syntaxErrorDesc: '有効なフォーマットの JSON 配列である必要があります',
     errorMustBeArray: 'JSON 配列である必要があります',
-    errorSyntax: 'JSON 構文エラー'
+    errorSyntax: 'JSON 構文エラー',
   },
   templateDns: {
     title: 'DNS エンジンとルーティングポリシー',
@@ -2389,7 +2521,7 @@ const admin = {
     removeProxyAria: 'プロキシ DNS {{address}} を削除',
     directPlaceholder: 'IP または DoH URL を入力（例：223.5.5.5 または https://223.5.5.5/dns-query）',
     proxyPlaceholder: '海外の安全な DNS を入力（例：https://1.1.1.1/dns-query）',
-    add: '追加'
+    add: '追加',
   },
   templateOverride: {
     clashTab: 'Clash YAML トップレベルオーバーライド',
@@ -2430,8 +2562,8 @@ const admin = {
       singboxLogTitle: 'ログレベルと出力を設定',
       singboxLogDesc: 'Sing-box のログレベルをタイムスタンプ付きの info に設定します',
       singboxNtpTitle: 'NTP 時刻同期サービスを有効化',
-      singboxNtpDesc: 'Apple の NTP サーバーと定期的にシステム時刻を同期し、TLS 証明書の有効性を保証します'
-    }
+      singboxNtpDesc: 'Apple の NTP サーバーと定期的にシステム時刻を同期し、TLS 証明書の有効性を保証します',
+    },
   },
   templateSource: {
     yamlTab: 'YAML ソース',
@@ -2463,7 +2595,7 @@ const admin = {
     copyFailed: 'コピーに失敗しました',
     restoredDraft: '現在のフォームの下書き状態に復元しました',
     syntaxErrorTitle: '{{lang}} 構文診断エラー',
-    syntaxErrorIsolation: '安全分離保護が有効です · 不正データは同期されません'
+    syntaxErrorIsolation: '安全分離保護が有効です · 不正データは同期されません',
   },
   templatePreview: {
     clashTab: 'Clash YAML',
@@ -2484,7 +2616,7 @@ const admin = {
     copyButton: '設定をコピー',
     drawerTitle: 'サブスクリプション設定のクイックプレビュー',
     drawerDesc: '現在のテンプレートと利用可能な回線を使用して実際のクライアント設定を生成します。',
-    selectTemplatePrompt: 'テンプレートを選択してください。'
+    selectTemplatePrompt: 'テンプレートを選択してください。',
   },
   docs: {
     title: 'ヘルプドキュメント管理',
@@ -2518,7 +2650,7 @@ const admin = {
       updatedAt: '更新日時',
       actions: '操作',
       published: '公開中',
-      draft: '下書き'
+      draft: '下書き',
     },
     platforms: {
       all: 'すべてのプラットフォーム',
@@ -2528,7 +2660,7 @@ const admin = {
       android: 'Android',
       router: 'ルーター',
       faq: 'トラブルシューティング',
-      general: '総合ガイド'
+      general: '総合ガイド',
     },
     editor: {
       newTitle: '新規ヘルプドキュメント作成',
@@ -2559,7 +2691,7 @@ const admin = {
       insertShadowrocketUrl: 'Shadowrocket インポートを挿入',
       insertSiteName: 'サイト名を挿入',
       insertPublicBaseUrl: '公開ベース URL を挿入',
-      saveDoc: 'ドキュメントを保存'
+      saveDoc: 'ドキュメントを保存',
     },
     reset: {
       title: '公式プリセットの初心者ガイドを復元しますか？',
@@ -2567,7 +2699,7 @@ const admin = {
       desc2: 'これらのデフォルト記事の文面を編集していた場合、変更内容は上書きされます。ご自身で新規作成したカスタムドキュメントには影響しません。',
       confirm: 'プリセットの復元を確認',
       resetting: 'リセット中…',
-      success: '公式プリセットの初心者ガイドを正常に復元しました'
+      success: '公式プリセットの初心者ガイドを正常に復元しました',
     },
     validation: {
       slugMin: 'Slug は2文字以上で入力してください',
@@ -2575,8 +2707,8 @@ const admin = {
       slugRegex: 'Slug には小文字の英数字とハイフンのみ使用できます',
       titleMin: 'タイトルは2文字以上で入力してください',
       titleMax: 'タイトルは128文字以内で入力してください',
-      contentRequired: '記事本文を入力してください'
-    }
+      contentRequired: '記事本文を入力してください',
+    },
   },
   announcements: {
     title: 'お知らせ管理',
@@ -2609,14 +2741,14 @@ const admin = {
       actions: '操作',
       pinned: '固定',
       banner: 'バナー表示',
-      popup: 'ポップアップ'
+      popup: 'ポップアップ',
     },
     types: {
       all: 'すべてのカテゴリ',
       NOTICE: 'お知らせ',
       MAINTENANCE: 'メンテナンス',
       EVENT: 'イベント',
-      URGENT: '緊急'
+      URGENT: '緊急',
     },
     editor: {
       newTitle: 'お知らせの作成',
@@ -2644,14 +2776,221 @@ const admin = {
       insertWarningAlert: '警告アラート',
       insertCodeBlock: 'コードブロック',
       insertLink: 'リンク',
-      saveAnnouncement: 'お知らせを保存'
+      saveAnnouncement: 'お知らせを保存',
     },
     validation: {
       titleMin: 'タイトルは2文字以上で入力してください',
       titleMax: 'タイトルは120文字以内で入力してください',
-      contentRequired: 'お知らせ本文を入力してください'
-    }
-  }
+      contentRequired: 'お知らせ本文を入力してください',
+    },
+  },
+  userDevices: {
+    kickSuccess: '端末の接続を切断しました',
+    kickAllSuccess: 'すべてのオンライン端末の切断を要求しました',
+    kickFailed: '端末の切断に失敗しました',
+  },
+  probes: {
+    title: '回線速度テスト',
+    description: 'プロキシコアを経由して実際のHTTPリクエストを送信し、導通性と往復遅延を測定します。',
+    policyLabel: '測定コアポリシー',
+    preferred: 'Mihomo 優先（必要に応じて互換フォールバック）',
+    only: 'Mihomo のみ使用',
+    policyHelp: '設定がMihomoの対応範囲を超えており許可されている場合、Sing-boxによる互換測定を試行します。',
+    start: '測定開始',
+    retest: '再測定',
+    cancel: 'キャンセル',
+    refresh: '進捗を更新',
+    globalBusy: '実行中の測定タスクがあります。既存のタスクを確認またはキャンセルしてください。',
+    viewActive: '実行中のタスクを表示',
+    taskId: 'タスク ID：{{id}}',
+    progress: '進捗：{{completed}} / {{total}} · 成功 {{success}} · 失敗 {{failed}} · スキップ {{skipped}}',
+    taskTimes: '作成：{{created}} · 有効期限：{{expires}}',
+    phase: 'フェーズ：{{phase}}',
+    taskUnavailable: 'タスクの照会に失敗したか期限切れです。更新して再試行してください。',
+    resultsUnavailable: '結果の読み込みに失敗しました。更新してください。',
+    invalidResult: '結果の形式が無効です。',
+    closeHelp: 'このダイアログを閉じてもバックグラウンドの測定タスクは停止しません。',
+    measurement: 'HTTP ラウンドトリップ遅延',
+    perspective: 'Master 発信',
+    configuredTarget: '測定先 URL',
+    metadata: 'コア {{version}} · 宛先 {{host}} · 経路 {{route}} · 所要時間 {{duration}} ms',
+    timings: '遅延 {{latency}} ms · 総所要時間 {{duration}} ms',
+    fallbackWarning: 'Sing-box互換フォールバックで測定成功しました。Mihomoでの完全な検証を意味するものではありません。',
+    fallbackReason: 'フォールバック理由：{{reason}}',
+    notApplied: 'この結果はリソーススナップショットに反映されませんでした。',
+    noEngine: 'コア未起動',
+    compatibility: 'Mihomo 互換性：{{status}}',
+    engine: {
+      MIHOMO: 'Mihomo メイン',
+      SINGBOX: 'Sing-box フォールバック',
+    },
+    compat: {
+      SUPPORTED: '対応',
+      UNSUPPORTED: '非対応',
+    },
+    route: {
+      UPSTREAM_DIRECT: '上流直結',
+      MANAGED_DIRECT: 'マネージド直結',
+      MANAGED_RELAY: 'マネージド中継',
+    },
+    status: {
+      SUCCESS: '合格',
+      TIMEOUT: 'タイムアウト',
+      ERROR: '失敗',
+      UNSUPPORTED: '非対応',
+      ENVIRONMENT_UNAVAILABLE: '環境利用不可',
+      CANCELED: 'キャンセル済み',
+      STALE: '設定変更済み・再測定待ち',
+      SKIPPED: 'スキップ',
+    },
+    statusShort: {
+      SUCCESS: '合格',
+      TIMEOUT: 'タイムアウト',
+      ERROR: '失敗',
+      UNSUPPORTED: '非対応',
+      ENVIRONMENT_UNAVAILABLE: '利用不可',
+      CANCELED: 'キャンセル',
+      STALE: '測定待ち',
+      SKIPPED: 'スキップ',
+    },
+    diagnosticDetails: '高度な診断情報',
+    policySettingsToggle: 'コア互換性とフォールバック設定',
+    state: {
+      QUEUED: 'キュー待機',
+      RUNNING: '実行中',
+      COMPLETED: '完了',
+      CANCELED: 'キャンセル済み',
+      FAILED: '失敗',
+    },
+    kernelsTitle: '測定コア状態',
+    available: '利用可能',
+    unavailable: '利用不可',
+    fallbackLabel: 'Sing-box 互換フォールバックを許可',
+    fallbackHelp: '既定で有効。無効にするとSing-boxへのフォールバックを明示的に禁止します。',
+    check: {
+      PASSED: '検証成功',
+      FAILED: '検証失敗',
+      UNAVAILABLE: 'コア利用不可',
+      UNSUPPORTED: '非対応',
+      EXTERNAL_RESOURCES_REQUIRED: '外部リソースが必要',
+    },
+    unexecuted: '未実行',
+    partial: '一部検証のみ',
+    full: '全範囲',
+    batchTitle: '全量速度テスト',
+  },
+  upstream: {
+    nameRequired: 'サブスクリプション名を入力してください',
+    intervalInvalid: '更新間隔は 10〜43200 分の整数である必要があります',
+    urlRequired: '有効な HTTP(S) 購読 URL を入力してください',
+    contentRequired: '設定テキストを入力してください（空欄では消去できません）',
+    headersInvalid: 'リクエストヘッダーは文字列を値に持つ JSON オブジェクトである必要があります',
+    headersHint: 'JSON オブジェクト（例：{"User-Agent":"Client"}）。{} で消去可能',
+    textKeepHint: '変更がない場合は既存の内容を維持します。変更時は全体が置き換わります',
+    showSecrets: '機密設定を表示 / 変更',
+    hideSecrets: '機密設定を非表示',
+    secretsHidden: '機密設定は非表示です。変更していない項目は再送信されません',
+    maskedUrl: '購読 URL はマスクされています',
+    detectedFormat: '認識された形式：{{format}}',
+    lastSuccess: '最新の成功スナップショット',
+    intervalMinutes: '{{minutes}} 分ごとに自動更新',
+    usageSnapshot: '通信量は上流アカウント全体の最新スナップショットであり、ローカルユーザーの利用量ではありません。',
+    syncSummary: '{{format}} 同期完了：新規 {{created}}、更新 {{updated}}、未検出 {{missing}}；認識 {{recognized}}、重複 {{duplicates}}、スキップ {{skipped}}',
+    present: '存在',
+    missing: '上流で未検出',
+    relatedLines: '関連回線',
+    masterProbeView: 'ノードは Hysteria2 / TUIC を含む Mihomo メインコア経由で完全な HTTP エンドツーエンド測定を実行します。',
+    createExternalLine: '外部直接回線を作成',
+    externalRisk: '外部直接回線は上流の共有認証情報をユーザーに交付するため、ローカルでの帯域制限や接続端末数制御は行えません。',
+    externalDefaults: '新しい回線は既定で非公開・無効です。プランやユーザー権限で許可した上で有効化してください。',
+    externalConfirm: '外部認証情報交付のリスクと承認範囲を確認',
+    publicAllImpact: '公開・有効化すると、すべてのプランに自動組み込みされる可能性があります。影響範囲をご確認ください。',
+    externalType: '外部直接',
+    rateRequired: '回線トラフィック倍率は 0.01 以上である必要があります',
+    pageSummary: '{{page}} / {{pages}} ページ（全 {{total}} 件）',
+    previous: '前へ',
+    next: '次へ',
+    loadMore: 'さらに読み込む',
+    loadedCount: '全 {{total}} 件の候補のうち {{count}} 件の有効ノードを読み込みました',
+    retry: '再試行',
+    title: '上流サブスクリプション管理',
+    subtitle: '外部サブスクリプションをインポートし、外部直接回線またはマネージド中継回線として一元管理します',
+    addSubscription: '上流サブスクリプションを追加',
+    editSubscription: '上流サブスクリプションを編集',
+    nodesTitle: '上流ノードプール',
+    nodesSubtitle: '現在のサブスクリプションから解析された全プロキシノード一覧',
+    searchPlaceholder: 'サブスクリプション名を検索…',
+    searchNodesPlaceholder: 'ノード名を検索…',
+    filterFormat: 'フォーマット',
+    filterStatus: 'ステータス',
+    statusAll: 'すべてのステータス',
+    statusActive: '正常',
+    statusDisabled: '無効',
+    syncSuccess: '上流サブスクリプションの同期と差分適用が完了しました',
+    syncFailed: '同期に失敗しました',
+    syncNow: '今すぐ同期',
+    syncing: '同期中…',
+    probeAll: 'すべてエンドツーエンド測定',
+    probing: '測定中…',
+    probeNode: 'エンドツーエンド測定',
+    exportNodes: 'ノードをエクスポート',
+    exportUri: 'URI リンクとしてエクスポート',
+    exportJson: 'JSON としてエクスポート',
+    exportSuccess: 'エクスポート完了：クリップボードにコピーしました',
+    createRelayLine: '中継回線を作成',
+    createRelayLineDesc: 'この外部ノードを出口として、マネージド中継回線をすばやく作成します',
+    name: 'サブスクリプション名',
+    sourceType: 'ソース種別',
+    sourceTypeUrl: 'リモート URL',
+    sourceTypeText: '設定テキストを直接入力',
+    format: '解析フォーマット',
+    formatAuto: '自動認識 (AUTO)',
+    formatClash: 'Mihomo / Clash Meta (YAML)',
+    formatSingbox: 'Sing-box (JSON)',
+    formatUri: '標準 URI リスト (Base64 / テキスト)',
+    url: '購読 URL',
+    urlPlaceholder: 'https://airport.example.com/api/v1/client/subscribe?token=...',
+    content: '設定テキスト',
+    contentPlaceholder: 'Clash Meta YAML、Sing-box JSON、または URI リストを貼り付け…',
+    autoUpdate: 'バックグラウンド自動更新',
+    autoUpdateDesc: '設定された間隔でノード一覧をサイレント更新し差分を反映します',
+    updateIntervalMins: '更新間隔（分、10〜43200）',
+    customHeaders: 'カスタム HTTP ヘッダー',
+    customHeadersDesc: '上流プロバイダーで特定の User-Agent 検証が必要な場合に設定します',
+    lastSync: '前回同期',
+    syncStatus: '同期ステータス',
+    nodeCount: 'ノード数',
+    trafficUsed: '使用済み通信量',
+    trafficTotal: '総容量',
+    expireTime: '有効期限',
+    unlimited: '無制限',
+    never: 'なし',
+    colName: '名称',
+    colType: '種別 / 形式',
+    colNodes: 'ノード数',
+    colQuota: '通信容量',
+    colLastSync: '前回同期',
+    colStatus: 'ステータス',
+    colActions: '操作',
+    colNodeName: 'ノード名',
+    colProtocol: 'プロトコル',
+    colServer: 'サーバー:ポート',
+    colLatency: '導通性 / 遅延',
+    emptyTitle: '上流サブスクリプションがありません',
+    emptyDesc: '右上の「上流サブスクリプションを追加」をクリックしてインポートを開始してください',
+    emptyNodesTitle: 'ノードがありません',
+    emptyNodesDesc: '有効なノードが解析されていません。「今すぐ同期」をクリックして再試行してください。',
+    deleteTitle: '上流サブスクリプション「{{name}}」を削除しますか？',
+    deleteDesc: 'このサブスクリプションの全ノードが連鎖削除されます。これらを使用中の中継回線は自動停止されます。',
+    deleteSuccess: '上流サブスクリプションを削除しました',
+    saveSuccess: '上流サブスクリプションを保存しました',
+    copyLinkSuccess: 'ノードリンクをクリップボードにコピーしました',
+    statusSuccess: 'ノードステータスを更新しました',
+    probeSuccess: '測定完了：遅延 {{latency}}ms',
+    probeTimeout: '測定タイムアウト',
+    probeError: '測定失敗：{{error}}',
+    allTested: '一括速度テスト完了：合計 {{total}} 台のノードを測定',
+  },
 } as const;
 
 export default admin;
