@@ -105,3 +105,72 @@ test('all terminal states refresh resources because canceled/failed tasks may ha
     assert.equal(h.invalidations.some((key) => key[1] === 'probe-task-results'), !['QUEUED', 'RUNNING'].includes(state));
   }
 });
+
+test('kernel validation only marks full executed pass green and actual failures red', () => {
+  const base = { status: 'PASSED', executed: true, scope: 'FULL', diagnostics: [] };
+  assert.equal(exports.kernelCheckTone(base), 'success');
+  for (const check of [{ ...base, executed: false }, { ...base, scope: 'PARTIAL' }, ...['UNAVAILABLE', 'UNSUPPORTED', 'EXTERNAL_RESOURCES_REQUIRED'].map((status) => ({ ...base, status }))]) {
+    assert.equal(exports.kernelCheckTone(check), 'warning');
+  }
+  for (const executed of [true, false]) assert.equal(exports.kernelCheckTone({ ...base, status: 'FAILED', executed }), 'danger');
+  assert.equal(exports.kernelCheckTone({ ...base, status: 'FUTURE' }), 'muted');
+});
+
+test('diagnostic localization uses exact allowlisted codes and never arbitrary raw logs', () => {
+  for (const code of ['INVALID_CONFIG', 'KERNEL_UNAVAILABLE', 'NATIVE_CONFIG_CHECK_FAILED', 'KERNEL_EXECUTION_UNAVAILABLE', 'KERNEL_TIMEOUT', 'KERNEL_CANCELED', 'EXTERNAL_RESOURCES_REQUIRED', 'RESOURCE_PREPARATION_FAILED']) {
+    assert.equal(exports.kernelDiagnosticCode(code), code);
+  }
+  for (const code of ['https://secret.example/token', 'INVALID_CONFIG: password=secret', 'FATAL secret', '__proto__', '', undefined]) {
+    assert.equal(exports.kernelDiagnosticCode(code), 'UNKNOWN');
+  }
+});
+
+test('preview delegates safe validation rendering and preserves configuration copy', () => {
+  const preview = source('../pages/admin/templates/components/template-preview-drawer.tsx');
+  const result = source('../pages/admin/templates/components/kernel-validation-result.tsx');
+  assert.match(preview, /<KernelValidationResult check=\{check\}/);
+  assert.match(preview, /clipboard.writeText\(result.content\)/);
+  assert.doesNotMatch(preview, /diagnostics.join|KernelDiagnosticCard/);
+  assert.match(result, /AccordionTrigger/);
+  assert.match(result, /resourceRequirements \?\? \[\]/);
+  assert.match(result, /resourceRequirementsTruncated/);
+  assert.match(result, /kernelDiagnosticCode/);
+  assert.doesNotMatch(result, /\{resource.reasonCode\}|\{diagnostic\}/);
+});
+
+test('resource reason codes are localized without exposing resource names or paths', () => {
+  for (const code of ['RESOURCE_AVAILABLE', 'RESOURCE_MISSING', 'RESOURCE_UNREADABLE', 'RESOURCE_INVALID', 'RESOURCE_UNSUPPORTED', 'REMOTE_RESOURCE_DISABLED']) {
+    assert.equal(exports.kernelDiagnosticCode(code), code);
+  }
+});
+
+test('validation component handles old, empty, truncated and unknown responses safely', () => {
+  const result = {};
+  const jsx = (type, props) => typeof type === 'function' ? type(props) : { type, props };
+  const passthrough = ({ children }) => children;
+  const modules = {
+    'react/jsx-runtime': { jsx, jsxs: jsx },
+    'react-i18next': { useTranslation: () => ({ t: (key, options) => `${key} ${JSON.stringify(options ?? {})}` }) },
+    'class-variance-authority': { cva: (_, config) => ({ tone }) => config.variants.tone[tone] },
+    'lucide-react': { AlertTriangle: passthrough, CheckCircle2: passthrough, Info: passthrough },
+    '@/components/ui/accordion': Object.fromEntries(['Accordion', 'AccordionContent', 'AccordionItem', 'AccordionTrigger'].map((name) => [name, passthrough])),
+    '@/components/ui/badge': { Badge: passthrough },
+    '@/components/ui/card': { Card: (props) => ({ card: props }), CardContent: passthrough },
+    '@/lib/utils': { cn: (value) => value },
+    '@/lib/probe-types': exports,
+  };
+  runInNewContext(ts.transpileModule(source('../pages/admin/templates/components/kernel-validation-result.tsx'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports: result, require: (name) => modules[name] });
+  const base = { status: 'FAILED', executed: false, scope: 'PARTIAL', engine: 'MIHOMO', engineVersion: null, diagnostics: ['INVALID_CONFIG'] };
+  const render = (check) => JSON.stringify(result.KernelValidationResult({ check }));
+  assert.match(render(base), /parseFailed/);
+  assert.match(render({ ...base, executed: true, diagnostics: ['NATIVE_CONFIG_CHECK_FAILED'] }), /nativeFailed/);
+  assert.match(render({ ...base, diagnostics: [], resourceRequirements: [] }), /validation.empty/);
+  const resource = { kind: 'RULE_PROVIDER', location: 'rule-providers[0]', state: 'REMOTE_DISABLED', reasonCode: 'REMOTE_RESOURCE_DISABLED', actionCode: 'CHECK_CLIENT', references: 3 };
+  const html = render({ ...base, status: 'EXTERNAL_RESOURCES_REQUIRED', diagnostics: ['FATAL password=secret'], resourceRequirements: [resource, { ...resource, reasonCode: '/private/secret', kind: 'secret', actionCode: 'secret', state: 'secret' }], resourceRequirementsTruncated: 5 });
+  assert.match(html, /text-amber/);
+  assert.match(html, /validation.truncated/);
+  assert.match(html, /REMOTE_RESOURCE_DISABLED/);
+  assert.match(html, /validation.actions.CHECK_CLIENT/);
+  assert.match(html, /UNKNOWN/);
+  assert.doesNotMatch(html, /secret|FATAL|text-destructive/);
+});
