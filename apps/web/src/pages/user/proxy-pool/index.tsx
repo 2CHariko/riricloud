@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Globe, Info, KeyRound, Network, Wand2, Zap } from 'lucide-react';
+import { Globe, Info, KeyRound, Wand2, Zap } from 'lucide-react';
+import { formatBytes } from '@/lib/utils';
 import { useTranslation } from 'react-i18next';
 import { PageContainer, PageHeader } from '@/components/shared/page-container';
 import { StatCard } from '@/components/shared/stat-card';
@@ -24,7 +25,7 @@ export default function UserProxyPoolPage() {
   const endpointsQuery = useProxyPoolEndpoints(keyId || undefined);
   const endpoints = !endpointsQuery.isError ? endpointsQuery.data?.endpoints ?? [] : [];
   const onlineEndpointsCount = endpoints.filter((endpoint) => endpoint.status === 'AVAILABLE' && endpoint.online).length;
-
+  const totalUsedBytes = keys.reduce((acc, k) => acc + (k.trafficUsedBytes || 0), 0);
   const openCreate = () => {
     setEditing(null);
     setDialogOpen(true);
@@ -68,8 +69,14 @@ export default function UserProxyPoolPage() {
         </div>
       </div>
 
-      {/* 顶部微型指标仪表盘 */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* 顶部动态指标看板（3 项核心动态指标） */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatCard
+          title={t('user:proxyPool.availableEndpointsStat')}
+          value={t('user:proxyPool.nodesCount', { count: endpoints.filter((endpoint) => endpoint.status === 'AVAILABLE').length })}
+          hint={t('user:proxyPool.onlineCount', { online: onlineEndpointsCount, total: endpoints.length })}
+          icon={<Globe className="text-sky-500" />}
+        />
         <StatCard
           title={t('user:proxyPool.activeKeysStat')}
           value={`${activeKeys.length} / ${limit}`}
@@ -77,21 +84,9 @@ export default function UserProxyPoolPage() {
           icon={<KeyRound className="text-emerald-500" />}
         />
         <StatCard
-          title={t('user:proxyPool.availableEndpointsStat')}
-          value={t('user:proxyPool.nodesCount', { count: endpoints.filter((endpoint) => endpoint.status === 'AVAILABLE').length })}
-          hint={t('user:proxyPool.onlineCount', { count: onlineEndpointsCount })}
-          icon={<Globe className="text-sky-500" />}
-        />
-        <StatCard
-          title={t('user:proxyPool.protocolSupportStat')}
-          value={t('user:proxyPool.singlePortMixed')}
-          hint={t('user:proxyPool.mixedProtocolsDesc')}
-          icon={<Network className="text-violet-500" />}
-        />
-        <StatCard
-          title={t('user:proxyPool.billingLinkStat')}
-          value={t('user:proxyPool.sharedAccount')}
-          hint={t('user:proxyPool.autoBlockDesc')}
+          title={t('user:proxyPool.usedTrafficStat')}
+          value={formatBytes(totalUsedBytes)}
+          hint={t('user:proxyPool.usedTrafficDesc')}
           icon={<Zap className="text-amber-500" />}
         />
       </div>

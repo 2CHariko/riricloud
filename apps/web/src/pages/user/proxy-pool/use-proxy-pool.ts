@@ -91,7 +91,8 @@ export function useProxyPoolExport(params: ProxyPoolExportParams) {
     queryKey: ['user', 'proxy-pool', 'export', keyId ?? '', format, protocol, lineIdsValue],
     enabled: enabled && Boolean(keyId) && Boolean(lineIds?.length),
     retry: false,
-    gcTime: 0,
+    placeholderData: (previousData) => previousData,
+    gcTime: 60_000,
     queryFn: async () => {
       const response = await api.get('/user/proxy-pool/export', {
         params: {
@@ -115,8 +116,9 @@ export function useProxyPoolExportCredentials(params: Omit<ProxyPoolExportParams
     queryKey: ['user', 'proxy-pool', 'credentials-v2', keyId, protocol, (lineIds ?? []).join(',')],
     enabled: enabled && Boolean(keyId) && Boolean(lineIds?.length),
     retry: false,
-    gcTime: 0,
-    staleTime: 0,
+    placeholderData: (previousData) => previousData,
+    gcTime: 60_000,
+    staleTime: 30_000,
     queryFn: async () => {
       const response = await api.get('/user/proxy-pool/export', { params: { keyId, protocol, format: 'json', lineIds: lineIds!.join(',') } });
       const result = parseProxyPoolExport(response.data, keyId!);

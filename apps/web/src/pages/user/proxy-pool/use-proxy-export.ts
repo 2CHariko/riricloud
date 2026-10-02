@@ -34,8 +34,10 @@ export function useProxyExport(currentKey: ProxyKey | null, endpoints: ProxyPool
   const ready = !!currentKey && endpointsReady && selectedLineIds.length > 0 && !incompatible;
   const exportQuery = useProxyPoolExport({ keyId, format, protocol, lineIds: selectedLineIds, enabled: ready && viewMode === 'export' });
   const credentialsQuery = useProxyPoolExportCredentials({ keyId, protocol, lineIds: selectedLineIds, enabled: ready && viewMode === 'code' });
-  const exportedProxies = useMemo(() => ready && !credentialsQuery.isError && !credentialsQuery.isFetching ? credentialsQuery.data?.proxies ?? [] : [],
-    [ready, credentialsQuery.isError, credentialsQuery.isFetching, credentialsQuery.data]);
+  const exportedProxies = useMemo(
+    () => (ready && !credentialsQuery.isError ? credentialsQuery.data?.proxies ?? [] : []),
+    [ready, credentialsQuery.isError, credentialsQuery.data]
+  );
   const effectiveNodeView = exportedProxies.some((proxy) => proxy.lineId === nodeView) ? nodeView : 'all';
   const snippets = useMemo(() => {
     if (!exportedProxies.length || exportedProxies.some((proxy) => !supportsProtocol(proxy, protocol))) return [];
@@ -52,13 +54,15 @@ export function useProxyExport(currentKey: ProxyKey | null, endpoints: ProxyPool
     : errorCode === 'PROXY_POOL_KEY_DISABLED' ? t('user:proxyPool.createAndEnableKeyPrompt')
     : activeQuery.error instanceof Error && activeQuery.error.message === 'PROXY_POOL_REEXPORT_REQUIRED' ? t('user:proxyPool.reexportRequired')
     : extractErrorMessage(activeQuery.error, t('user:proxyPool.exportFailed'));
+  const hasData = viewMode === 'code' ? !!currentSnippet : !!exportQuery.data;
+  const isInitialLoading = (activeQuery.isPending || activeQuery.isFetching) && !hasData;
   const content = !keyId ? t('user:proxyPool.createAndEnableKeyPrompt')
     : !selectedLineIds.length ? t('user:proxyPool.atLeastOneEndpointPrompt')
     : incompatible ? t(format === 'text' && protocol === 'http' ? 'user:proxyPool.tlsTextUnavailable' : 'user:proxyPool.protocolUnavailable')
-    : activeQuery.isPending || activeQuery.isFetching ? t('user:proxyPool.generatingProxies')
+    : isInitialLoading ? t('user:proxyPool.generatingProxies')
     : activeQuery.isError ? error
     : viewMode === 'code' ? currentSnippet?.code ?? t('user:proxyPool.reexportRequired') : exportQuery.data ?? '';
-  const canCopy = ready && !activeQuery.isError && !activeQuery.isFetching && (viewMode === 'code' ? !!currentSnippet : !!exportQuery.data);
+  const canCopy = ready && !activeQuery.isError && hasData;
   const automationBase = publicSettings.data?.publicBaseUrl || publicSettings.data?.subscriptionBaseUrl || window.location.origin;
   const automationUrl = ready && !(format === 'text' && selectedEndpoints.some((endpoint) => endpoint.tls))
     ? buildAutomationUrl(automationBase, currentKey!.exportToken, protocol, format, selectedLineIds) : '';
@@ -83,6 +87,6 @@ export function useProxyExport(currentKey: ProxyKey | null, endpoints: ProxyPool
   const refresh = () => { if (ready) void activeQuery.refetch(); };
   return { selectedLineIds, selectedEndpoints, protocol, setProtocol, format, setFormat, viewMode, setViewMode,
     snippetTab, setSnippetTab, nodeView: effectiveNodeView, setNodeView, snippets, exportedProxies,
-    content, canCopy, automationUrl, toggleLine, setSelection, copy, download, refresh };
+    content, canCopy, automationUrl, toggleLine, setSelection, copy, download, refresh, isFetching: activeQuery.isFetching };
 }
 export type ProxyExportState = ReturnType<typeof useProxyExport>;
