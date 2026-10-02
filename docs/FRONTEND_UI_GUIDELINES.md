@@ -506,7 +506,7 @@ v0.4.0 新增页面均位于已认证的 `AppLayout` 内，继续复用 `PageCon
 - 流量统计页和系统日志页均提供进入统一「历史观测数据清理」弹窗的快捷入口。弹窗先选择目标与模式，再加载预览明细；执行前必须完成二次确认并输入 `CLEAR_HISTORY`，结果按数据类型展示成功、失败、匹配数、删除数与耗时。系统日志原有清理入口复用该组件，`all` 是显式清空模式，不以 `0` 伪装保留天数。
 - 节点列表/详情展示 `agent_log_rotation` 能力状态；旧 Agent 显示“需要升级”提示，但不得阻断节点业务操作。
 - Logo、Favicon、站点名、公告、页脚和客服入口通过公开站点信息动态感知；登录页、已认证外壳和我的订阅页面共享同一 Query 缓存，不在页面内硬编码品牌文案。
-- 公告横幅（`AnnouncementCard`）消费公告列表中启用且开启横幅展示的条目（向下兼容旧版 `siteAnnouncement`），支持按分类着色、安全的 Markdown 子集渲染、点击唤起完整详情弹窗及本地收起记忆；订阅链接统一通过 `apps/web/src/lib/subscription-url.ts` 构造，优先使用配置的 `subscriptionBaseUrl`，没有有效订阅时必须引导进入套餐市场。
+- 公告横幅（`AnnouncementCard`）消费公告列表中启用且开启横幅展示的条目（向下兼容旧版 `siteAnnouncement`），仅展示分类徽章、标题、发布时间与纯文本摘要（按行取值，最多 3 行 / 160 字符，`line-clamp-3` 收尾省略号），与公告中心下拉、后台公告表格的摘要口径一致；Markdown 语法在摘要中一律降级为纯文本（Callout 标记、引用符号、强调符号、链接与图片语法均被剥离），完整 GFM 仅在 `AnnouncementDetailDialog` 中由 `MarkdownRenderer` 渲染；摘要为空时不渲染摘要行，全文通过「查看详情」入口获取；支持按分类着色与本地收起记忆；订阅链接统一通过 `apps/web/src/lib/subscription-url.ts` 构造，优先使用配置的 `subscriptionBaseUrl`，没有有效订阅时必须引导进入套餐市场。
 - 系统设置的“基础与品牌”页签提供 `publicBaseUrl` 全站访问 URL，用于主控生成 Agent 安装、升级和二进制下载地址；URL 字段旁提供“使用当前面板地址”快捷填充，并明确说明留空时服务端会按当前反向代理域名自动匹配。
 - `subscriptionShortLinksEnabled=false` 时展示标准 `.../api/v1/sub/<UUID>`；开启时展示由 Nginx rewrite 提供的 `.../<UUID>`，`subscriptionBaseUrl` 中的 pathname 必须原样保留并与部署配置一致。系统设置开关旁必须明确提示“先配置 Nginx”，但不在前端检测代理状态。
 - CSS、YAML 与 HTML/JS 代码编辑器使用 CodeMirror，代码区域保持等宽字体、明确的内部滚动边界，并在复杂弹窗/抽屉中填充剩余高度；编辑器主题必须跟随 `next-themes` 的 `resolvedTheme`；头部注入仅接受管理员配置，文案需提示只粘贴可信代码。

@@ -22,6 +22,8 @@ const VALID_TYPES: AnnouncementType[] = ['NOTICE', 'MAINTENANCE', 'EVENT', 'URGE
 export const ANNOUNCEMENT_READ_STORAGE_KEY = 'riricloud:announcements:read_map';
 export const ANNOUNCEMENT_BANNER_DISMISS_KEY = 'riricloud:announcements:banner_dismissed';
 export const ANNOUNCEMENT_CHANGE_EVENT = 'riricloud:announcements-change';
+export const ANNOUNCEMENT_SUMMARY_MAX_LINES = 3;
+export const ANNOUNCEMENT_SUMMARY_MAX_CHARS = 160;
 
 function isValidType(val: unknown): val is AnnouncementType {
   return typeof val === 'string' && VALID_TYPES.includes(val as AnnouncementType);
@@ -125,6 +127,33 @@ export function stripMarkdownPreview(md: string): string {
     .replace(/(\*\*|__|\*|_|~~)/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * 生成公告纯文本摘要：按行取值而非按字符硬切，避免关键句被截断。
+ * 首行与标题重复时（旧版单条公告的标题由正文首行推导）跳过首行，避免横幅重复展示。
+ */
+export function buildAnnouncementSummary(
+  content: string,
+  title?: string,
+  maxLines = ANNOUNCEMENT_SUMMARY_MAX_LINES,
+  maxChars = ANNOUNCEMENT_SUMMARY_MAX_CHARS
+): string {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const summary = lines
+    .filter((line, index) => {
+      if (index === 0 && title && stripMarkdownPreview(line).startsWith(title)) return false;
+      return !line.startsWith('```');
+    })
+    .slice(0, maxLines)
+    .map((line) => stripMarkdownPreview(line))
+    .filter(Boolean)
+    .join(' ');
+  if (!summary) return '';
+  return summary.length > maxChars ? `${summary.slice(0, maxChars).trimEnd()}…` : summary;
 }
 
 export function getAnnouncementVersionKey(item: AnnouncementItem): string {
