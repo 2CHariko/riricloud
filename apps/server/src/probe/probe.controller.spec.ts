@@ -20,10 +20,10 @@ describe('管理员异步探针 HTTP 契约', () => {
     expect(await nodes.probeNode('node', dto, user)).toEqual(receipt);
     expect(await nodes.probeAll({ subscriptionId: 'source' }, dto, user)).toEqual(receipt);
     expect(tasks.start.mock.calls).toEqual([
-      ['admin', 'LINE', { id: 'line' }, 'MIHOMO_PREFERRED'],
-      ['admin', 'LINE', {}, 'MIHOMO_PREFERRED'],
-      ['admin', 'UPSTREAM_NODE', { id: 'node' }, 'MIHOMO_PREFERRED'],
-      ['admin', 'UPSTREAM_NODE', { subscriptionId: 'source' }, 'MIHOMO_PREFERRED']
+      ['admin', 'LINE', { id: 'line' }, 'MIHOMO_ONLY'],
+      ['admin', 'LINE', {}, 'MIHOMO_ONLY'],
+      ['admin', 'UPSTREAM_NODE', { id: 'node' }, 'MIHOMO_ONLY'],
+      ['admin', 'UPSTREAM_NODE', { subscriptionId: 'source' }, 'MIHOMO_ONLY']
     ]);
     for (const method of [LinesController.prototype.speedtest, LinesController.prototype.speedtestAll, UpstreamController.prototype.probeNode, UpstreamController.prototype.probeAll]) expect(Reflect.getMetadata(HTTP_CODE_METADATA, method)).toBe(202);
   });

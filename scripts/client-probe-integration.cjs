@@ -51,7 +51,7 @@ async function main() {
   const engine = new ProbeService(kernels);
   const resources = new ProbeResourceService(prisma);
   const fixtureSockets = new Set();
-  const target = http.createServer((req, res) => { if (req.url === '/slow') return; if (req.url === '/redirect') { res.writeHead(302, { Location: '/204' }); return res.end(); } res.writeHead(req.url === '/500' ? 500 : req.url === '/200' ? 200 : 204); res.end(); });
+  const target = http.createServer((req, res) => { if (req.url === '/slow') return; if (req.url === '/redirect') { res.writeHead(302, { Location: '/204' }); return res.end(); } setTimeout(() => { res.writeHead(req.url === '/500' ? 500 : req.url === '/200' ? 200 : 204); res.end(); }, 25); });
   const proxy = http.createServer((req, res) => { res.writeHead(405); res.end(); });
   let tlsTarget;
   let app;
@@ -74,7 +74,7 @@ async function main() {
     const baseConnection = { protocolType: 'HTTP', serverHost: '127.0.0.1', serverPort: proxyPort, params: { username: 'fixture', password: 'password' } };
     const request = (connection = baseConnection) => ({ subjectType: 'LINE', subjectId: 'fixture', connection, configHash: 'fixture-v1', routeKind: 'MANAGED_DIRECT', allowPrivateEndpoint: true });
     const profile = await kernels.resolve('MIHOMO'); assert.ok(profile, 'Fixed Mihomo kernel must be available'); assert.equal(profile.version, '1.19.30');
-    const dial = async (pathname, connection = baseConnection, signal) => (await engine.executeBatch([request(connection)], { id: pathname, url: `http://127.0.0.1:${targetPort}${pathname}`, expectedStatus: 204 }, 800, 'MIHOMO_ONLY', signal))[0];
+    const dial = async (pathname, connection = baseConnection, signal) => (await engine.executeStrictBatch([request(connection)], { id: pathname, url: `http://127.0.0.1:${targetPort}${pathname}`, expectedStatus: 204 }, 800, 'MIHOMO_ONLY', signal))[0];
     const good = await dial('/204'); assert.equal(good.status, 'SUCCESS'); assert.equal(good.engine, 'MIHOMO'); assert.ok(good.latencyMs > 0);
     for (const pathname of ['/500', '/200', '/redirect']) { const result = await dial(pathname); assert.equal(result.status, 'ERROR', pathname); assert.equal(result.errorCode, 'UNEXPECTED_HTTP_STATUS'); }
     assert.notEqual((await dial('/204', { ...baseConnection, params: { username: 'fixture', password: 'wrong' } })).status, 'SUCCESS');
@@ -85,7 +85,7 @@ async function main() {
     if (fs.existsSync(path.join(tlsDir, 'server.pem'))) {
       tlsTarget = https.createServer({ key: fs.readFileSync(path.join(tlsDir, 'server-key.pem')), cert: fs.readFileSync(path.join(tlsDir, 'server.pem')) }, (req, res) => { res.writeHead(204); res.end(); }); tlsTarget.on('connection', manage);
       const tlsPort = await listen(tlsTarget);
-      const tlsDial = async (host) => (await engine.executeBatch([request()], { id: 'tls', url: `https://${host}:${tlsPort}/204`, expectedStatus: 204 }, 1500, 'MIHOMO_ONLY'))[0];
+      const tlsDial = async (host) => (await engine.executeStrictBatch([request()], { id: 'tls', url: `https://${host}:${tlsPort}/204`, expectedStatus: 204 }, 1500, 'MIHOMO_ONLY'))[0];
       if (process.env.NODE_EXTRA_CA_CERTS) { assert.equal((await tlsDial('localhost')).status, 'SUCCESS'); console.log('PASS: trusted HTTPS target through real Mihomo'); }
       assert.notEqual((await tlsDial('wrong-certificate.invalid')).status, 'SUCCESS'); console.log('PASS: target certificate hostname mismatch rejected');
     } else console.log('NOT EXECUTED: HTTPS fixture unavailable');
@@ -119,7 +119,8 @@ async function main() {
     async function completed(id) { for (let i = 0; i < 150; i++) { const summary = await api('GET', `/admin/probe-tasks/${id}`); if (['COMPLETED', 'FAILED', 'CANCELED'].includes(summary.state)) return summary; await sleep(100); } throw new Error('Task did not finish'); }
     assert.equal((await completed(receipt.taskId)).success, 1);
     const results = await api('GET', `/admin/probe-tasks/${receipt.taskId}/results?page=1&pageSize=20`); assert.equal(results.data[0].engine, 'MIHOMO'); assert.equal(results.data[0].applied, true); assert.ok(!JSON.stringify(results).includes('password'));
-    assert.equal(JSON.parse((await prisma.upstreamNode.findUnique({ where: { id: node.id } })).lastProbeJson).measurement, 'PROXY_HTTP_DELAY');
+    assert.equal(results.data[0].schemaVersion, 2); assert.equal(results.data[0].measurement, 'MIHOMO_URL_TEST');
+    assert.equal(JSON.parse((await prisma.upstreamNode.findUnique({ where: { id: node.id } })).lastProbeJson).measurement, 'MIHOMO_URL_TEST');
     settingsState.lineSpeedtestTargetUrl = `http://127.0.0.1:${targetPort}/slow`;
     const staleTask = await api('POST', `/admin/upstream/nodes/${node.id}/probe`, {}, adminToken, 202); await sleep(150); await prisma.upstreamNode.update({ where: { id: node.id }, data: { configHash: 'v2' } }); await completed(staleTask.taskId);
     const stale = (await api('GET', `/admin/probe-tasks/${staleTask.taskId}/results`)).data[0]; assert.equal(stale.status, 'STALE'); assert.equal(stale.applied, false);

@@ -7,7 +7,7 @@ import { sanitizeInboundParams } from '../common/inbound';
 import { INTERNAL_SPEEDTEST_EMAIL, INTERNAL_SPEEDTEST_SECRET, INTERNAL_SPEEDTEST_UUID } from '../common/constants';
 import { bindManagedConnection } from '../subscription/compilers/managed-connection';
 import type { UpstreamConnection } from '../common/upstream-connection';
-import type { ProbeConnectionRequest, ProbeResult, ProbeSubjectType } from './probe.types';
+import type { ProbeConnectionRequest, ProbeMeasurement, ProbeResult, ProbeSubjectType } from './probe.types';
 import { safeProbeResult } from './probe-result';
 
 const certificateVersion = { select: { id: true, updatedAt: true } } as const;
@@ -15,7 +15,7 @@ const include = { entryNode: true, landingNode: true, certificate: certificateVe
 type ProbeLine = Prisma.LineGetPayload<{ include: typeof include }>;
 type ProbeNode = Prisma.UpstreamNodeGetPayload<{ include: { subscription: true } }>;
 export interface ProbeSelection { id?: string; subscriptionId?: string }
-export interface ResourceSnapshot { request: ProbeConnectionRequest; version: string; updatedAt: Date; sequence: number }
+export interface ResourceSnapshot { request: ProbeConnectionRequest; version: string; updatedAt: Date; sequence: number; measurement?: ProbeMeasurement }
 export const probeHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value, (_, item: unknown) => typeof item === 'bigint' ? item.toString() : item)).digest('hex');
 
 // 仅配置与关联状态进入版本，不把 Agent 心跳和探针自身写入作为配置变更。
@@ -45,13 +45,13 @@ export class ProbeResourceService {
   private nextSequence = 0;
   private readonly launches = new Map<string, number>();
   constructor(private readonly prisma: PrismaService) {}
-  reserve(type: ProbeSubjectType, ids: string[]): number {
+  reserve(type: ProbeSubjectType, ids: string[], measurement: ProbeMeasurement = 'MIHOMO_URL_TEST'): number {
     const sequence = ++this.nextSequence;
-    for (const id of ids) this.launches.set(`${type}:${id}`, sequence);
+    for (const id of ids) this.launches.set(`${type}:${id}:${measurement}`, sequence);
     return sequence;
   }
-  release(type: ProbeSubjectType, ids: string[], sequence: number) {
-    for (const id of ids) if (this.launches.get(`${type}:${id}`) === sequence) this.launches.delete(`${type}:${id}`);
+  release(type: ProbeSubjectType, ids: string[], sequence: number, measurement: ProbeMeasurement = 'MIHOMO_URL_TEST') {
+    for (const id of ids) if (this.launches.get(`${type}:${id}:${measurement}`) === sequence) this.launches.delete(`${type}:${id}:${measurement}`);
   }
   async listIds(type: ProbeSubjectType, selection: ProbeSelection): Promise<string[]> {
     if (selection.id) {
@@ -72,12 +72,12 @@ export class ProbeResourceService {
       cursor = batch[batch.length - 1].id;
     }
   }
-  async snapshot(type: ProbeSubjectType, id: string, sequence: number, db: Prisma.TransactionClient = this.prisma): Promise<ResourceSnapshot | null> {
+  async snapshot(type: ProbeSubjectType, id: string, sequence: number, db: Prisma.TransactionClient = this.prisma, measurement: ProbeMeasurement = 'MIHOMO_URL_TEST'): Promise<ResourceSnapshot | null> {
     if (type === 'UPSTREAM_NODE') {
       const node = await db.upstreamNode.findUnique({ where: { id }, include: { subscription: true } });
       if (!node || getUpstreamUnavailableReason(node)) return null;
       const version = probeHash(nodeProbeVersion(node));
-      return { request: { subjectType: type, subjectId: id, connection: readUpstreamConnection(node), configHash: version, routeKind: 'UPSTREAM_DIRECT' }, version, updatedAt: node.updatedAt, sequence };
+      return { request: { subjectType: type, subjectId: id, connection: readUpstreamConnection(node), configHash: version, routeKind: 'UPSTREAM_DIRECT' }, version, updatedAt: node.updatedAt, sequence, measurement };
     }
     const line = await db.line.findUnique({ where: { id }, include });
     if (!line || line.status !== 'ACTIVE') return null;
@@ -89,7 +89,7 @@ export class ProbeResourceService {
     }
     const version = lineProbeVersion(line);
     const connection = line.type === 'EXTERNAL' ? readUpstreamConnection(line.upstreamNode!) : this.managedConnection(line);
-    return { request: { subjectType: type, subjectId: id, connection, configHash: version, routeKind: line.type === 'EXTERNAL' ? 'UPSTREAM_DIRECT' : line.type === 'RELAY' ? 'MANAGED_RELAY' : 'MANAGED_DIRECT', allowPrivateEndpoint: line.type !== 'EXTERNAL' && Boolean(line.allowLanAccess || line.entryNode?.isLocal) }, version, updatedAt: line.updatedAt, sequence };
+    return { request: { subjectType: type, subjectId: id, connection, configHash: version, routeKind: line.type === 'EXTERNAL' ? 'UPSTREAM_DIRECT' : line.type === 'RELAY' ? 'MANAGED_RELAY' : 'MANAGED_DIRECT', allowPrivateEndpoint: line.type !== 'EXTERNAL' && Boolean(line.allowLanAccess || line.entryNode?.isLocal) }, version, updatedAt: line.updatedAt, sequence, measurement };
   }
   private managedConnection(line: ProbeLine): UpstreamConnection {
     const params = sanitizeInboundParams(JSON.parse(line.paramsJson) as Record<string, unknown>);
@@ -102,20 +102,25 @@ export class ProbeResourceService {
   }
   async persist(snapshot: ResourceSnapshot, result: ProbeResult, signal: AbortSignal): Promise<boolean> {
     const { subjectType, subjectId } = snapshot.request;
+    const measurement = snapshot.measurement ?? 'MIHOMO_URL_TEST';
     const safe = safeProbeResult(result);
-    if (!safe || safe.subjectType !== subjectType || safe.subjectId !== subjectId || safe.configHash !== snapshot.request.configHash) return false;
-    const currentLaunch = () => !signal.aborted && this.launches.get(`${subjectType}:${subjectId}`) === snapshot.sequence;
+    if (!safe || safe.measurement !== measurement || safe.subjectType !== subjectType || safe.subjectId !== subjectId || safe.configHash !== snapshot.request.configHash) return false;
+    const currentLaunch = () => !signal.aborted && this.launches.get(`${subjectType}:${subjectId}:${measurement}`) === snapshot.sequence;
     if (!currentLaunch()) return false;
     result = safe;
     const stale = new Error('STALE_PROBE_WRITE');
     try { return await this.prisma.$transaction(async (tx) => {
-      const current = await this.snapshot(subjectType, subjectId, snapshot.sequence, tx);
+      const current = await this.snapshot(subjectType, subjectId, snapshot.sequence, tx, measurement);
       if (!currentLaunch() || !current || current.version !== snapshot.version || current.updatedAt.getTime() !== snapshot.updatedAt.getTime()) return false;
-      const lastProbeJson = JSON.stringify({ ...result, applied: true, resourceVersion: snapshot.version });
-      const data = { lastProbeJson, lastTestedAt: new Date(result.testedAt), lastTestStatus: result.status, lastTestMessage: result.message };
+      const json = JSON.stringify({ ...result, applied: true, resourceVersion: snapshot.version });
+      // 测量元数据不推进配置时间，避免两种测量互相使快照失效；仍按原配置时间条件写入。
+      const data = measurement === 'PROXY_HTTP_DELAY'
+        ? { lastDebugProbeJson: json, updatedAt: snapshot.updatedAt }
+        : { lastProbeJson: json, lastTestedAt: new Date(result.testedAt), lastTestStatus: result.status, lastTestMessage: result.message, updatedAt: snapshot.updatedAt };
+      const latency = result.status === 'SUCCESS' ? result.latencyMs : null;
       const updated = subjectType === 'LINE'
-        ? await tx.line.updateMany({ where: { id: subjectId, updatedAt: snapshot.updatedAt, status: 'ACTIVE' }, data: { ...data, lastLatencyMs: result.status === 'SUCCESS' ? result.latencyMs : null } })
-        : await tx.upstreamNode.updateMany({ where: { id: subjectId, updatedAt: snapshot.updatedAt, status: 'ACTIVE', presenceStatus: 'PRESENT' }, data: { ...data, latencyMs: result.status === 'SUCCESS' ? result.latencyMs : null } });
+        ? await tx.line.updateMany({ where: { id: subjectId, updatedAt: snapshot.updatedAt, status: 'ACTIVE' }, data: { ...data, ...(measurement === 'MIHOMO_URL_TEST' ? { lastLatencyMs: latency } : {}) } })
+        : await tx.upstreamNode.updateMany({ where: { id: subjectId, updatedAt: snapshot.updatedAt, status: 'ACTIVE', presenceStatus: 'PRESENT' }, data: { ...data, ...(measurement === 'MIHOMO_URL_TEST' ? { latencyMs: latency } : {}) } });
       if (!currentLaunch()) throw stale;
       return updated.count === 1;
     }); } catch (error) { if (error === stale) return false; throw error; }

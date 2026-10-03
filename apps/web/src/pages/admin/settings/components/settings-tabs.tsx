@@ -16,7 +16,6 @@ import { GithubMirrorSettingsField } from './github-mirror-settings-field';
 import { ProbePresetEditor } from './probe-preset-editor';
 import { SpeedTierEditor } from './speed-tier-editor';
 import { LandingSettingsTab } from './landing-settings-tab';
-import { ClientKernelStatusCard } from './client-kernel-status';
 interface SettingsTabsProps {
   publicPlans: Array<{ id: string; name: string }>;
   defaultTemplate?: { name: string; description: string | null };
@@ -118,19 +117,17 @@ export function SettingsTabs({ publicPlans, defaultTemplate, dbStatsQuery, vacuu
               <div className="md:col-span-2 min-w-0">
                 <GithubMirrorSettingsField />
               </div>
-              <ClientKernelStatusCard />
               <div className="rounded-lg border bg-muted/20 p-4 md:col-span-2 space-y-4 min-w-0">
                 <div className="space-y-1">
-                  <h4 className="text-sm font-semibold">{t('admin:settings.cardLineSpeedtestTitle')}</h4>
-                  <p className="text-xs text-muted-foreground">{t('admin:settings.descLineSpeedtest')}</p>
+                  <h4 className="text-sm font-semibold">{t('admin:latencyTest.settings.title')}</h4>
+                  <p className="text-xs text-muted-foreground">{t('admin:latencyTest.settings.description')}</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2 min-w-0">
-                  <SettingsSwitch name="lineSpeedtestEnabled" label={t('admin:settings.fieldLineSpeedtestEnabled')} description={t('admin:settings.descLineSpeedtestEnabled')} className="sm:col-span-2" />
-                  <SettingsSwitch name="probeSingboxFallbackEnabled" label={t('admin:probes.fallbackLabel')} description={t('admin:probes.fallbackHelp')} className="sm:col-span-2" />
-                  <SettingsInput name="lineSpeedtestIntervalMins" label={t('admin:settings.fieldLineSpeedtestIntervalMins')} type="number" min={1} max={1440} description={t('admin:settings.descLineSpeedtestIntervalMins')} />
-                  <SettingsInput name="lineSpeedtestTimeoutMs" label={t('admin:settings.fieldLineSpeedtestTimeoutMs')} type="number" min={500} max={30000} description={t('admin:settings.descLineSpeedtestTimeoutMs')} />
+                  <SettingsSwitch name="lineSpeedtestEnabled" label={t('admin:latencyTest.settings.enabled')} description={t('admin:latencyTest.settings.enabledHelp')} className="sm:col-span-2" />
+                  <SettingsInput name="lineSpeedtestIntervalMins" label={t('admin:latencyTest.settings.interval')} type="number" min={1} max={1440} description={t('admin:latencyTest.settings.intervalHelp')} />
+                  <SettingsInput name="lineSpeedtestTimeoutMs" label={t('admin:latencyTest.settings.timeout')} type="number" min={500} max={30000} description={t('admin:latencyTest.settings.timeoutHelp')} />
                   <div className="sm:col-span-2 min-w-0">
-                    <SettingsInput name="lineSpeedtestTargetUrl" label={t('admin:settings.fieldLineSpeedtestTargetUrl')} placeholder="https://cp.cloudflare.com/generate_204" description={t('admin:settings.descLineSpeedtestTargetUrl')} />
+                    <SettingsInput name="lineSpeedtestTargetUrl" label={t('admin:latencyTest.settings.target')} placeholder="https://cp.cloudflare.com/generate_204" description={t('admin:latencyTest.settings.targetHelp')} />
                   </div>
                 </div>
               </div>

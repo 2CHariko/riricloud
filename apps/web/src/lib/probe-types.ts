@@ -3,7 +3,7 @@ export type ProbePolicy = 'MIHOMO_PREFERRED' | 'MIHOMO_ONLY';
 export type ProbeStatus = 'SUCCESS' | 'TIMEOUT' | 'ERROR' | 'UNSUPPORTED' | 'ENVIRONMENT_UNAVAILABLE' | 'CANCELED' | 'STALE' | 'SKIPPED';
 export type ProbeRouteKind = 'UPSTREAM_DIRECT' | 'MANAGED_DIRECT' | 'MANAGED_RELAY';
 export interface ProbeResult {
-  schemaVersion: 1;
+  schemaVersion: 2;
   subjectType: 'UPSTREAM_NODE' | 'LINE';
   subjectId: string;
   status: ProbeStatus;
@@ -13,7 +13,7 @@ export interface ProbeResult {
   engineVersion: string | null;
   fallbackReason: string | null;
   mihomoCompatibility: 'SUPPORTED' | 'UNSUPPORTED';
-  measurement: 'PROXY_HTTP_DELAY';
+  measurement: 'MIHOMO_URL_TEST';
   perspective: 'MASTER';
   routeKind: ProbeRouteKind;
   targetId: string;
@@ -62,16 +62,16 @@ export function isProbePending(state?: ProbeTaskState): boolean {
   return state === 'QUEUED' || state === 'RUNNING';
 }
 
-// 拒绝旧 TCP 快照、未知枚举和畸形数据，不以历史数字推断代理可用性。
+// 仅接受统一延迟测试新契约；拒绝旧 HTTP/TCP 快照，不使用历史数字回退。
 export function parseLastProbe(value: unknown): ProbeResult | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const p = value as Record<string, unknown>;
   const nullableString = (v: unknown) => v === null || typeof v === 'string';
   const finiteNonnegative = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-  if (p.schemaVersion !== 1 || p.measurement !== 'PROXY_HTTP_DELAY' || p.perspective !== 'MASTER'
+  if (p.schemaVersion !== 2 || p.measurement !== 'MIHOMO_URL_TEST' || p.perspective !== 'MASTER'
     || !['UPSTREAM_NODE', 'LINE'].includes(String(p.subjectType)) || typeof p.subjectId !== 'string'
     || !['SUCCESS', 'TIMEOUT', 'ERROR', 'UNSUPPORTED', 'ENVIRONMENT_UNAVAILABLE', 'CANCELED', 'STALE', 'SKIPPED'].includes(String(p.status))
-    || ![null, 'MIHOMO', 'SINGBOX'].includes(p.engine as string | null)
+    || ![null, 'MIHOMO'].includes(p.engine as string | null) || p.fallbackReason !== null
     || !nullableString(p.engineVersion) || !nullableString(p.fallbackReason) || !nullableString(p.errorCode)
     || !['SUPPORTED', 'UNSUPPORTED'].includes(String(p.mihomoCompatibility))
     || !['UPSTREAM_DIRECT', 'MANAGED_DIRECT', 'MANAGED_RELAY'].includes(String(p.routeKind))
@@ -80,11 +80,11 @@ export function parseLastProbe(value: unknown): ProbeResult | null {
     || typeof p.testedAt !== 'string' || !Number.isFinite(Date.parse(p.testedAt))
     || !finiteNonnegative(p.durationMs) || !(p.latencyMs === null || finiteNonnegative(p.latencyMs))
     || typeof p.configHash !== 'string' || typeof p.applied !== 'boolean'
-    || (p.status === 'SUCCESS' && (p.engine === null || p.latencyMs === null))) return null;
+    || (p.status === 'SUCCESS' && (p.engine !== 'MIHOMO' || typeof p.latencyMs !== 'number' || !Number.isInteger(p.latencyMs) || p.latencyMs <= 0 || p.latencyMs > 65535 || p.errorCode !== null))) return null;
   return p as unknown as ProbeResult;
 }
-export function probeTone(result: Pick<ProbeResult, 'status' | 'engine'>): 'success' | 'warning' | 'danger' | 'muted' {
-  if (result.status === 'SUCCESS') return result.engine === 'MIHOMO' ? 'success' : 'warning';
+export function probeTone(result: Pick<ProbeResult, 'status'>): 'success' | 'warning' | 'danger' | 'muted' {
+  if (result.status === 'SUCCESS') return 'success';
   if (result.status === 'ERROR' || result.status === 'TIMEOUT') return 'danger';
   if (result.status === 'UNSUPPORTED' || result.status === 'ENVIRONMENT_UNAVAILABLE') return 'warning';
   return 'muted';

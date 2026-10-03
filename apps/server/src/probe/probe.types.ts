@@ -2,6 +2,7 @@ import type { UpstreamConnection } from '../common/upstream-connection';
 
 export type ProbeEngine = 'MIHOMO' | 'SINGBOX';
 export type ProbePolicy = 'MIHOMO_PREFERRED' | 'MIHOMO_ONLY';
+export type ProbeMeasurement = 'MIHOMO_URL_TEST' | 'PROXY_HTTP_DELAY';
 export type ProbeStatus = 'SUCCESS' | 'TIMEOUT' | 'ERROR' | 'UNSUPPORTED' | 'ENVIRONMENT_UNAVAILABLE' | 'CANCELED' | 'STALE' | 'SKIPPED';
 export type ProbeSubjectType = 'UPSTREAM_NODE' | 'LINE';
 export type ProbeRouteKind = 'UPSTREAM_DIRECT' | 'MANAGED_DIRECT' | 'MANAGED_RELAY';
@@ -14,7 +15,7 @@ export interface ProbeConnectionRequest {
   allowPrivateEndpoint?: boolean;
 }
 export interface ProbeResult {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   subjectType: ProbeSubjectType;
   subjectId: string;
   status: ProbeStatus;
@@ -24,7 +25,7 @@ export interface ProbeResult {
   engineVersion: string | null;
   fallbackReason: string | null;
   mihomoCompatibility: 'SUPPORTED' | 'UNSUPPORTED';
-  measurement: 'PROXY_HTTP_DELAY';
+  measurement: ProbeMeasurement;
   perspective: 'MASTER';
   routeKind: ProbeRouteKind;
   targetId: string;

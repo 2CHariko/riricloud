@@ -79,6 +79,7 @@ graph TB
 ### 2.1 主控中心 (Master Server)
 - **Web UI (`apps/web`)**：为用户和管理员提供现代化的 Web 控制界面。包括用户注册登录、融合公告/订阅管理/可用线路/客户端指引的「我的订阅」控制台、通用订阅导出，以及管理员的用户管理、节点纳管、线路拓扑配置、配置下发和系统状态监控。
 - **业务 API 服务 (`apps/server`)**：基于 NestJS 框架开发，提供标准的 RESTful 接口与 JWT 鉴权；浏览器会话使用 HttpOnly/SameSite Cookie，服务端以 `sessionVersion` 递增实现注销、改密、重置和禁用后的旧会话失效。
+- **本地 E2E 启动隔离**：联调脚本为每次新主控启动生成继承正式配置的独立编译输出，避免与手动 Nest watcher 互删入口；仅在该次日志记录 HTTP 监听成功、进程存活且版本接口可达后继续资源同步/Agent 接入。不新增健康 API、鉴权或 WS 协议，现有服务复用及脚本所属进程清理不变，详见部署指南 §2.3。
 - **Agent 统一业务服务 (`apps/server/agent-gateway/agent.service.ts`)**：维护节点鉴权、遥测落库、配置快照、任务队列、探针快照与健康判定；同一节点的心跳串行处理，流量账务使用短事务；WS 网关和 HTTP 轮询控制器均为薄传输适配器。
 - **主控二进制分发中心 (`apps/server/src/binaries`)**：维护规范的双层存储架构：最高优先级的运行态持久仓 `data/binaries/`（支持多架构自定义导入、热更新与远程缓存）与静态内置仓 `binaries/`（发行包仅精准预置当前宿主架构的二进制）；开发环境下智能回退至 `artifacts/binaries`。升级任务按节点 `osArch` 选择主控内置或导入版本，下载端点使用 AgentToken 鉴权。
 - **批量 Agent 升级**：管理员节点列表批量入口由 `NodesService` 以最多 4 个并发逐节点复用单节点升级资源解析与持久化部署任务，按每个节点操作系统/架构选择并校验资产；结果逐节点区分 WS 已下发、HTTP/离线任务排队和失败。该能力不引入额外任务系统、数据库模型或 Agent/WS 协议变更。
@@ -403,17 +404,19 @@ UpstreamSubscription（来源/调度/成功快照）
 ```text
 Line / UpstreamNode → 短配置快照 → 内核无关连接模型
     ├─ Sing-box 服务端编译 → Agent 鉴权/统计/中继
-    ├─ Mihomo 客户端编译 → 主订阅 / 对应格式验证 / 默认拨测
+    ├─ Mihomo 客户端编译 → 主订阅 / 对应格式验证 / 日常延迟
     └─ Sing-box 客户端编译 → 明确兼容格式 / 能力白名单回退
 ProbeTaskService → 全局连接/进程调度 → 临时执行器
-    → 严格目标 HTTP/TLS → 安全结果 → 版本/状态/序列条件写回
+    → Mihomo URLTest（内部另保留严格 HTTP/TLS）→ 安全结果 → 类型/版本/状态/序列条件写回
 ```
 
-Mihomo 在 Master 上独立运行，不修改业务 Agent 内核。一次批次最多 32 个连接、UUID 内部名字和明确 listener→proxy 路由，随机回环控制 Secret，禁 TUN/策略自动切换/DIRECT 兜底/provider 下载。固定版本 delay API 对非预期 HTTP 状态过于宽松，因此使用同一 Mihomo 的 mixed 入站配合 Node 标准 HTTP CONNECT/TLS 客户端；实际目标 IP 固定、Host/SNI 保留、验证证书与状态、不跟随重定向。Sing-box 仅在能力白名单中显式兼容，不因主内核运行失败回退。
+Mihomo 在 Master 上独立运行，不修改业务 Agent 内核。一次批次最多 32 个连接、UUID 内部名字和随机回环控制 Secret，禁 TUN/策略自动切换/DIRECT 兜底/provider 下载。日常通过内核 `/proxies/<name>/delay` 调用 URLTest，开启 unified-delay，保留原目标 URL/HTTPS 证书校验，目标公网前检后允许代理侧解析，不承诺实际目标 IP 固定或严格预期 HTTP 状态。此普通延迟边界由维护者批准；不支持直接返回 UNSUPPORTED，不回退 Sing-box/严格方法。内部仍保留 Mihomo mixed + Node CONNECT/TLS/GET 的严格固定 IP、Host/SNI、状态校验与能力白名单兼容路径，本次无高级入口。
 
 启动屏障独立于真实测速：Mihomo 固定版本的 listener 可在 tunnel Running 前监听，直接拨业务目标可能被关连接。每批增加只访问随机令牌回环 HTTP 服务的独立自检 listener，确认数据面可处理后再执行指定代理；DIRECT 仅用于该自检，不作为业务兜底或成功结果，自检共享全局连接限额、取消和启动期限，结束清理监听。
 
 单/批量接口均快速返回 202 任务，状态与结果分页轮询，取消幂等。任务内存保留、重启后丢失；不新增外部任务服务。公平批次调度、全局 4 连接与 2 进程、单资源超时和任务总截止时间独立。任务网络不持上游来源锁；结果提交时校验版本和最新提交序列，旧快照标 STALE。异常/取消/服务停机均退出内核、等待退出并清私有配置，不能遗留秘密文件或监听。
+
+普通 schemaVersion=2 / MIHOMO_URL_TEST 和严格 schemaVersion=1 / PROXY_HTTP_DELAY 不共享去重 key、资源提交序列或持久字段。历史 lastProbeJson 迁入 lastDebugProbeJson、清空当前摘要；普通仅写 lastProbeJson 与当前延迟，严格仅写 lastDebugProbeJson。公开资源/用户/代理池消费者只读取普通安全结果，不扩展秘密字段或用旧数字回退。线路现有定时任务同步采用普通路径，不新增上游定时任务。
 
 主要客户端模板按格式验证，不默认双内核互相否决。内核缺失明确 UNAVAILABLE，外部规则/GeoIP/证书等依赖缺失明确 EXTERNAL_RESOURCES_REQUIRED；FULL 与 PARTIAL 分开，禁止改写规则后宣称完整通过。固定资源由 Docker/发行包/本地准备共用清单，运行时默认不下载。
 

@@ -21,7 +21,7 @@ native('real capability-whitelisted Sing-box fallback', () => {
     jest.spyOn(engine.targetPolicy, 'connection').mockImplementation(async (value) => value);
   });
   afterAll(async () => new Promise<void>((resolve) => target.close(() => resolve())));
-  const execute = (connection: ProxyConnection, policy: 'MIHOMO_ONLY' | 'MIHOMO_PREFERRED' = 'MIHOMO_PREFERRED') => engine.executeBatch([{ subjectType: 'UPSTREAM_NODE', subjectId: 'fixture', configHash: 'fixture-v1', routeKind: 'UPSTREAM_DIRECT', connection }], { id: 'fixture-target', url: `http://target.example:${targetPort}/204`, expectedStatus: 204 }, 1_500, policy);
+  const execute = (connection: ProxyConnection, policy: 'MIHOMO_ONLY' | 'MIHOMO_PREFERRED' = 'MIHOMO_PREFERRED') => engine.executeStrictBatch([{ subjectType: 'UPSTREAM_NODE', subjectId: 'fixture', configHash: 'fixture-v1', routeKind: 'UPSTREAM_DIRECT', connection }], { id: 'fixture-target', url: `http://target.example:${targetPort}/204`, expectedStatus: 204 }, 1_500, policy);
 
   it.each(['4', '4a'])('SOCKS%s runs a real request with explicit compatibility metadata', async (version) => {
     const kernel = await kernels.resolve('SINGBOX'); expect(kernel).not.toBeNull();

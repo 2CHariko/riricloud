@@ -222,7 +222,7 @@ export default function AdminUpstreamPage() {
           </Select>
           <Button variant="outline" onClick={() => setProbeAllOpen(true)}>
             <Activity className="size-4" />
-            {t('admin:upstream.probeAll')}
+            {t('admin:latencyTest.batchTitle')}
           </Button>
           <Button
             onClick={() => {
@@ -546,7 +546,7 @@ export default function AdminUpstreamPage() {
         open={probeAllOpen}
         onOpenChange={setProbeAllOpen}
         request={{ key: 'upstream:all:all', endpoint: '/admin/upstream/probe-all' }}
-        title={t('admin:upstream.probeAll')}
+        title={t('admin:latencyTest.batchTitle')}
       />
 
       <AlertDialog open={!!deleting} onOpenChange={(v) => !v && setDeleting(null)}>

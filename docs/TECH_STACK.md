@@ -118,9 +118,13 @@ Docker 与发行包中的 Sing-box 使用 `with_v2ray_api,with_utls,with_quic,wi
 
 订阅预览地理资源同样由该清单的 `validationResources` 固定：MetaCubeX/meta-rules-dat 的不可变提交 `a6544a371c34182ecec0363eafccd4ab3b93a58f`，包含 Country.mmdb、geoip.dat、geosite.dat 与 ASN.mmdb，实际字节总计约 38.6 MiB。准备脚本验证固定 SHA-256/大小后产生离线资源目录；运行时还必须匹配应用随包携带的 `scripts/client-kernel-assets.json`，资源目录自身清单不能替换固定地理资产，避免格式损坏触发内核自动下载。无新增 npm/Go 依赖。来源仓库 GPL-3.0，数据库还须遵守各上游数据许可（含 ASN 的 MaxMind 条款），来源与许可提示保留在清单。
 
-连接结构/通用校验不依赖具体内核；Mihomo 和 Sing-box 客户端各自校验能力并独立编译。保留 Sing-box JSON 与 URI/Base64 为兼容/辅助格式，不因另一格式失败否定本格式。主拨测默认 Mihomo；仅明确不支持 Mihomo 且进入验证白名单的组合可回退 Sing-box，超时/鉴权/配置/环境错误不回退。缺 Cronet 等依赖应报环境不可用，不能标节点失效。
+连接结构/通用校验不依赖具体内核；Mihomo 和 Sing-box 客户端各自校验能力并独立编译。保留 Sing-box JSON 与 URI/Base64 为兼容/辅助格式，不因另一格式失败否定本格式。日常延迟固定仅 Mihomo，不支持组合返回 UNSUPPORTED；仅内部严格能力保留显式 Sing-box 白名单兼容，超时/鉴权/配置/环境错误仍不回退。
 
-Mihomo 1.19.30 实测 delay API 对 HTTP 500/302 仍返回 delay，因此项目采用独立 Mihomo 回环 mixed 代理和 Node 标准 HTTP CONNECT/TLS 客户端进行严格响应状态与证书验证。临时内核只绑定回环、禁 TUN/自动健康检查/规则下载；所有验证/拨测共用全局 2 进程、4 连接限额，取消/异常后回收进程与凭据配置，不引入额外外部服务。
+日常普通延迟通过 Mihomo 1.19.30 `/proxies/<name>/delay` 调用 Proxy.URLTest，开启 unified-delay；首次 HEAD 预热后第二次成功时显示第二次耗时，第二次失败时保留内核自身语义，不平均/最小取值。固定版本 expected 参数不保证拒绝 HTTP 500/302，因此普通结果不代表严格 HTTP 状态验证。目标原 URL/HTTPS 证书验证保留；目标格式/公网前检与节点端点控制仍执行，维护者已批准目标域名交给代理侧解析，不承诺远端实际 IP 固定。
+
+内部保留独立 Mihomo 回环 mixed 代理 + Node HTTP CONNECT/TLS/GET 严格实现：固定目标 IP、保留 Host/SNI、核验状态/证书、不跟随重定向。普通与严格测量按 schemaVersion/measurement、快照字段和提交序列隔离，本次不建设高级入口。临时内核只绑定回环、禁 TUN/自动健康检查/规则下载；全部共用全局 2 进程、4 连接限额，取消/异常后回收进程与凭据配置，无新依赖或常驻服务。
+
+2026-10-03 原生证据：静态 hosts 未固定 HTTP 上游 URLTest 实际 CONNECT 目标，隔离夹具记录此限制，保留严格对照；维护者确认普通延迟语义后解除前置暂停，不把实际公网请求成功当作固定 IP 安全证明。当前 E2E 真实 VMess 订阅两种口径对照及完成验收见 [统一延迟测试记录](./plans/archive/2026-10-03-probe-latency-test.md)。
 
 ### 6.1 能力与验证证据矩阵
 
@@ -135,6 +139,6 @@ Mihomo 1.19.30 实测 delay API 对 HTTP 500/302 仍返回 delay，因此项目�
 | NaiveProxy | Sing-box 显式兼容 | Windows 依赖不可用；WSL Linux/Cronet 真实 TLS HTTP/2 CONNECT + padding + 鉴权请求 204，通过；错误密码/不可信证书/错误 SNI/500 拒绝 | `MIHOMO_NAIVE_UNSUPPORTED`；MIHOMO_ONLY 启动前拒绝，依赖缺失报环境错误 |
 | httpupgrade、自定义 HTTP headers、特定 TLS/mux/packet 参数 | 按能力明确拒绝 Mihomo | 单元拒绝与独立编译契约 | 不在回退白名单，不可静默丢弃参数 |
 
-实际请求统一拒绝非预期 200/500/302、超时/取消，以及不可信/主机名不匹配的目标证书；测试 CA 下的 HTTPS 目标通过。WSL2 Debian 13 amd64 系统 Node20 和 Node22 测试容器已进行原生执行、隔离 HTTP/中继链路、Master/Agent Docker 构建/运行和 Linux Master 包装配/启动验证。Linux arm64/macOS 仍只有资产校验，不宣称原生执行；Naive 本轮为 HTTP/2，不包含 HTTP/3。
+内部严格请求拒绝非预期 200/500/302、超时/取消及不可信/主机名不匹配的目标证书；测试 CA 下的严格 HTTPS 通过。普通 URLTest 单独以真实 HEAD/鉴权/超时/取消/HTTPS 不可信证书与原域名传递用例验收，不承诺严格状态。WSL2 Debian 13 amd64 系统 Node20/Node22 的既有原生严格、HTTP/中继、Docker 和 Master 包验证仍保留；Linux arm64/macOS 只有资产校验，不宣称本次原生执行。
 
-固定 Mihomo 启动时 listener 监听早于内部 Running 状态，版本 API/TCP 不足以判定数据面就绪；执行器使用独立回环 HTTP 204 自检屏障（DIRECT 仅属于该自检 listener），不访问业务目标、不计业务延迟。业务 listener 仍固定指定代理、无 DIRECT 回退，最终结果仍来自严格真实请求；自检也受全局连接槽与启动取消预算约束。
+固定 Mihomo 启动时 listener 监听早于内部 Running 状态，版本 API/TCP 不足以判定数据面就绪；两种执行路径共享独立回环 HTTP 204 自检屏障（DIRECT 仅属于该自检 listener），不访问业务目标、不计业务延迟。业务 listener 固定代理无 DIRECT 兜底，日常结果来自指定 proxy URLTest；自检共享连接槽/启动预算并在 finally 回收。

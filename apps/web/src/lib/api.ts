@@ -1,4 +1,4 @@
-import type { ProbePolicy, ProbeResult, ProbeTaskAccepted } from '@/lib/probe-types';
+import type { ProbeResult, ProbeTaskAccepted } from '@/lib/probe-types';
 import axios, { AxiosError } from 'axios';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
@@ -25,8 +25,10 @@ api.interceptors.response.use(
   (response) => response,
   (error: AxiosError<{ message?: string }>) => {
     const status = error.response?.status;
-    const message = getLocalizedErrorMessage(error, i18n.t('errors:network.serverError'));
     const config = error.config as (Record<string, unknown> & { url?: string; method?: string }) | undefined;
+    // 普通延迟测试的底层错误只显示安全文案，不影响 Agent 探针与模板诊断。
+    const latencyTestRequest = /^\/admin\/(?:probe-tasks\/[^/?]+(?:\/results)?|lines\/(?:[^/?]+\/speedtest|speedtest-all)|upstream\/(?:probe-all|nodes\/[^/?]+\/probe))(?:\?|$)/.test(config?.url ?? '');
+    const message = latencyTestRequest ? i18n.t('admin:latencyTest.requestFailed') : getLocalizedErrorMessage(error, i18n.t('errors:network.serverError'));
     const traceId = typeof config?.__traceId === 'string' ? config.__traceId : undefined;
     const startTime = typeof config?.__startTime === 'number' ? config.__startTime : undefined;
     const durationMs = startTime ? Date.now() - startTime : undefined;
@@ -51,12 +53,12 @@ api.interceptors.response.use(
     // 401：登录态失效，清理并跳转登录页（避免在登录页自身弹跳转循环）
     if (status === 401 && useAuthStore.getState().user) {
       useAuthStore.getState().logout();
-      toast.error(getLocalizedErrorMessage(error, i18n.t('errors:network.unauthorized')));
+      toast.error(latencyTestRequest ? i18n.t('errors:network.unauthorized') : getLocalizedErrorMessage(error, i18n.t('errors:network.unauthorized')));
       if (window.location.pathname !== '/login') {
         window.location.assign('/login');
       }
     } else if (status && status >= 500) {
-      toast.error(getLocalizedErrorMessage(error, message));
+      toast.error(latencyTestRequest ? message : getLocalizedErrorMessage(error, message));
     }
     return Promise.reject(error);
   }
@@ -306,8 +308,8 @@ export const upstreamApi = {
     api.delete<{ deleted: boolean; id: string }>(`/admin/upstream/${id}`),
   sync: (id: string) =>
     api.post<UpstreamSyncResult>(`/admin/upstream/${id}/sync`),
-  probeAll: (subscriptionId?: string, policy: ProbePolicy = 'MIHOMO_PREFERRED') =>
-    api.post<ProbeTaskAccepted>('/admin/upstream/probe-all', { policy }, { params: subscriptionId ? { subscriptionId } : undefined }),
+  probeAll: (subscriptionId?: string) =>
+    api.post<ProbeTaskAccepted>('/admin/upstream/probe-all', undefined, { params: subscriptionId ? { subscriptionId } : undefined }),
   listNodes: (params?: {
     page?: number;
     pageSize?: number;
@@ -322,8 +324,8 @@ export const upstreamApi = {
     api.get<{ data: ApiUpstreamNode[]; total: number; page: number; pageSize: number }>('/admin/upstream/nodes', { params }),
   setNodeStatus: (nodeId: string, status: UpstreamNodeStatus) =>
     api.put<{ node: ApiUpstreamNode }>(`/admin/upstream/nodes/${nodeId}/status`, { status }),
-  probeNode: (nodeId: string, policy: ProbePolicy = 'MIHOMO_PREFERRED') =>
-    api.post<ProbeTaskAccepted>(`/admin/upstream/nodes/${nodeId}/probe`, { policy }),
+  probeNode: (nodeId: string) =>
+    api.post<ProbeTaskAccepted>(`/admin/upstream/nodes/${nodeId}/probe`),
   exportNodes: (params?: { nodeIds?: string; subscriptionId?: string; format?: 'uri' | 'json' }) =>
     api.get<string>('/admin/upstream/nodes/export', { params, responseType: 'text' })
 };

@@ -45,8 +45,8 @@ export function ProbeMeasurementChip({
   const label = result
     ? result.status === 'SUCCESS'
       ? `${result.latencyMs} ms`
-      : t(`admin:probes.statusShort.${result.status}`, t(`admin:probes.status.${result.status}`))
-    : t('common:latency.notTested');
+      : t(`admin:latencyTest.statusShort.${result.status}`)
+    : t('admin:latencyTest.notTested');
 
   const content = (
     <span className={cn('inline-flex items-center gap-1.5 text-xs', className)}>
@@ -76,29 +76,13 @@ export function ProbeMeasurementChip({
       </TooltipTrigger>
       <TooltipContent className="max-w-xs space-y-1.5 text-xs shadow-lg">
         <div className="flex items-center justify-between gap-2 border-b border-primary-foreground/15 pb-1 font-semibold text-primary-foreground">
-          <span>{result ? t(`admin:probes.status.${result.status}`) : t('admin:probes.measurement')}</span>
-          {result?.latencyMs !== null && result?.latencyMs !== undefined && (
-            <span className="font-mono text-emerald-600 dark:text-emerald-700 font-bold">{result.latencyMs} ms</span>
-          )}
+          <span>{result ? t(`admin:latencyTest.status.${result.status}`) : t('admin:latencyTest.title')}</span>
+          {result?.status === 'SUCCESS' && <span className="font-mono font-bold">{result.latencyMs} ms</span>}
         </div>
         {result && (
           <>
-            <p className="text-primary-foreground/85 font-medium">
-              {result.engine ? t(`admin:probes.engine.${result.engine}`) : t('admin:probes.noEngine')}
-              {result.engineVersion ? ` · v${result.engineVersion}` : ''}
-            </p>
-            <p className="font-mono text-[11px] text-primary-foreground/70">
-              {result.targetHost} · {t(`admin:probes.route.${result.routeKind}`)}
-            </p>
-            <p className="text-[11px] text-primary-foreground/65">
-              {t('admin:probes.perspective')} · {formatDateTime(result.testedAt)}
-            </p>
-            {result.message && (
-              <p className="text-[11px] break-words text-primary-foreground/80">{result.message}</p>
-            )}
-            {result.engine === 'SINGBOX' && result.status === 'SUCCESS' && (
-              <p className="text-amber-600 dark:text-amber-700 text-[11px] font-medium">{t('admin:probes.fallbackWarning')}</p>
-            )}
+            <p className="font-mono text-[11px] text-primary-foreground/70">{result.targetHost}</p>
+            <p className="text-[11px] text-primary-foreground/65">{formatDateTime(result.testedAt)}</p>
           </>
         )}
       </TooltipContent>
@@ -131,7 +115,7 @@ export function ProbeResultCard({ result }: { result: ProbeResult }) {
             variant={tone === 'danger' ? 'destructive' : tone === 'warning' ? 'outline' : 'default'}
             className="text-xs"
           >
-            {t(`probes.status.${result.status}`)}
+            {t(`latencyTest.status.${result.status}`)}
           </Badge>
           {isSuccess && result.latencyMs !== null && (
             <div className="flex items-baseline gap-1">
@@ -143,52 +127,17 @@ export function ProbeResultCard({ result }: { result: ProbeResult }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="secondary" className="font-mono text-[11px]">
-            {result.engine ? t(`probes.engine.${result.engine}`) : t('probes.noEngine')}
-            {result.engineVersion ? ` · ${result.engineVersion}` : ''}
-          </Badge>
-        </div>
       </div>
 
       <CardContent className="p-4 space-y-2.5 text-xs">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-muted-foreground">
           <div>
-            <span>{t('probes.measurement')}：</span>
-            <span className="text-foreground">{t(`probes.route.${result.routeKind}`)}</span>
+            <span>{t('latencyTest.configuredTarget')}：</span>
+            <span className="font-mono text-foreground break-all">{result.targetHost}</span>
           </div>
-          <div>
-            <span>{t('probes.configuredTarget')}：</span>
-            <span className="font-mono text-foreground">{result.targetHost}</span>
-          </div>
-          <div>
-            <span>{t('probes.timings', { latency: isSuccess ? result.latencyMs ?? '—' : '—', duration: result.durationMs })}</span>
-          </div>
-          <div>
-            <span>{t('probes.compatibility', { status: t(`probes.compat.${result.mihomoCompatibility}`) })}</span>
-          </div>
+          <div>{t('latencyTest.testTime', { time: formatDateTime(result.testedAt) })}</div>
         </div>
-
-        {result.message && (
-          <div className="rounded bg-muted/50 p-2 font-mono text-[11px] break-words text-foreground/85">
-            {result.message}
-          </div>
-        )}
-
-        {result.errorCode && (
-          <p className="font-mono text-destructive">
-            {result.errorCode} · {result.stage}
-          </p>
-        )}
-        {result.fallbackReason && (
-          <p className="text-amber-600 dark:text-amber-400">
-            {t('probes.fallbackReason', { reason: result.fallbackReason })}
-          </p>
-        )}
-        {isSuccess && result.engine === 'SINGBOX' && (
-          <p className="text-amber-600 dark:text-amber-400">{t('probes.fallbackWarning')}</p>
-        )}
-        {!result.applied && <p className="text-muted-foreground">{t('probes.notApplied')}</p>}
+        {!isSuccess && <p className="text-muted-foreground">{t(`latencyTest.statusHelp.${result.status}`)}</p>}
       </CardContent>
     </Card>
   );

@@ -1,4 +1,31 @@
 const admin = {
+  latencyTest: {
+    title: '延迟测试', batchTitle: '全量延迟测试',
+    description: '测试当前线路到指定目标的访问延迟，结果供参考，不代表带宽或丢包率。',
+    start: '开始测试', retest: '重新测试', cancel: '取消测试', refresh: '刷新进度',
+    globalBusy: '已有延迟测试任务在执行，请先查看或取消现有任务。', viewActive: '查看正在执行的任务',
+    taskId: '任务 ID：{{id}}', progress: '进度：{{completed}} / {{total}} · 成功 {{success}} · 失败 {{failed}} · 跳过 {{skipped}}',
+    taskTimes: '创建时间：{{created}} · 有效期至：{{expires}}',
+    startFailed: '延迟测试未能启动，请稍后重试。', cancelFailed: '取消测试失败，请刷新状态后重试。',
+    requestFailed: '延迟测试请求失败，请稍后重试。',
+    taskUnavailable: '任务查询失败或已过期，可刷新或重新测试。', resultsUnavailable: '结果读取失败，可刷新重试。',
+    invalidResult: '暂无有效延迟测试结果，请重新测试。', notTested: '未测试',
+    closeHelp: '关闭窗口仅停止刷新，不会取消后台测试；重新打开可继续查看。',
+    configuredTarget: '测试目标', testTime: '测试时间：{{time}}',
+    status: { SUCCESS: '测试成功', TIMEOUT: '测试超时', ERROR: '测试失败', UNSUPPORTED: '暂不支持测试', ENVIRONMENT_UNAVAILABLE: '测试暂不可用', CANCELED: '已取消', STALE: '结果已过期', SKIPPED: '已跳过' },
+    statusShort: { SUCCESS: '成功', TIMEOUT: '超时', ERROR: '失败', UNSUPPORTED: '不支持', ENVIRONMENT_UNAVAILABLE: '不可用', CANCELED: '已取消', STALE: '待重测', SKIPPED: '跳过' },
+    statusHelp: { SUCCESS: '延迟测试成功。', TIMEOUT: '未在指定时间内完成测试，可稍后重试。', ERROR: '未能完成延迟测试，请检查线路后重试。', UNSUPPORTED: '当前线路暂不支持延迟测试，不代表线路已断开。', ENVIRONMENT_UNAVAILABLE: '测试暂时无法执行，请稍后重试。', CANCELED: '本次测试已取消。', STALE: '线路配置已变更，请重新测试。', SKIPPED: '本次测试已跳过，未产生有效结果。' },
+    state: { QUEUED: '排队等待', RUNNING: '测试中', COMPLETED: '已完成', CANCELED: '已取消', FAILED: '任务失败' },
+    upstreamDescription: '查看并管理上游节点，支持延迟测试、导出及创建外部直发或中继线路。',
+    filterAll: '全部测试状态', filterSuccess: '测试成功', filterFailed: '测试失败 / 超时', filterUntested: '未测试',
+    settings: {
+      title: '延迟测试', description: '线路与上游共用测试目标和超时，结果同步显示在管理端及用户端。',
+      enabled: '开启线路自动延迟测试', enabledHelp: '关闭后仍可手动发起延迟测试。',
+      interval: '自动测试周期（分钟）', intervalHelp: '建议 15 ~ 60 分钟。',
+      timeout: '测试超时（毫秒）', timeoutHelp: '新默认值为 10000 毫秒；已有配置保持不变，不等于整个任务的执行时间。',
+      target: '统一测试目标 URL', targetHelp: '默认使用 HTTPS 测试地址，单个任务不能覆盖此地址。'
+    }
+  },
   probes: {
     title: '链路测速',
     description: '通过代理内核发起真实 HTTP 请求，验证整条代理链路的连通性与往返耗时。',

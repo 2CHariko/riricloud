@@ -254,7 +254,7 @@ export default function AdminLinesPage() {
             className="w-full sm:w-auto"
           >
             <Activity className="size-4" />
-            {t('admin:probes.batchTitle')}
+            {t('admin:latencyTest.batchTitle')}
           </Button>
           <Button size="sm" className="w-full sm:w-auto" onClick={openCreate}>
             <Plus className="size-4" />
@@ -337,9 +337,9 @@ export default function AdminLinesPage() {
                           <HelpCircle className="size-3.5 text-muted-foreground/70 cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs space-y-1 text-xs shadow-lg">
-                          <p className="font-semibold text-primary-foreground">{t('admin:lines.latencyHelpTitle')}</p>
-                          <p className="text-primary-foreground/80 leading-relaxed">{t('admin:probes.description')}</p>
-                          <p className="text-primary-foreground/65 text-[11px]">{t('admin:probes.closeHelp')}</p>
+                          <p className="font-semibold text-primary-foreground">{t('admin:latencyTest.title')}</p>
+                          <p className="text-primary-foreground/80 leading-relaxed">{t('admin:latencyTest.description')}</p>
+                          <p className="text-primary-foreground/65 text-[11px]">{t('admin:latencyTest.closeHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -470,8 +470,8 @@ export default function AdminLinesPage() {
                         <IconButton
                           variant="ghost"
                           size="icon-sm"
-                          aria-label={t('admin:probes.title')}
-                          tooltip={t('admin:probes.title')}
+                          aria-label={t('admin:latencyTest.title')}
+                          tooltip={t('admin:latencyTest.title')}
                           onClick={() => setSpeedtestingLine(line)}
                         >
                           <Activity className="size-4" />
@@ -606,7 +606,7 @@ export default function AdminLinesPage() {
         open={batchProbeOpen}
         onOpenChange={setBatchProbeOpen}
         request={{ key: 'lines:all', endpoint: '/admin/lines/speedtest-all' }}
-        title={t('admin:probes.batchTitle')}
+        title={t('admin:latencyTest.batchTitle')}
       />
 
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
@@ -643,7 +643,7 @@ export default function AdminLinesPage() {
         </div>
         <div className="flex items-center gap-1.5 opacity-85">
           <Activity className="h-3.5 w-3.5 shrink-0" />
-          <span>{t('admin:probes.description')}</span>
+          <span>{t('admin:latencyTest.description')}</span>
         </div>
       </div>
     </PageContainer>

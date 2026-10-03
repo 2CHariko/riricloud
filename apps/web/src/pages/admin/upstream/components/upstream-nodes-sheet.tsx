@@ -131,7 +131,7 @@ export function UpstreamNodesSheet({
               </Badge>
             </div>
             <SheetDescription className="text-xs text-muted-foreground">
-              {t('admin:upstream.nodesSheetSubtitle')}
+              {t('admin:latencyTest.upstreamDescription')}
             </SheetDescription>
           </SheetHeader>
 
@@ -192,15 +192,15 @@ export function UpstreamNodesSheet({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ALL">{t('admin:upstream.probeAllFilter')}</SelectItem>
+                  <SelectItem value="ALL">{t('admin:latencyTest.filterAll')}</SelectItem>
                   <SelectItem value="SUCCESS">
-                    {t('admin:upstream.probeFilterSuccess')}
+                    {t('admin:latencyTest.filterSuccess')}
                   </SelectItem>
                   <SelectItem value="FAILED">
-                    {t('admin:upstream.probeFilterFailed')}
+                    {t('admin:latencyTest.filterFailed')}
                   </SelectItem>
                   <SelectItem value="UNTESTED">
-                    {t('admin:upstream.probeFilterUntested')}
+                    {t('admin:latencyTest.filterUntested')}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -269,7 +269,7 @@ export function UpstreamNodesSheet({
                 onClick={() => setProbeSelection('ALL')}
               >
                 <Activity className="size-3.5" />
-                {t('admin:upstream.probeAll')}
+                {t('admin:latencyTest.batchTitle')}
               </Button>
               <Button
                 variant="outline"
@@ -293,7 +293,7 @@ export function UpstreamNodesSheet({
                       {t('admin:upstream.colNodeName')}
                     </TableHead>
                     <TableHead className="w-32">
-                      {t('admin:upstream.colLatency')}
+                      {t('admin:latencyTest.title')}
                     </TableHead>
                     <TableHead className="w-40">
                       {t('admin:upstream.nodeLocalStatus')}
@@ -441,8 +441,8 @@ export function UpstreamNodesSheet({
                               <IconButton
                                 variant="ghost"
                                 size="icon-sm"
-                                aria-label={t('admin:upstream.probeNode')}
-                                tooltip={t('admin:upstream.probeNode')}
+                                aria-label={t('admin:latencyTest.title')}
+                                tooltip={t('admin:latencyTest.title')}
                                 onClick={() => setProbeSelection(node)}
                               >
                                 <Activity />
@@ -522,8 +522,8 @@ export function UpstreamNodesSheet({
           onOpenChange={(value) => !value && setProbeSelection(null)}
           title={
             probeSelection === 'ALL'
-              ? t('admin:upstream.probeAll')
-              : `${t('admin:probes.title')} · ${probeSelection.name}`
+              ? t('admin:latencyTest.batchTitle')
+              : `${t('admin:latencyTest.title')} · ${probeSelection.name}`
           }
           request={
             probeSelection === 'ALL'
