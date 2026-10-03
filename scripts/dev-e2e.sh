@@ -19,6 +19,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # 开发环境缓存/便携工具链（go、pnpm store），失败不致命（系统已装 go 时可直接用）
 source scripts/dev-env.sh >/dev/null 2>&1 || true
+source scripts/dev-e2e-server.sh
 
 read_dotenv_value() {
   local file="$1"
@@ -133,6 +134,7 @@ say "E2E Agent 版本：$E2E_AGENT_VERSION（同步资源版本：$E2E_RESOURCE_
 SERVER_PID=""
 WEB_PID=""
 AGENT_PID=""
+SERVER_TSCONFIG=""
 
 # 记录本次实际使用的主控端口：端口一旦漂移，仅探测默认地址无法发现既有主控端，
 # 二次启动会重复拉起并抢占同一端口（Windows 下表现为 EADDRINUSE 竞态）。
@@ -186,6 +188,8 @@ cleanup() {
   # 只回收本次脚本启动的服务；已在运行的复用实例保持不动
   kill_process_tree "$SERVER_PID"
   kill_process_tree "$WEB_PID"
+  # 先停止持有输出的进程，再仅清理本次隔离目录；不碰手动开发服务的 dist。
+  [ -n "$SERVER_TSCONFIG" ] && rm -rf -- "$(dirname "$SERVER_TSCONFIG")"
   [ -n "$COOKIE_JAR" ] && rm -f -- "$COOKIE_JAR"
   [ -n "$LOGIN_RESPONSE_FILE" ] && rm -f -- "$LOGIN_RESPONSE_FILE"
 }
@@ -497,31 +501,24 @@ else
   SERVER_ATTEMPTS="${SERVER_START_ATTEMPTS:-5}"
   SERVER_READY=0
   for attempt in $(seq 1 "$SERVER_ATTEMPTS"); do
-    rm -f apps/server/*.tsbuildinfo
+    SERVER_TSCONFIG="$(node scripts/dev-e2e-server-build.mjs "$ROOT/apps/server")" || die "创建主控隔离编译配置失败"
+    # Nest CLI 的 --path 使用工作区相对路径（绝对路径在当前 Windows CLI 下会被重复拼接）。
+    SERVER_TSCONFIG_ARG=".cache/$(basename "$(dirname "$SERVER_TSCONFIG")")/tsconfig.json"
     say "启动主控端（端口 $SERVER_PORT，日志：$LOG_DIR/server.log）…"
-    PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" CLASH_API_LISTEN="${CLASH_API_LISTEN:-}" pnpm dev:server >"$LOG_DIR/server.log" 2>&1 &
+    PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" CLASH_API_LISTEN="${CLASH_API_LISTEN:-}" pnpm --filter @riricloud/server exec nest start --watch --path "$SERVER_TSCONFIG_ARG" >"$LOG_DIR/server.log" 2>&1 &
     SERVER_PID=$!
     SERVER_EADDRINUSE=0
     for _ in $(seq 1 60); do
-      if server_up; then
-        SERVER_READY=1
-        break
-      fi
-      # 端口可能在探测与绑定之间被其他进程抢占：顺延到下一个可用端口重试，而不是直接失败
-      if grep -q 'EADDRINUSE' "$LOG_DIR/server.log" 2>/dev/null; then
-        SERVER_EADDRINUSE=1
-        break
-      fi
-      if grep -q 'Error:' "$LOG_DIR/server.log" 2>/dev/null; then
-        say "主控端启动失败，最近日志：" >&2
-        tail -n 40 "$LOG_DIR/server.log" >&2 || true
-        die "主控端进程启动后立即退出"
-      fi
-      if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-        say "主控端进程已退出，最近日志：" >&2
-        tail -n 40 "$LOG_DIR/server.log" >&2 || true
-        die "主控端启动失败"
-      fi
+      SERVER_START_STATE="$(e2e_server_start_state "$LOG_DIR/server.log" "$SERVER_PID")"
+      case "$SERVER_START_STATE" in
+        READY) SERVER_READY=1; break ;;
+        PORT_CONFLICT) SERVER_EADDRINUSE=1; break ;;
+        FAILED|EXITED)
+          say "主控端启动失败，最近日志：" >&2
+          tail -n 40 "$LOG_DIR/server.log" >&2 || true
+          die "主控端未完成 HTTP 监听（$SERVER_START_STATE）"
+          ;;
+      esac
       sleep 1
     done
 
@@ -531,6 +528,8 @@ else
     if [ "$SERVER_EADDRINUSE" = "1" ]; then
       kill_process_tree "$SERVER_PID"
       SERVER_PID=""
+      rm -rf -- "$(dirname "$SERVER_TSCONFIG")"
+      SERVER_TSCONFIG=""
       if [ -n "$SERVER_PORT_OVERRIDE" ]; then
         die "主控端口 $SERVER_PORT 已被占用（固定 SERVER_PORT/PORT 时不会自动顺延），请更换端口后重试"
       fi

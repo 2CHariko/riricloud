@@ -53,24 +53,7 @@ async function main() {
   const appVersion = String(args['app-version'] ?? version).trim();
   if (!filename) throw new Error('资源文件名不能为空');
 
-  const request = async (path, init = {}) => {
-    const response = await fetch(`${serverUrl}${path}`, {
-      ...init,
-      headers: { Cookie: cookieHeader, ...(init.headers ?? {}) }
-    });
-    const text = await response.text();
-    let payload;
-    try {
-      payload = text ? JSON.parse(text) : undefined;
-    } catch {
-      payload = text;
-    }
-    if (!response.ok) {
-      const detail = typeof payload === 'string' ? payload : JSON.stringify(payload);
-      throw new Error(`${init.method ?? 'GET'} ${path} 失败：HTTP ${response.status}${detail ? ` ${detail}` : ''}`);
-    }
-    return payload;
-  };
+  const request = createResourceRequest(serverUrl, cookieHeader);
 
   const resources = extractResourceList(await request('/api/v1/admin/binary-resources?page=1&pageSize=100'));
   const sameVersion = resources.filter((resource) => resource.kind === kind && resource.upstreamVersion === version);
@@ -107,6 +90,47 @@ async function main() {
   await request(`/api/v1/admin/binary-resources/${releaseId}/activate`, { method: 'POST' });
   await request(`/api/v1/admin/binary-resources/${releaseId}/default`, { method: 'POST' });
   console.log(`资源已同步：${kind.toLowerCase()} ${target} ${version}-r${revision}`);
+}
+
+export function createResourceRequest(serverUrl, cookieHeader, fetchRequest = fetch) {
+  return async (path, init = {}) => {
+    const method = init.method ?? 'GET';
+    let response;
+    let text;
+    try {
+      response = await fetchRequest(`${serverUrl}${path}`, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(method === 'GET' ? 15000 : 120000),
+        headers: { Cookie: cookieHeader, ...(init.headers ?? {}) }
+      });
+      text = await response.text();
+    } catch (error) {
+      // 不输出 cause.message、请求头或完整 URL，避免 Cookie/地址/凭据被底层错误带入日志。
+      const codes = networkErrorCodes(error);
+      throw new Error(`${method} ${path} 网络请求失败 [${codes.join(', ')}]：请检查主控进程和 server.log；写请求不会自动重试`);
+    }
+    let payload;
+    try { payload = text ? JSON.parse(text) : undefined; } catch { payload = text; }
+    if (!response.ok) {
+      const detail = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      throw new Error(`${method} ${path} 失败：HTTP ${response.status}${detail ? ` ${detail}` : ''}`);
+    }
+    return payload;
+  };
+}
+
+function networkErrorCodes(error) {
+  const codes = new Set();
+  const visit = (value, depth = 0) => {
+    if (!value || depth > 4) return;
+    if (typeof value.code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(value.code)) codes.add(value.code);
+    if (value.name === 'TimeoutError') codes.add('TIMEOUT');
+    if (value.name === 'AbortError') codes.add('ABORTED');
+    visit(value.cause, depth + 1);
+    if (Array.isArray(value.errors)) value.errors.forEach((item) => visit(item, depth + 1));
+  };
+  visit(error);
+  return codes.size ? [...codes] : ['NETWORK_ERROR'];
 }
 
 async function readAdminCookie() {
