@@ -30,6 +30,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import { Separator } from '@/components/ui/separator';
 import {
   Select,
   SelectContent,
@@ -228,9 +229,9 @@ export function UpstreamFormDialog({
           </div>
         ) : (
           <Form {...form}>
-            <form noValidate onSubmit={form.handleSubmit(submit)} className="space-y-5">
-              {/* 分组 1：基础设置 */}
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-3.5">
+            <form noValidate onSubmit={form.handleSubmit(submit)} className="space-y-4">
+              {/* 区块 1：基础设置（平铺无卡片） */}
+              <div className="space-y-3">
                 <p className="text-xs font-semibold text-muted-foreground tracking-wide uppercase">
                   {t('admin:upstream.groupBasic')}
                 </p>
@@ -314,8 +315,10 @@ export function UpstreamFormDialog({
                 </div>
               </div>
 
-              {/* 分组 2：订阅源与凭据 */}
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-3.5">
+              <Separator className="my-2" />
+
+              {/* 区块 2：订阅源与凭据（平铺无卡片） */}
+              <div className="space-y-3">
                 <p className="text-xs font-semibold text-muted-foreground tracking-wide uppercase">
                   {t('admin:upstream.groupSource')}
                 </p>
@@ -325,7 +328,7 @@ export function UpstreamFormDialog({
                     {isEditing && !editUrl ? (
                       <div className="space-y-1.5">
                         <FormLabel>{t('admin:upstream.url')}</FormLabel>
-                        <div className="flex items-center justify-between rounded-md border bg-background px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-xs">
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Lock className="size-3.5 shrink-0" />
                             <span className="font-mono">
@@ -406,12 +409,12 @@ export function UpstreamFormDialog({
                     )}
 
                     {/* 自定义请求头 (JSON) 折叠配置 */}
-                    <div className="pt-1">
+                    <div className="pt-0.5">
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-7 text-xs text-muted-foreground gap-1.5 px-1 hover:text-foreground"
+                        className="h-7 text-xs text-muted-foreground gap-1.5 px-0 hover:text-foreground"
                         onClick={() => setShowHeaders(!showHeaders)}
                       >
                         <ChevronRight
@@ -453,7 +456,7 @@ export function UpstreamFormDialog({
                     {isEditing && !editUrl ? (
                       <div className="space-y-1.5">
                         <FormLabel>{t('admin:upstream.content')}</FormLabel>
-                        <div className="flex items-center justify-between rounded-md border bg-background px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-xs">
                           <span className="font-mono text-muted-foreground">
                             {t('admin:upstream.maskedUrl')}
                           </span>
@@ -515,18 +518,20 @@ export function UpstreamFormDialog({
                 )}
               </div>
 
-              {/* 分组 3：调度与分发状态 */}
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-3.5">
+              <Separator className="my-2" />
+
+              {/* 区块 3：调度与分发状态（平铺无卡片，标准 FormItem 对齐） */}
+              <div className="space-y-3">
                 <p className="text-xs font-semibold text-muted-foreground tracking-wide uppercase">
                   {t('admin:upstream.groupSchedule')}
                 </p>
 
-                {/* 语义清晰的启用开关 */}
+                {/* 启用开关（平面无边框） */}
                 <FormField
                   control={form.control}
                   name="status"
                   render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-md border bg-background p-3">
+                    <FormItem className="flex items-center justify-between py-1">
                       <div className="space-y-0.5">
                         <FormLabel className="text-sm font-medium">
                           {t('admin:upstream.enableSubscription')}
@@ -548,12 +553,12 @@ export function UpstreamFormDialog({
                 />
 
                 {sourceType === 'URL' && (
-                  <div className="rounded-md border bg-background p-3 space-y-3">
+                  <div className="space-y-3 pt-1">
                     <FormField
                       control={form.control}
                       name="autoUpdate"
                       render={({ field }) => (
-                        <FormItem className="flex items-center justify-between">
+                        <FormItem className="flex items-center justify-between py-1">
                           <div className="space-y-0.5">
                             <FormLabel className="text-sm font-medium">
                               {t('admin:upstream.autoUpdate')}
@@ -577,7 +582,7 @@ export function UpstreamFormDialog({
                         control={form.control}
                         name="updateIntervalMins"
                         render={({ field }) => (
-                          <FormItem className="space-y-2 border-t pt-3">
+                          <FormItem className="space-y-2 pt-1">
                             <div className="flex flex-wrap items-center justify-between gap-1">
                               <FormLabel className="text-xs text-muted-foreground">
                                 {t('admin:upstream.updateIntervalMins')}
@@ -624,7 +629,7 @@ export function UpstreamFormDialog({
                 )}
               </div>
 
-              <DialogFooter>
+              <DialogFooter className="pt-2">
                 <Button
                   type="button"
                   variant="outline"
