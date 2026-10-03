@@ -161,7 +161,7 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 - `DELETE /admin/upstream/:id`：显式删除源并级联删除节点，在事务中停用关联 Line、清空引用，提交后通知 Agent。
 - `POST /admin/upstream/:id/sync`：同源串行完整同步，响应提供 `success,nodeCount,format,created,updated,missing,diagnostics{recognized,duplicates,skipped},userInfo`；元信息字节值字符串化。网络/解析失败保留 last-good，不以部分结果删除节点；歧义身份拒绝提交；节点缺失保留引用并停用关联线路，重现不自动启用。AUTO 不写成固定格式，参数变化提交后刷新 WS/HTTP 配置。
 - `POST /admin/upstream/probe-all?subscriptionId`：创建全量匹配资源的真实端到端任务，响应 HTTP 202 `{ taskId,state,total }`；可选 body `{ policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY' }`，默认前者；subscriptionId 经 UUID 校验。单任务超过 10000 个资源明确拒绝，不静默截断。
-- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status`：真实服务端分页与 tag 筛选，total 为筛选总数；返回 presenceStatus/sourceKey/关联线路等安全摘要，不包含 params/rawConfigJson。旧 isDirectSub 参数不支持。
+- `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status&presenceStatus&probeStatus`：真实服务端分页、tag 与连通性状态（probeStatus=SUCCESS|FAILED|UNTESTED）、存续状态（presenceStatus=PRESENT|MISSING）多维筛选，total 为筛选总数；返回 presenceStatus/sourceKey/关联线路等安全摘要，不包含 params/rawConfigJson。旧 isDirectSub 参数不支持。
 - `PUT /admin/upstream/nodes/:nodeId/status`：DTO 验证 `{ status: 'ACTIVE'|'DISABLED' }`；禁用节点停用关联线路并刷新配置。
 - `POST /admin/upstream/nodes/:nodeId/probe`：同样返回 HTTP 202 拨测任务，不再返回同步 TCP probe/node。Master 使用独立 Mihomo 客户端和真实上游凭据访问指定目标，UDP 协议也做真实拨测；无能力/环境标识为 UNSUPPORTED/ENVIRONMENT_UNAVAILABLE，不用 TCP 值冒充端到端延迟。
 - `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：管理员导出明确的规范化 URI 或 Sing-box outbound JSON；通过同一连接编译器保留 TLS/Reality/Transport/plugin，不能表示的协议组合报明确错误，不以含有 `://` 的任意 JSON 当原始 URI。

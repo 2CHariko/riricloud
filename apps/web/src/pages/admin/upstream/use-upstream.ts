@@ -18,6 +18,8 @@ export function useAdminUpstreamNodes(params?: {
   protocolType?: string;
   tag?: string;
   status?: string;
+  presenceStatus?: 'PRESENT' | 'MISSING';
+  probeStatus?: 'SUCCESS' | 'FAILED' | 'UNTESTED';
 }, enabled = true) {
   return useQuery({
     queryKey: ['admin-upstream-nodes', params],
