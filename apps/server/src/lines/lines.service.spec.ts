@@ -40,6 +40,21 @@ describe('LinesService', () => {
     endpointOverrideEnabled: false, serverHost: null, serverPort: null, serverName: null, host: null, trafficRate: 1, tagsJson: '["premium"]', level: 0, sortOrder: 0, isPublic: true, status: 'ACTIVE', createdAt: new Date(), updatedAt: new Date(), entryNode, landingNode: null
   };
 
+  it('线路 serializer 不公开严格历史或旧严格数字，目标线路关联同样隔离', async () => {
+    const debug = { schemaVersion: 1, subjectType: 'LINE', subjectId: rawLine.id, status: 'SUCCESS', errorCode: null, message: 'PROXY_HTTP_OK', engine: 'MIHOMO', engineVersion: '1.19.30', fallbackReason: null, mihomoCompatibility: 'SUPPORTED', measurement: 'PROXY_HTTP_DELAY', perspective: 'MASTER', routeKind: 'MANAGED_DIRECT', targetId: 'target', targetHost: 'example.com', testedAt: new Date().toISOString(), durationMs: 20, latencyMs: 10, stage: 'DIAL_HTTP', configHash: 'hash', applied: true } as const;
+    const target = { ...rawLine, id: 'target', entryNode: exitNode, lastDebugProbeJson: 'private-target-debug', lastProbeJson: JSON.stringify(debug) };
+    prisma.line.findUnique.mockResolvedValue({ ...rawLine, lastDebugProbeJson: 'private-debug', lastProbeJson: JSON.stringify(debug), lastLatencyMs: 10, lastTestStatus: 'SUCCESS', targetLine: target });
+    const { line } = await service.detail(rawLine.id);
+    expect(line).toMatchObject({ lastProbe: null, lastLatencyMs: null, lastTestedAt: null, lastTestStatus: null, lastTestMessage: null });
+    expect(line).not.toHaveProperty('lastDebugProbeJson');
+    expect(line.targetLine).not.toHaveProperty('lastDebugProbeJson');
+    expect(JSON.stringify(line)).not.toContain('private-debug');
+    expect(JSON.stringify(line)).not.toContain('private-target-debug');
+    expect(JSON.stringify(line)).not.toContain('PROXY_HTTP_DELAY');
+    expect(service.toUserSummary({ ...line, lastProbe: debug }).lastProbe).toBeNull();
+    expect(service.toUserSummary({ ...line, lastProbe: { ...debug, schemaVersion: 2, measurement: 'MIHOMO_URL_TEST' } }).lastProbe).toMatchObject({ schemaVersion: 2, measurement: 'MIHOMO_URL_TEST', latencyMs: 10 });
+  });
+
   it('创建直连线路时将协议参数归一化并自动绑定同一节点', async () => {
     prisma.line.create.mockResolvedValue(rawLine);
     const result = await service.create({ name: '东京 VLESS', tag: 'tokyo-vless', listen: '127.0.0.1', protocolType: 'VLESS', entryNodeId: entryNode.id, entryPort: 24443, params: { tls: { mode: 'reality' } } });

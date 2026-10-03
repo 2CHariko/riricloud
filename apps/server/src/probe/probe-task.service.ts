@@ -4,12 +4,12 @@ import { SettingsService } from '../system/settings.service';
 import { ProbeService } from './probe.service';
 import { ProbeResourceService, probeHash, type ProbeSelection, type ResourceSnapshot } from './probe-resource.service';
 import { safeProbeResult } from './probe-result';
-import type { ProbePolicy, ProbeResult, ProbeSubjectType, ProbeTarget } from './probe.types';
+import type { ProbeMeasurement, ProbePolicy, ProbeResult, ProbeSubjectType, ProbeTarget } from './probe.types';
 
 export type ProbeTaskState = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELED' | 'FAILED';
 interface Task {
   taskId: string; ownerId: string; subjectType: ProbeSubjectType; ids: string[]; sequence: number; key: string;
-  policy: ProbePolicy; executionPolicy: ProbePolicy; target: ProbeTarget; timeoutMs: number; state: ProbeTaskState;
+  policy: ProbePolicy; executionPolicy: ProbePolicy; measurement: ProbeMeasurement; target: ProbeTarget; timeoutMs: number; state: ProbeTaskState;
   phase: string; createdAt: string; expiresAt: string; startedAt: string | null; finishedAt: string | null;
   results: Map<string, ProbeResult>; controller: AbortController; cursor: number; deadline?: NodeJS.Timeout;
 }
@@ -32,9 +32,10 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     for (const task of this.tasks.values()) { if (!terminal(task.state)) this.finish(task, 'CANCELED'); task.results.clear(); }
     this.queue.length = 0; this.tasks.clear();
   }
-  async start(ownerId: string, subjectType: ProbeSubjectType, selection: ProbeSelection, policy: ProbePolicy = 'MIHOMO_PREFERRED') {
+  async start(ownerId: string, subjectType: ProbeSubjectType, selection: ProbeSelection, policy: ProbePolicy = 'MIHOMO_ONLY', measurement: ProbeMeasurement = 'MIHOMO_URL_TEST') {
     if (!ownerId || this.stopping) throw new BadRequestException('探针服务不可用');
     if (!['MIHOMO_PREFERRED', 'MIHOMO_ONLY'].includes(policy)) throw new BadRequestException('探针策略无效');
+    if (!['MIHOMO_URL_TEST', 'PROXY_HTTP_DELAY'].includes(measurement)) throw new BadRequestException('测量类型无效');
     const settings = await this.settings.getSettings();
     let url: URL;
     try { url = new URL(settings.lineSpeedtestTargetUrl); } catch { throw new BadRequestException('探针目标配置无效'); }
@@ -44,14 +45,15 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     if (this.stopping) throw new BadRequestException('探针服务正在关闭');
     if (ids.length > 10000) throw new BadRequestException('单个探针任务最多包含 10000 个资源');
     this.sweep();
-    const executionPolicy: ProbePolicy = settings.probeSingboxFallbackEnabled === false ? 'MIHOMO_ONLY' : policy;
-    const key = probeHash([subjectType, ids, target, policy, executionPolicy]);
+    const executionPolicy: ProbePolicy = measurement === 'MIHOMO_URL_TEST' || settings.probeSingboxFallbackEnabled === false ? 'MIHOMO_ONLY' : policy;
+    const timeoutMs = Math.min(30000, Math.max(500, settings.lineSpeedtestTimeoutMs));
+    const key = probeHash([subjectType, ids, target, executionPolicy, timeoutMs, measurement]);
     const duplicate = [...this.tasks.values()].find((task) => !terminal(task.state) && task.key === key && task.ownerId === ownerId);
     if (duplicate) return this.receipt(duplicate);
     if ([...this.tasks.values()].filter((task) => task.ownerId === ownerId && !terminal(task.state)).length >= 2) throw new HttpException('每位管理员最多同时运行两个探针任务', 429);
     if ([...this.tasks.values()].filter((task) => !terminal(task.state)).length >= 20) throw new HttpException('探针队列已满', 429);
     const now = Date.now();
-    const task: Task = { taskId: randomUUID(), ownerId, subjectType, ids, sequence: this.resources.reserve(subjectType, ids), key, policy, executionPolicy, target, timeoutMs: Math.min(30000, Math.max(500, settings.lineSpeedtestTimeoutMs)), state: 'QUEUED', phase: 'QUEUED', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + DEADLINE).toISOString(), startedAt: null, finishedAt: null, results: new Map(), controller: new AbortController(), cursor: 0 };
+    const task: Task = { taskId: randomUUID(), ownerId, subjectType, ids, sequence: this.resources.reserve(subjectType, ids, measurement), key, policy: executionPolicy, executionPolicy, measurement, target, timeoutMs, state: 'QUEUED', phase: 'QUEUED', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + DEADLINE).toISOString(), startedAt: null, finishedAt: null, results: new Map(), controller: new AbortController(), cursor: 0 };
     task.deadline = setTimeout(() => { if (!terminal(task.state)) this.finish(task, 'FAILED', 'TASK_DEADLINE'); }, DEADLINE); task.deadline.unref();
     this.tasks.set(task.taskId, task); this.queue.push(task);
     setImmediate(() => this.pump());
@@ -62,7 +64,7 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     const task = this.find(id), results = [...task.results.values()];
     const success = results.filter((r) => r.status === 'SUCCESS').length;
     const skipped = results.filter((r) => ['SKIPPED', 'UNSUPPORTED', 'ENVIRONMENT_UNAVAILABLE', 'CANCELED', 'STALE'].includes(r.status)).length;
-    return { ...this.receipt(task), completed: results.length, success, failed: results.length - success - skipped, skipped, phase: task.phase, policy: task.policy, targetId: task.target.id, createdAt: task.createdAt, startedAt: task.startedAt, finishedAt: task.finishedAt, expiresAt: task.expiresAt };
+    return { ...this.receipt(task), completed: results.length, success, failed: results.length - success - skipped, skipped, phase: task.phase, policy: task.policy, measurement: task.measurement, targetId: task.target.id, createdAt: task.createdAt, startedAt: task.startedAt, finishedAt: task.finishedAt, expiresAt: task.expiresAt };
   }
   results(id: string, page = 1, pageSize = 20) {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) throw new BadRequestException('探针分页参数无效');
@@ -97,7 +99,7 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     for (const id of ids) {
       if (task.controller.signal.aborted) return;
       try {
-        const snapshot = await this.resources.snapshot(task.subjectType, id, task.sequence);
+        const snapshot = await this.resources.snapshot(task.subjectType, id, task.sequence, undefined, task.measurement);
         if (task.controller.signal.aborted) return;
         if (snapshot) snapshots.set(id, snapshot);
         else task.results.set(id, this.localResult(task, id, 'SKIPPED', 'RESOURCE_UNAVAILABLE'));
@@ -111,7 +113,7 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
       const result = safeProbeResult(raw);
       if (task.controller.signal.aborted || !result || seen.has(result.subjectId)) return;
       const snapshot = snapshots.get(result.subjectId);
-      if (!snapshot || result.subjectType !== task.subjectType || result.configHash !== snapshot.request.configHash || result.targetId !== task.target.id) return;
+      if (!snapshot || result.measurement !== task.measurement || result.subjectType !== task.subjectType || result.configHash !== snapshot.request.configHash || result.targetId !== task.target.id) return;
       seen.add(result.subjectId);
       const write = (async () => {
         try {
@@ -129,7 +131,8 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     };
     try {
       if (snapshots.size) {
-        const results = await this.engine.executeBatch([...snapshots.values()].map((s) => s.request), task.target, task.timeoutMs, task.executionPolicy, task.controller.signal, accept);
+        const execute = task.measurement === 'MIHOMO_URL_TEST' ? this.engine.executeBatch.bind(this.engine) : this.engine.executeStrictBatch.bind(this.engine);
+        const results = await execute([...snapshots.values()].map((s) => s.request), task.target, task.timeoutMs, task.executionPolicy, task.controller.signal, accept);
         for (const result of results) await accept(result);
       }
     } catch {
@@ -142,7 +145,7 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     if (task.cursor >= task.ids.length) this.finish(task, 'COMPLETED');
   }
   private localResult(task: Task, id: string, status: ProbeResult['status'], errorCode: string): ProbeResult {
-    return { schemaVersion: 1, subjectType: task.subjectType, subjectId: id, status, errorCode, message: status === 'SKIPPED' ? '资源不可用，已跳过' : status === 'CANCELED' ? '任务已取消' : '探针任务未完成', engine: null, engineVersion: null, fallbackReason: null, mihomoCompatibility: 'UNSUPPORTED', measurement: 'PROXY_HTTP_DELAY', perspective: 'MASTER', routeKind: task.subjectType === 'UPSTREAM_NODE' ? 'UPSTREAM_DIRECT' : 'MANAGED_DIRECT', targetId: task.target.id, targetHost: new URL(task.target.url).hostname, testedAt: new Date().toISOString(), durationMs: 0, latencyMs: null, stage: 'VALIDATE', configHash: '', applied: false };
+    return { schemaVersion: task.measurement === 'MIHOMO_URL_TEST' ? 2 : 1, subjectType: task.subjectType, subjectId: id, status, errorCode, message: status === 'SKIPPED' ? '资源不可用，已跳过' : status === 'CANCELED' ? '任务已取消' : '延迟测试未完成', engine: null, engineVersion: null, fallbackReason: null, mihomoCompatibility: 'UNSUPPORTED', measurement: task.measurement, perspective: 'MASTER', routeKind: task.subjectType === 'UPSTREAM_NODE' ? 'UPSTREAM_DIRECT' : 'MANAGED_DIRECT', targetId: task.target.id, targetHost: new URL(task.target.url).hostname, testedAt: new Date().toISOString(), durationMs: 0, latencyMs: null, stage: 'VALIDATE', configHash: '', applied: false };
   }
   private finish(task: Task, state: ProbeTaskState, code = 'TASK_CANCELED') {
     task.state = state; task.phase = state; task.finishedAt = new Date().toISOString(); task.expiresAt = new Date(Date.now() + RETENTION).toISOString();
@@ -150,7 +153,7 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     for (let index = this.queue.length - 1; index >= 0; index--) if (this.queue[index] === task) this.queue.splice(index, 1);
     task.controller.abort();
     for (const id of task.ids) if (!task.results.has(id)) task.results.set(id, this.localResult(task, id, state === 'CANCELED' ? 'CANCELED' : 'ERROR', code));
-    this.resources.release(task.subjectType, task.ids, task.sequence);
+    this.resources.release(task.subjectType, task.ids, task.sequence, task.measurement);
     this.sweep();
   }
 }

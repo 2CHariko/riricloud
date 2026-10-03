@@ -130,7 +130,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `DELETE /admin/lines/:id`：删除线路。⭐ 被 `TARGET_LINE` 中继引用的线路会返回 `400`，必须先解除引用。
 - `POST /admin/lines/:id/duplicate`（兼容别名 `/copy`）：复制线路，副本默认禁用；若端口冲突则为副本分配新的可用五位端口。⭐
 - `POST /admin/lines/:id/test`：解析并返回最终对外端点、入口/落地节点与端口，不建立真实连接。⭐
-- `POST /admin/lines/:id/speedtest`：创建真实整线路端到端拨测任务，HTTP 202 `{taskId,state,total}`，可选 `{policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY'}`；默认 Mihomo 客户端使用系统专用探针凭据，不计用户账单。通过 `/admin/probe-tasks` 轮询/取消，不再返回旧同步 topology/stages 结果；TCP 检查不能代替成功。
+- `POST /admin/lines/:id/speedtest`：创建整线路普通延迟测试任务，HTTP 202 `{taskId,state,total}`；body 可省略，旧 `{policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY'}` 仍兼容接收但实际始终 Mihomo URLTest，不触发兼容或严格回退。系统专用凭据不计用户账单；通过 `/admin/probe-tasks` 轮询/取消，TCP 检查不能代替延迟结果。
 - `POST /admin/lines/speedtest-all`：同样返回 HTTP 202，匹配全部启用线路，统一全局连接/进程限额；前端不用 120 秒挂起请求，任务结果分页与状态异步获取。
 - `POST /admin/lines/batch-status`：批量启用/禁用线路。⭐ 请求 `{ ids: UUID[], status: "ACTIVE"|"DISABLED" }`。
 - `PATCH /admin/lines/reorder`：批量调整排序。⭐ 请求 `{ items: [{ id, sortOrder }] }`。
@@ -160,23 +160,24 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 - `PUT /admin/upstream/:id`：按合并后来源类型验证。TEXT 未提交 content 则保持原文，不接受空文本替换；可切换 ACTIVE/DISABLED。状态变化提交后清配置缓存，源禁用立即停止其直发与中继，重新启用不复活此前自动禁用的线路。
 - `DELETE /admin/upstream/:id`：显式删除源并级联删除节点，在事务中停用关联 Line、清空引用，提交后通知 Agent。
 - `POST /admin/upstream/:id/sync`：同源串行完整同步，响应提供 `success,nodeCount,format,created,updated,missing,diagnostics{recognized,duplicates,skipped},userInfo`；元信息字节值字符串化。网络/解析失败保留 last-good，不以部分结果删除节点；歧义身份拒绝提交；节点缺失保留引用并停用关联线路，重现不自动启用。AUTO 不写成固定格式，参数变化提交后刷新 WS/HTTP 配置。
-- `POST /admin/upstream/probe-all?subscriptionId`：创建全量匹配资源的真实端到端任务，响应 HTTP 202 `{ taskId,state,total }`；可选 body `{ policy:'MIHOMO_PREFERRED'|'MIHOMO_ONLY' }`，默认前者；subscriptionId 经 UUID 校验。单任务超过 10000 个资源明确拒绝，不静默截断。
+- `POST /admin/upstream/probe-all?subscriptionId`：创建全量匹配资源的普通延迟测试任务，响应 HTTP 202 `{taskId,state,total}`；body 可省略，旧 policy 字段仅兼容接收，不改变日常路径。subscriptionId 经 UUID 校验，单任务超过 10000 个资源明确拒绝，不静默截断。
 - `GET /admin/upstream/nodes?page&pageSize&subscriptionId&search&protocolType&tag&status&presenceStatus&probeStatus`：真实服务端分页、tag 与连通性状态（probeStatus=SUCCESS|FAILED|UNTESTED）、存续状态（presenceStatus=PRESENT|MISSING）多维筛选，total 为筛选总数；返回 presenceStatus/sourceKey/关联线路等安全摘要，不包含 params/rawConfigJson。旧 isDirectSub 参数不支持。
 - `PUT /admin/upstream/nodes/:nodeId/status`：DTO 验证 `{ status: 'ACTIVE'|'DISABLED' }`；禁用节点停用关联线路并刷新配置。
-- `POST /admin/upstream/nodes/:nodeId/probe`：同样返回 HTTP 202 拨测任务，不再返回同步 TCP probe/node。Master 使用独立 Mihomo 客户端和真实上游凭据访问指定目标，UDP 协议也做真实拨测；无能力/环境标识为 UNSUPPORTED/ENVIRONMENT_UNAVAILABLE，不用 TCP 值冒充端到端延迟。
+- `POST /admin/upstream/nodes/:nodeId/probe`：同样返回 HTTP 202 普通延迟任务，不返回同步 TCP 值。Master 使用独立 Mihomo 和真实上游凭据访问目标；能力不支持或运行环境不可用明确返回 UNSUPPORTED/ENVIRONMENT_UNAVAILABLE，不自动禁用节点。
 - `GET /admin/upstream/nodes/export?nodeIds&subscriptionId&format=uri|json`：管理员导出明确的规范化 URI 或 Sing-box outbound JSON；通过同一连接编译器保留 TLS/Reality/Transport/plugin，不能表示的协议组合报明确错误，不以含有 `://` 的任意 JSON 当原始 URI。
 - `GET /admin/upstream/:id/sync-status`：返回 QUEUED/FETCHING/PARSING/COMMITTING/IDLE 阶段及最近同步/成功时间、状态和脱敏诊断；不返回连接秘密。
 - **BREAKING CHANGE**：删除 `/nodes/:nodeId/direct-sub`、isDirectSub 字段和 fingerprint。直接分发通过 EXTERNAL Line 授权；不提供旧接口、转换或旧数据回填。
 
-#### 统一客户端拨测任务 (`/admin/probe-tasks`)
+#### 统一延迟测试任务 (`/admin/probe-tasks`)
 
 - `GET /admin/probe-tasks/:taskId`：状态 QUEUED/RUNNING/COMPLETED/CANCELED/FAILED、total/completed/success/failed/skipped、阶段及时间；任务状态内存保留，完成 15 分钟后过期，重启后不可恢复。
-- `GET /admin/probe-tasks/:taskId/results?page&pageSize`：分页安全结果，pageSize 1~200。结果含 subjectType/id、status/errorCode、实际 engine/version、fallbackReason、mihomoCompatibility、measurement=PROXY_HTTP_DELAY、perspective=MASTER、routeKind、targetId/targetHost、testedAt/durationMs/latencyMs、configHash/applied；不含连接参数、凭据、控制 Secret 或原始日志。
+- `GET /admin/probe-tasks/:taskId/results?page&pageSize`：分页安全结果，pageSize 1~200。日常结果为 schemaVersion=2、measurement=MIHOMO_URL_TEST、perspective=MASTER；保留 subjectType/id、status/errorCode、实际 engine/version、fallbackReason（恒 null）、mihomoCompatibility、routeKind、targetId/targetHost、testedAt/durationMs/latencyMs、configHash/applied 元信息。不含连接参数、凭据、控制 Secret 或原始日志；前端只展示延迟/状态/目标/时间，不展示内核、版本、兼容性、回退策略或模式切换。
 - `DELETE /admin/probe-tasks/:taskId`：幂等请求取消；完成态保持不变。关闭前端窗口只停止轮询，不自动取消服务器任务。
 - `GET /admin/client-kernels/status`：管理员查看 Mihomo/Sing-box 可执行性、版本及兼容依赖画像，不输出秘密。
 - 状态 SUCCESS/TIMEOUT/ERROR/UNSUPPORTED/ENVIRONMENT_UNAVAILABLE/CANCELED/STALE/SKIPPED 分开；失败延迟为 null，环境或取消不更改业务启停。资源配置/关联状态变更后旧结果 STALE，不能覆盖新配置。单资源重复任务去重，最多 20 个等待任务、单管理员 2 活跃任务、全局 4 连接/2 内核进程；任务 30 分钟截止，结果分页。
-- 回退只在能力白名单明确不支持 Mihomo 时生效；`probeSingboxFallbackEnabled=false` 或 MIHOMO_ONLY 禁止回退。Mihomo 超时、鉴权/配置/环境错误不触发回退；Sing-box 兼容成功不代表 Mihomo 主客户端验证通过。
-- 测量均为真实代理请求延迟，不是带宽/丢包/ICMP RTT。上游/EXTERNAL 路径 Master→上游→目标，自建/中继路径 Master→入口→实际出口→目标；结果不能互相代替。默认目标 HTTPS generate_204，严格核验预期 HTTP 状态、目标证书、不跟随重定向，临时内核不读取上游策略组/规则。
+- 日常固定 Mihomo 1.19.30 内部 Proxy.URLTest（`/proxies/<name>/delay`）且 unified-delay=true；优先显示预热后第二次 HEAD 耗时，第二次请求失败时沿用内核自身语义，不平均或挑最小值。不支持组合返回 UNSUPPORTED，超时/鉴权/配置/环境失败不回退到 Sing-box、严格方法或 TCP 数字；旧 policy/回退设置不改变日常路径。
+- 延迟不是带宽/丢包/ICMP RTT，也不承诺严格 HTTP 状态核验；固定版本 expected 参数不能拒绝所有非预期状态。默认 HTTPS generate_204、新安装超时 10000 ms，已有显式配置保留。目标仍做格式/公网解析前检，节点端点仍受控；按维护者批准，目标域名允许代理侧解析，不承诺实际目标 IP 与前检相同。保留 HTTPS 证书校验，不以 IP 替换原 URL，不跟随重定向（内核固定版本语义）。
+- 内部保留 schemaVersion=1 / PROXY_HTTP_DELAY 的严格 CONNECT/TLS/GET 方法及能力白名单兼容分支，本次无公开调试入口。历史 lastProbeJson 自动转存 lastDebugProbeJson、当前延迟摘要清空；旧严格/TCP 值不冒充新延迟。任务去重、提交序列与写回字段按 measurement 隔离；资源配置变化/取消/权限/启停规则保持不变。
 
 
 #### 系统设置

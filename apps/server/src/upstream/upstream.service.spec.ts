@@ -220,4 +220,14 @@ describe('上游事务与秘密回归（无数据库）', () => {
     const result = await service.listNodes({});
     expect(result.data[0]).toMatchObject({ lastProbe: null, latencyMs: null, lastTestStatus: null });
   });
+  it('上游 serializer 白名单不公开严格历史，也不把旧严格结果当普通延迟', async () => {
+    const { service, prisma, sub } = setup();
+    const debug = { schemaVersion: 1, subjectType: 'UPSTREAM_NODE', subjectId: 'n', status: 'SUCCESS', errorCode: null, message: 'PROXY_HTTP_OK', engine: 'MIHOMO', engineVersion: '1.19.30', fallbackReason: null, mihomoCompatibility: 'SUPPORTED', measurement: 'PROXY_HTTP_DELAY', perspective: 'MASTER', routeKind: 'UPSTREAM_DIRECT', targetId: 'target', targetHost: 'example.com', testedAt: new Date().toISOString(), durationMs: 20, latencyMs: 10, stage: 'DIAL_HTTP', configHash: 'hash', applied: true };
+    prisma.upstreamNode.findMany.mockResolvedValue([{ id: 'n', subscriptionId: 'source', status: 'ACTIVE', presenceStatus: 'PRESENT', subscription: sub, tagsJson: '[]', lastDebugProbeJson: 'private-debug', lastProbeJson: JSON.stringify(debug), latencyMs: 10, lastTestStatus: 'SUCCESS', createdAt: new Date(), updatedAt: new Date() }] as never);
+    const result = await service.listNodes({});
+    expect(result.data[0]).toMatchObject({ lastProbe: null, latencyMs: null, lastTestedAt: null, lastTestStatus: null, lastTestMessage: null });
+    expect(result.data[0]).not.toHaveProperty('lastDebugProbeJson');
+    expect(JSON.stringify(result)).not.toContain('private-debug');
+    expect(JSON.stringify(result)).not.toContain('PROXY_HTTP_DELAY');
+  });
 });

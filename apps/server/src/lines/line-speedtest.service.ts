@@ -18,7 +18,7 @@ export class LineSpeedtestService implements OnModuleInit, OnModuleDestroy {
     try {
       const settings = await this.settings.getSettings();
       if (!settings.lineSpeedtestEnabled || Date.now() - this.lastScheduledAt < Math.max(1, settings.lineSpeedtestIntervalMins) * 60_000 || this.stopping) return;
-      await this.tasks.start('SYSTEM_LINE_SCHEDULER', 'LINE', {}, 'MIHOMO_PREFERRED');
+      await this.tasks.start('SYSTEM_LINE_SCHEDULER', 'LINE', {});
       this.lastScheduledAt = Date.now();
     } catch { this.logger.warn('Scheduled line probe could not be queued'); }
     finally { this.checking = false; }

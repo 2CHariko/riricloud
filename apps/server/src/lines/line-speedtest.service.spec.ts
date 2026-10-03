@@ -13,7 +13,7 @@ describe('线路自动探针调度', () => {
     expect(service).not.toHaveProperty('tcpPing');
     service.onModuleInit();
     await jest.advanceTimersByTimeAsync(60000);
-    expect(tasks.start).toHaveBeenCalledWith('SYSTEM_LINE_SCHEDULER', 'LINE', {}, 'MIHOMO_PREFERRED');
+    expect(tasks.start).toHaveBeenCalledWith('SYSTEM_LINE_SCHEDULER', 'LINE', {});
     service.onModuleDestroy();
     await jest.advanceTimersByTimeAsync(60000);
     expect(tasks.start).toHaveBeenCalledTimes(1);

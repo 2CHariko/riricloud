@@ -743,8 +743,8 @@ model HelpArticle {
 | `customHeadHtml` | HTML/JS 文本 | `""` | 管理员可信边界内由面板 `document.head` 运行时注入；可读取当前页面 JWT，默认 CSP 不允许任意 inline script |
 | `lineSpeedtestEnabled` | `"true"` / `"false"` | `"true"` | 是否开启后台线路自动定时测速 |
 | `lineSpeedtestIntervalMins` | 十进制整数（1~1440） | `"30"` | 线路自动测速执行周期（分钟） |
-| `lineSpeedtestTargetUrl` | HTTP/HTTPS URL | `"http://cp.cloudflare.com/generate_204"` | 线路测速探测目标 URL |
-| `lineSpeedtestTimeoutMs` | 十进制整数（500~30000） | `"3000"` | 单次测速连接超时阈值（毫秒） |
+| `lineSpeedtestTargetUrl` | HTTP/HTTPS URL | `"https://cp.cloudflare.com/generate_204"` | 统一延迟测试目标 URL；已有显式值保留 |
+| `lineSpeedtestTimeoutMs` | 十进制整数（500~30000） | `"10000"` | 单资源普通延迟超时（毫秒），新默认十秒，不覆盖已有值 |
 | `systemTimezone` | IANA 时区标识（如 `Asia/Shanghai`） | `"Asia/Shanghai"` | 全系统统一时区设置；驱动全站前端时间格式化、后端流量图表按小时/天聚合时间桶以及自然月重置边界精确计算 |
 | `smtpEnabled` | `"true"` / `"false"` | `"false"` | 是否启用 SMTP 发信；密码只在服务端保存，管理端读取时脱敏 |
 | `smtpHost` / `smtpPort` / `smtpSecure` | 主机文本 / 十进制端口 / 布尔 | `""` / `"587"` / `"false"` | SMTP 服务器连接参数；`smtpSecure=true` 使用 SSL/TLS |
@@ -1164,7 +1164,8 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 | `connectionHash` / `configHash` | 全长 SHA-256 规范化完整连接特征和配置变化哈希；不是业务 ID，也不使用随机密文计算 |
 | `presenceStatus` / `missingSince` | PRESENT / MISSING 与缺失时间；独立于管理员启用状态 |
 | `tagsJson` | 地区标签数组，用于资源筛选；Line 自身标签用于套餐授权 |
-| `latencyMs` / `lastTestedAt` / `lastTestStatus` / `lastTestMessage` | 只镜像新端到端拨测摘要；没有有效 lastProbeJson 时不展示旧 TCP 数字 |
+| `latencyMs` / `lastTestedAt` / `lastTestStatus` / `lastTestMessage` | 只镜像普通 schema2 / MIHOMO_URL_TEST 摘要；没有有效 lastProbeJson 时不展示历史严格或 TCP 数字 |
+| `lastProbeJson` / `lastDebugProbeJson` | 前者仅日常延迟；后者内部严格历史，API 不整体展开或公开 |
 | `status` | 管理员 ACTIVE / DISABLED；同步不覆盖 |
 
 ### 11.2 业务不变量与授权
@@ -1187,13 +1188,13 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内�
 
 ## 12. 统一客户端测量摘要
 
-Line 与 UpstreamNode 新增 `lastProbeJson String?`，保存 schemaVersion=1 的安全结果，API 输出 `lastProbe` 白名单对象：实际内核/版本、回退原因、主要客户端兼容性、Master 视角、链路类型、测试目标 ID/host、时间、耗时、延迟、状态/原因码、配置 hash/applied。禁止保存连接秘密、完整含凭据 URL、原始内核日志或控制 Secret。
+Line 与 UpstreamNode 持有 `lastProbeJson String?`（普通 schemaVersion=2 / MIHOMO_URL_TEST）和 `lastDebugProbeJson String?`（内部严格 schemaVersion=1 / PROXY_HTTP_DELAY）。API 的 `lastProbe` 只输出普通安全白名单：Master 视角、链路类型、目标 ID/host、时间/耗时/延迟、状态/原因码、配置 hash/applied 及后台执行元信息；前端不展示内核/版本/兼容/回退。禁止保存连接秘密、完整含凭据 URL、原始日志或控制 Secret，关联序列化不得泄露严格历史。
 
-迁移 `20261001010000_client_probe_metadata` 只新增列，并将旧延迟/状态/诊断/时间置空；不删除来源、节点、线路、用户、余额或流量，不要求清库。旧未标内核/目标的 TCP 或兼容结果不能冒充端到端测量，新版以 schemaVersion 与资源配置版本确认有效性。
+历史迁移 `20261001010000_client_probe_metadata` 新增旧元信息列并失效 TCP 摘要；追加 `20261003010000_probe_measurement_isolation` 新增严格历史列、原样复制全部旧 lastProbeJson（包含未知历史格式）、清空当前 JSON/延迟/时间/状态/诊断，不修改其它业务数据或历史迁移，不要求清库。首次普通测试前显示未测试，不能把旧严格数值换名使用。
 
-拨测读取不可变短快照，在来源同步锁外执行；结果在短事务中再次验证连接/线路/关联来源和节点状态、配置 hash、更新时间与最新任务提交序列，条件 updateMany 写入。资源删除、失效、缺失、轮换或重绑后的旧结果为 STALE，不覆盖新配置。同资源旧任务晚结束不能覆盖新任务。环境不可用、取消和不支持不更改业务启停；测速失败不自动禁用资源。
+测试读取不可变短快照，在来源同步锁外执行；结果提交在短事务中再次校验配置/关联状态、hash、配置更新时间及最新提交序列。去重 key 与资源序列包含 measurement：普通只更新 lastProbeJson 和当前摘要，严格只更新 lastDebugProbeJson；元数据写入保留配置 updatedAt，避免两种测量互相使快照失效。配置/来源/证书变化或同模式新任务仍拒绝旧写入。环境/取消/不支持不改变业务启停，失败不自动禁用资源。
 
-任务只在 Master 内存保留，完成 15 分钟后清理、最多保留 50 个完成任务；重启丢失任务但保留资源最后有效测量。不新增数据库任务表或外部队列。系统新增 `probeSingboxFallbackEnabled`（默认 true），仅允许能力白名单兼容执行；既有 lineSpeedtestTargetUrl/Timeout 作为统一节点/线路拨测设置，默认目标 HTTPS generate_204，已有显式设置保留。
+任务只在 Master 内存保留，完成 15 分钟后清理、最多保留 50 个完成任务；重启丢失任务但保留资源最后有效普通测量，无外部队列。旧 `probeSingboxFallbackEnabled` 保留给内部严格能力，日常任务始终仅 Mihomo，不读取其回退意图，前端隐藏且不随其它设置提交。lineSpeedtestTargetUrl/Timeout 统一供节点/线路普通任务使用，默认 HTTPS generate_204 和 10000 ms，已有显式设置不覆盖；目标允许代理侧解析，不承诺实际 IP 固定。
 
 线路探针版本还纳入关联证书的 `id/updatedAt`，包括 TARGET_LINE 的实际证书依赖；同 ID 更新 PEM 后，旧结果展示为 STALE，运行中旧结果不能写回。快照及列表只加载证书版本元信息，不为该验证读取或返回私钥。
 

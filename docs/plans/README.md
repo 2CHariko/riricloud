@@ -31,7 +31,8 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
-| [订阅预览原生校验与外部资源诊断](./archive/2026-10-03-template-kernel-validation.md) | `Unreleased` | 2026-10-03 | [#240](https://github.com/2CHariko/riricloud/pull/240) |
+| [订阅预览原生校验与外部资源诊断](./archive/2026-10-03-template-kernel-validation.md) | `Unreleased` | 2026-10-03 | — |
+| [统一延迟测试入口并保留严格调试能力](./archive/2026-10-03-probe-latency-test.md) | `Unreleased` | 2026-10-03 | — |
 | [线路最终落地 HTTP/SOCKS5 出站](./archive/2026-10-02-line-egress-proxy.md) | `下一次 MINOR 发布` | 2026-10-02 | — |
 | [代理池统一授权与受控上游中继接入](./archive/2026-10-01-proxy-pool-unified-access.md) | `下一次 MINOR 发布` | 2026-10-01 | — |
 | [上游订阅导入与多模式融合功能方案 (Upstream Subscriptions & Proxy Relay)](./archive/2026-09-30-upstream-subscriptions-proxy-relay.md) | `v0.10.0` | 2026-09-30 | — |

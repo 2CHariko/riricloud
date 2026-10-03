@@ -35,6 +35,13 @@ describe('SettingsService', () => {
     await expect(service.getSettings()).resolves.toEqual(DEFAULTS);
   });
 
+  it('普通延迟默认十秒但不覆盖已有显式超时', async () => {
+    expect(DEFAULTS.lineSpeedtestTargetUrl).toBe('https://cp.cloudflare.com/generate_204');
+    expect(DEFAULTS.lineSpeedtestTimeoutMs).toBe(10000);
+    prisma.systemSetting.findMany.mockResolvedValue([{ key: SETTING_KEYS.LINE_SPEEDTEST_TIMEOUT_MS, value: '3000' }]);
+    expect((await service.getSettings()).lineSpeedtestTimeoutMs).toBe(3000);
+  });
+
   it('默认启用能力限定回退，管理员可明确关闭', async () => {
     prisma.systemSetting.findMany.mockResolvedValue([{ key: SETTING_KEYS.PROBE_SINGBOX_FALLBACK_ENABLED, value: 'false' }]);
     expect((await service.getSettings()).probeSingboxFallbackEnabled).toBe(false);

@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { api, extractErrorMessage } from '@/lib/api';
-import { isProbePending, type ProbePolicy, type ProbeResultsPage, type ProbeTask, type ProbeTaskAccepted } from '@/lib/probe-types';
+import { api } from '@/lib/api';
+import i18n from '@/i18n';
+import { isProbePending, type ProbeResultsPage, type ProbeTask, type ProbeTaskAccepted } from '@/lib/probe-types';
 
 interface TaskUIState {
   taskIds: Record<string, string>;
@@ -62,22 +63,22 @@ export function useProbeTask(request: ProbeTaskRequest, open: boolean) {
   }, [task.data, finish, queryClient]);
   const start = useMutation({
     mutationKey: ['admin', 'probe-submit'],
-    mutationFn: async (policy: ProbePolicy) => {
+    mutationFn: async () => {
       if (useTaskUI.getState().submitting || useTaskUI.getState().activeTaskId) throw new Error('PROBE_TASK_ACTIVE');
       ui.setSubmitting(true);
       try {
-        const accepted = (await api.post<ProbeTaskAccepted>(request.endpoint, { policy }, { params: request.subscriptionId ? { subscriptionId: request.subscriptionId } : undefined })).data;
+        const accepted = (await api.post<ProbeTaskAccepted>(request.endpoint, undefined, { params: request.subscriptionId ? { subscriptionId: request.subscriptionId } : undefined })).data;
         ui.remember(request.key, accepted.taskId);
         return accepted;
       } finally { ui.setSubmitting(false); }
     },
     onSuccess: () => setPage(1),
-    onError: (error) => toast.error(extractErrorMessage(error))
+    onError: (error) => toast.error(i18n.t(error.message === 'PROBE_TASK_ACTIVE' ? 'admin:latencyTest.globalBusy' : 'admin:latencyTest.startFailed'))
   });
   const cancel = useMutation({
     mutationFn: async () => { await api.delete(`/admin/probe-tasks/${taskId}`); },
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['admin', 'probe-tasks', taskId] }); },
-    onError: (error) => toast.error(extractErrorMessage(error))
+    onError: () => toast.error(i18n.t('admin:latencyTest.cancelFailed'))
   });
   const pending = !!taskId && !task.isError && (!task.data || isProbePending(task.data.state));
   return { taskId, task, results, page, setPage, start, cancel, pending,

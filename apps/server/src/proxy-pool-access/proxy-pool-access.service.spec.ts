@@ -45,7 +45,7 @@ describe('ProxyPoolAccessService policy', () => {
     const resource = { ...line(1, { certificateId: 'cert', lastLatencyMs: 99, lastTestStatus: 'SUCCESS' }), lastProbeJson: null as string | null, certificate: { id: 'cert', updatedAt: new Date(1) } };
     prisma.line.findMany.mockResolvedValue([resource]);
     expect((await service.getSnapshot()).endpoints[0].latencyMs).toBeNull();
-    const measured = { schemaVersion: 1, subjectType: 'LINE', subjectId: resource.id, status: 'SUCCESS', measurement: 'PROXY_HTTP_DELAY', perspective: 'MASTER', routeKind: 'MANAGED_DIRECT', stage: 'DIAL_HTTP', engine: 'MIHOMO', mihomoCompatibility: 'SUPPORTED', testedAt: new Date().toISOString(), durationMs: 10, latencyMs: 10, configHash: lineProbeVersion(resource as never) };
+    const measured = { schemaVersion: 2, subjectType: 'LINE', subjectId: resource.id, status: 'SUCCESS', errorCode: null, fallbackReason: null, measurement: 'MIHOMO_URL_TEST', perspective: 'MASTER', routeKind: 'MANAGED_DIRECT', stage: 'DIAL_HTTP', engine: 'MIHOMO', mihomoCompatibility: 'SUPPORTED', testedAt: new Date().toISOString(), durationMs: 10, latencyMs: 10, configHash: lineProbeVersion(resource as never) };
     resource.lastProbeJson = JSON.stringify(measured);
     expect((await service.getSnapshot()).endpoints[0].latencyMs).toBe(10);
     (resource.certificate as { updatedAt: Date }).updatedAt = new Date(2);

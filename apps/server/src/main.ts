@@ -1,4 +1,4 @@
-import { RequestMethod, ValidationPipe } from '@nestjs/common';
+import { Logger, RequestMethod, ValidationPipe } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -69,6 +69,7 @@ async function bootstrap() {
   registerWebStatic(app);
 
   await app.listen(process.env.PORT ?? 3000);
+  Logger.log('HTTP listener ready', 'Bootstrap');
 }
 
 function normalizeCorsOrigin(raw: string): string | undefined {

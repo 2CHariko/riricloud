@@ -125,7 +125,7 @@ native('Linux real Naive/Cronet capability-whitelisted probes', () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12_000);
     try {
-      const results = await engine.executeBatch([{ subjectType: 'UPSTREAM_NODE', subjectId: 'naive-fixture', configHash: 'naive-fixture-v1', routeKind: 'UPSTREAM_DIRECT', connection: value }], { id: 'naive-target', url: `http://target.fixture.example:${targetPort}/204`, expectedStatus: 204 }, 2_000, policy, controller.signal);
+      const results = await engine.executeStrictBatch([{ subjectType: 'UPSTREAM_NODE', subjectId: 'naive-fixture', configHash: 'naive-fixture-v1', routeKind: 'UPSTREAM_DIRECT', connection: value }], { id: 'naive-target', url: `http://target.fixture.example:${targetPort}/204`, expectedStatus: 204 }, 2_000, policy, controller.signal);
       return results[0];
     } finally { clearTimeout(timer); }
   };

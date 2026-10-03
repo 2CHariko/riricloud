@@ -312,10 +312,11 @@ export class LinesService {
 
   toUserSummary(line: Pick<SubLine, 'id' | 'name' | 'type' | 'protocolType' | 'serverHost' | 'serverPort' | 'tags' | 'level' | 'trafficRate' | 'speedLimitMbps'> & { status?: string; lastProbe?: ProbeResult | null }) {
     const external = line.type === 'EXTERNAL';
+    const lastProbe = safeProbeResult(line.lastProbe);
     return {
       id: line.id, name: line.name, type: line.type, protocolType: line.protocolType,
       serverHost: line.serverHost, serverPort: line.serverPort, status: line.status,
-      lastProbe: safeProbeResult(line.lastProbe),
+      lastProbe: lastProbe?.measurement === 'MIHOMO_URL_TEST' ? lastProbe : null,
       tags: line.tags ?? [], level: line.level,
       trafficRate: external ? 0 : line.trafficRate,
       speedLimitMbps: external ? null : line.speedLimitMbps,
@@ -899,7 +900,11 @@ export class LinesService {
               }
             : null)
       : null;
-    const { upstreamNode: _upstreamNode, egressProxyJson: _egressProxyJson, ...safeLine } = line;
+    const { upstreamNode: _upstreamNode, egressProxyJson: _egressProxyJson, lastDebugProbeJson: _lastDebugProbeJson, ...safeLine } = line;
+    const safeTarget = <T extends object>(target: T) => {
+      const { lastProbeJson: _lastProbeJson, lastDebugProbeJson: _lastDebugProbeJson, ...safe } = target as T & { lastProbeJson?: string | null; lastDebugProbeJson?: string | null };
+      return safe;
+    };
     const source = line.relayMode === 'TARGET_LINE' ? line.targetLine : line;
     const egressProxy = safeEgressProxy(line.egressProxyJson);
     const effectiveEgress = source && (canConfigureEgress(source.type, line.relayMode === 'TARGET_LINE' ? null : line.relayMode))
@@ -913,7 +918,7 @@ export class LinesService {
       landingNode: safeNode(line.landingNode),
       lastProbeJson: undefined,
       lastProbe,
-      targetLine: line.targetLine ? { ...line.targetLine, paramsJson: undefined, egressProxyJson: undefined, egressProxy: safeEgressProxy(line.targetLine.egressProxyJson), entryNode: safeNode(line.targetLine.entryNode) } : null,
+      targetLine: line.targetLine ? { ...safeTarget(line.targetLine), paramsJson: undefined, egressProxyJson: undefined, egressProxy: safeEgressProxy(line.targetLine.egressProxyJson), entryNode: safeNode(line.targetLine.entryNode) } : null,
       lastLatencyMs: lastProbe?.latencyMs ?? null,
       lastTestedAt: lastProbe?.testedAt ?? null,
       lastTestStatus: lastProbe?.status ?? null,

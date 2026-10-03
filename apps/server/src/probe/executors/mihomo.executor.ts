@@ -7,6 +7,7 @@ import type { ProxyConnection } from '../../common/proxy-connection';
 import type { PinnedProbeTarget } from '../probe-target-policy';
 import { controllerRequest, proxyHttpDelay, reserveLoopbackPort, waitForKernel } from './proxy-http';
 import { KernelReadiness } from './kernel-readiness';
+import { mihomoUrlTest } from './mihomo-urltest';
 
 export interface ProbeExecution { latencyMs: number | null; errorCode: string | null; stage: 'START_KERNEL' | 'DIAL_HTTP'; durationMs: number }
 export function executionFailure(error: unknown, stage: ProbeExecution['stage'], started: number, signal?: AbortSignal): ProbeExecution {
@@ -26,6 +27,12 @@ export function portReady(port: number, signal?: AbortSignal): Promise<boolean> 
 export class MihomoExecutor {
   constructor(private readonly kernels: ClientKernelsService) {}
   async execute(connections: ProxyConnection[], target: PinnedProbeTarget, timeoutMs: number, kernel: ResolvedClientKernel, signal?: AbortSignal): Promise<ProbeExecution[]> {
+    return this.run(connections, target, timeoutMs, kernel, false, signal);
+  }
+  async executeLatency(connections: ProxyConnection[], target: PinnedProbeTarget, timeoutMs: number, kernel: ResolvedClientKernel, signal?: AbortSignal): Promise<ProbeExecution[]> {
+    return this.run(connections, target, timeoutMs, kernel, true, signal);
+  }
+  private async run(connections: ProxyConnection[], target: PinnedProbeTarget, timeoutMs: number, kernel: ResolvedClientKernel, latency: boolean, signal?: AbortSignal): Promise<ProbeExecution[]> {
     if (connections.length > 32) throw new KernelExecutionError('BATCH_TOO_LARGE');
     const started = Date.now();
     let child: ManagedKernelProcess | undefined;
@@ -47,7 +54,7 @@ export class MihomoExecutor {
       const config = {
         'allow-lan': false, 'bind-address': '127.0.0.1', mode: 'rule', 'log-level': 'silent',
         'external-controller': `127.0.0.1:${controllerPort}`, secret,
-        'geodata-mode': false, 'geo-auto-update': false, 'unified-delay': false,
+        'geodata-mode': false, 'geo-auto-update': false, 'unified-delay': latency,
         tun: { enable: false }, dns: { enable: false },
         proxies: items.map((item) => compileMihomoProxy(item.connection, item.name)),
         listeners: [...items.map((item) => ({ name: item.name, type: 'mixed', listen: '127.0.0.1', port: item.port, udp: false, proxy: item.name })), { name: 'kernel-readiness', type: 'mixed', listen: '127.0.0.1', port: readinessPort, udp: false, proxy: 'DIRECT' }],
@@ -58,7 +65,7 @@ export class MihomoExecutor {
       const check = await this.kernels.validate('MIHOMO', content, 'FULL', controller.signal);
       if (controller.signal.aborted) throw new KernelExecutionError('CANCELED');
       if (check.status !== 'PASSED') throw new KernelExecutionError(check.status === 'UNAVAILABLE' ? 'KERNEL_UNAVAILABLE' : 'KERNEL_CONFIG_INVALID');
-      child = await ManagedKernelProcess.start(kernel.path, (file, directory) => ['-d', directory, '-f', file], content, controller.signal, 5_000 + Math.ceil(connections.length / 4) * timeoutMs + 2_000);
+      child = await ManagedKernelProcess.start(kernel.path, (file, directory) => ['-d', directory, '-f', file], content, controller.signal, 5_000 + Math.ceil(connections.length / 4) * (timeoutMs + (latency ? 500 : 0)) + 2_000);
       await waitForKernel(child, async () => await controllerRequest(controllerPort, secret, controller.signal) && await readiness.ready(readinessPort, controller.signal) && (await Promise.all(items.map((item) => portReady(item.port, controller.signal)))).every(Boolean), controller.signal);
       clearTimeout(startupTimer);
       let crashed = false;
@@ -69,7 +76,7 @@ export class MihomoExecutor {
         const itemStarted = Date.now();
         try {
           release = await probeConnectionSlots.acquire(controller.signal);
-          const latencyMs = await proxyHttpDelay(item.port, target, timeoutMs, controller.signal);
+          const latencyMs = latency ? await mihomoUrlTest(controllerPort, secret, item.name, target, timeoutMs, controller.signal) : await proxyHttpDelay(item.port, target, timeoutMs, controller.signal);
           return { latencyMs, errorCode: null, stage, durationMs: Date.now() - itemStarted };
         } catch (error) { return executionFailure(crashed ? new KernelExecutionError('KERNEL_EXITED') : error, stage, itemStarted, crashed ? signal : controller.signal); }
         finally { release?.(); }

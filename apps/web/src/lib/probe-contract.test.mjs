@@ -8,16 +8,19 @@ const source = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const exports = {};
 runInNewContext(ts.transpileModule(source('./probe-types.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports });
 const { parseLastProbe, probeTone, isProbePending, kernelCheckPassed } = exports;
-const valid = { schemaVersion: 1, subjectType: 'UPSTREAM_NODE', subjectId: 'id', status: 'SUCCESS', errorCode: null, message: '', engine: 'MIHOMO', engineVersion: '1.19.30', fallbackReason: null, mihomoCompatibility: 'SUPPORTED', measurement: 'PROXY_HTTP_DELAY', perspective: 'MASTER', routeKind: 'UPSTREAM_DIRECT', targetId: 'target', targetHost: 'example.com', testedAt: '2026-01-01T00:00:00Z', durationMs: 12, latencyMs: 0, stage: 'DIAL_HTTP', configHash: 'hash', applied: true };
+const valid = { schemaVersion: 2, subjectType: 'UPSTREAM_NODE', subjectId: 'id', status: 'SUCCESS', errorCode: null, message: '', engine: 'MIHOMO', engineVersion: '1.19.30', fallbackReason: null, mihomoCompatibility: 'SUPPORTED', measurement: 'MIHOMO_URL_TEST', perspective: 'MASTER', routeKind: 'UPSTREAM_DIRECT', targetId: 'target', targetHost: 'example.com', testedAt: '2026-01-01T00:00:00Z', durationMs: 12, latencyMs: 25, stage: 'DIAL_HTTP', configHash: 'hash', applied: true };
 
-test('legacy TCP and malformed snapshots cannot become proxy success', () => {
-  for (const value of [null, [], '{broken', JSON.stringify(valid), { latencyMs: 4, status: 'SUCCESS' }, { ...valid, measurement: 'TCP_HANDSHAKE' }, { ...valid, status: 'NOT_APPLICABLE' }, { ...valid, latencyMs: null }, { ...valid, latencyMs: -1 }, { ...valid, latencyMs: NaN }, { ...valid, durationMs: Infinity }, { ...valid, engine: null }, { ...valid, engine: 'unknown' }, { ...valid, testedAt: 'bad' }]) assert.equal(parseLastProbe(value), null);
+test('only schema 2 URLTest snapshots are accepted, never legacy HTTP or TCP numbers', () => {
+  for (const value of [null, [], '{broken', JSON.stringify(valid), { latencyMs: 4, status: 'SUCCESS' }, { ...valid, schemaVersion: 1 }, { ...valid, schemaVersion: 1, measurement: 'PROXY_HTTP_DELAY' }, { ...valid, measurement: 'PROXY_HTTP_DELAY' }, { ...valid, measurement: 'TCP_HANDSHAKE' }, { ...valid, perspective: 'AGENT' }, { ...valid, status: 'NOT_APPLICABLE' }, { ...valid, latencyMs: null }, { ...valid, latencyMs: -1 }, { ...valid, latencyMs: NaN }, { ...valid, durationMs: Infinity }, { ...valid, engine: null }, { ...valid, engine: 'unknown' }, { ...valid, testedAt: 'bad' }]) assert.equal(parseLastProbe(value), null);
   assert.equal(parseLastProbe(valid), valid);
 });
-test('all task result statuses remain distinct and fallback is never Mihomo verified', () => {
+test('ordinary snapshots cannot disguise fallback, invalid delays or inconsistent successes', () => {
+  for (const override of [{ engine: 'SINGBOX' }, { fallbackReason: 'compat' }, { latencyMs: 0 }, { latencyMs: 1.5 }, { latencyMs: 65536 }, { errorCode: 'URLTEST_FAILED' }]) assert.equal(parseLastProbe({ ...valid, ...override }), null);
+});
+test('all task result statuses remain distinct without presenting technical metadata', () => {
   for (const status of ['SUCCESS', 'TIMEOUT', 'ERROR', 'UNSUPPORTED', 'ENVIRONMENT_UNAVAILABLE', 'CANCELED', 'STALE', 'SKIPPED']) assert.equal(parseLastProbe({ ...valid, status }).status, status);
   assert.equal(probeTone(valid), 'success');
-  assert.equal(probeTone({ ...valid, engine: 'SINGBOX' }), 'warning');
+  assert.equal(probeTone({ ...valid, engine: 'SINGBOX' }), 'success');
   for (const status of ['UNSUPPORTED', 'ENVIRONMENT_UNAVAILABLE']) assert.equal(probeTone({ ...valid, status }), 'warning');
   for (const status of ['CANCELED', 'STALE', 'SKIPPED']) assert.equal(probeTone({ ...valid, status }), 'muted');
 });
@@ -68,7 +71,8 @@ function hookHarness() {
       useMutation: (options) => options
     },
     sonner: { toast: { error: () => {} } },
-    '@/lib/api': { api, extractErrorMessage: String },
+    '@/lib/api': { api },
+    '@/i18n': { default: { t: (key) => key } },
     '@/lib/probe-types': exports
   };
   const result = {};
@@ -79,7 +83,8 @@ function hookHarness() {
 test('closing and reopening retain task identity without canceling; polling stops closed and terminal', async () => {
   const h = hookHarness(), request = { key: 'upstream:id', endpoint: '/admin/upstream/nodes/id/probe' };
   const initial = h.run(request, true);
-  await initial.start.mutationFn('MIHOMO_PREFERRED');
+  await initial.start.mutationFn();
+  assert.equal(h.posts[0][1], undefined);
   const closed = h.run(request, false);
   assert.equal(closed.taskId, 'task-1');
   assert.equal(h.queries.at(-2).enabled, false);
@@ -89,7 +94,7 @@ test('closing and reopening retain task identity without canceling; polling stop
   assert.equal(reopened.taskId, 'task-1');
   assert.equal(h.queries.at(-2).refetchInterval({ state: { data: { state: 'RUNNING' } } }), 1000);
   assert.equal(h.queries.at(-2).refetchInterval({ state: { data: { state: 'COMPLETED' } } }), false);
-  await assert.rejects(reopened.start.mutationFn('MIHOMO_ONLY'), /PROBE_TASK_ACTIVE/);
+  await assert.rejects(reopened.start.mutationFn(), /PROBE_TASK_ACTIVE/);
   assert.equal(h.posts.length, 1);
   assert.equal(h.invalidations.length, 0);
   await reopened.cancel.mutationFn();
@@ -173,4 +178,96 @@ test('validation component handles old, empty, truncated and unknown responses s
   assert.match(html, /validation.actions.CHECK_CLIENT/);
   assert.match(html, /UNKNOWN/);
   assert.doesNotMatch(html, /secret|FATAL|text-destructive/);
+});
+
+test('ordinary task dialog and results never render kernel metadata or raw diagnostics', () => {
+  const dialog = source('../components/shared/probe-task-dialog.tsx');
+  const result = source('../components/shared/probe-result.tsx');
+  assert.doesNotMatch(dialog, /policy|MIHOMO|SINGBOX|useForm|task\.phase|diagnosticDetails/);
+  assert.doesNotMatch(result, /result\.(message|errorCode|engine|engineVersion|mihomoCompatibility|fallbackReason|stage)/);
+  assert.doesNotMatch(result, /common:latency|probes\./);
+});
+
+test('settings omit the hidden fallback flag and preserve explicit timeout overrides', () => {
+  const settings = {};
+  const modules = {
+    '@/lib/speed-tier': { DEFAULT_SPEED_TIERS: [] },
+    '@/lib/announcements': { parseAnnouncements: () => [], derivePrimaryBannerText: () => '' },
+    './components/probe-preset-schema': { toProbePresetFormValue: (v) => v, toProbePresetTarget: (v) => v }
+  };
+  runInNewContext(ts.transpileModule(source('../pages/admin/settings/settings-form.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText,
+    { exports: settings, require: (name) => modules[name], __DEFAULT_GITHUB_REPO_URL__: 'https://github.com/example/repo' });
+  const defaults = settings.defaultSettingsForm();
+  assert.equal(defaults.lineSpeedtestTimeoutMs, 10000);
+  for (const flag of [true, false, undefined]) {
+    const payload = settings.toPayload({ ...defaults, siteName: 'changed', probeSingboxFallbackEnabled: flag });
+    assert.equal(Object.hasOwn(payload, 'probeSingboxFallbackEnabled'), false);
+    assert.equal(payload.siteName, 'changed');
+  }
+  const explicit = settings.toForm({ ...settings.toPayload(defaults), defaultBalance: 0, emailDomainList: [], githubMirrorUrls: [], probePresetTargets: [], lineSpeedtestTimeoutMs: 3000 });
+  assert.equal(explicit.lineSpeedtestTimeoutMs, 3000);
+  const tabs = source('../pages/admin/settings/components/settings-tabs.tsx');
+  assert.doesNotMatch(tabs, /name="probeSingboxFallbackEnabled"|<ClientKernelStatusCard/);
+});
+
+test('normal task mutations use safe errors and never send a policy', async () => {
+  const h = hookHarness();
+  const task = h.run({ key: 'upstream:all', endpoint: '/admin/upstream/probe-all', subscriptionId: 'source-id' }, true);
+  await task.start.mutationFn();
+  assert.equal(h.posts[0][1], undefined);
+  assert.equal(h.posts[0][2].params.subscriptionId, 'source-id');
+  const hook = source('../hooks/use-probe-task.ts');
+  assert.doesNotMatch(hook, /ProbePolicy|extractErrorMessage|\{ policy \}/);
+  assert.match(hook, /latencyTest\.startFailed/);
+  assert.match(hook, /latencyTest\.cancelFailed/);
+});
+
+test('API helpers omit policy and global error toasts do not leak ordinary test diagnostics', async () => {
+  let rejectResponse;
+  let loggedOut = false;
+  const posts = [], toasts = [], logs = [];
+  const api = {
+    interceptors: { request: { use: () => {} }, response: { use: (_, reject) => { rejectResponse = reject; } } },
+    post: (...args) => { posts.push(args); }
+  };
+  const modules = {
+    axios: { default: { create: () => api } },
+    sonner: { toast: { error: (message) => toasts.push(message) } },
+    '@/i18n': { default: { t: (key) => key } },
+    '@/stores/auth': { useAuthStore: { getState: () => ({ user: true, logout: () => { loggedOut = true; } }) } },
+    '@/lib/logger': { frontendLogger: { warn: (...args) => logs.push(args), error: (...args) => logs.push(args) } },
+    '@/i18n/error-mapping': { getLocalizedErrorMessage: (error) => error.response.data.message }
+  };
+  const result = {};
+  runInNewContext(ts.transpileModule(source('./api.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText,
+    { exports: result, require: (name) => modules[name], window: { location: { pathname: '/login' } } });
+  result.upstreamApi.probeAll('source-id');
+  result.upstreamApi.probeNode('node-id');
+  for (const post of posts) assert.equal(post[1], undefined);
+  assert.equal(posts[0][2].params.subscriptionId, 'source-id');
+  const errorFor = (url, status = 500) => ({ config: { url }, response: { status, data: { message: 'Mihomo Sing-box secret version fallback' } } });
+  for (const url of ['/admin/lines/id/speedtest', '/admin/lines/speedtest-all', '/admin/upstream/probe-all', '/admin/upstream/nodes/id/probe', '/admin/probe-tasks/id', '/admin/probe-tasks/id/results']) {
+    const error = errorFor(url);
+    await assert.rejects(rejectResponse(error), (rejected) => rejected === error);
+    assert.equal(toasts.at(-1), 'admin:latencyTest.requestFailed');
+  }
+  await assert.rejects(rejectResponse(errorFor('/admin/probe-tasks/id', 401)));
+  assert.equal(loggedOut, true);
+  assert.equal(toasts.at(-1), 'errors:network.unauthorized');
+  assert.doesNotMatch(JSON.stringify(logs), /secret|Mihomo|Sing-box/);
+  // 其他功能保留既有诊断，不被普通测试错误处理误伤。
+  for (const url of ['/admin/nodes/id/probe', '/admin/subscription-templates/preview', '/admin/settings/github-mirrors/speedtest']) {
+    await assert.rejects(rejectResponse(errorFor(url)));
+    assert.match(toasts.at(-1), /secret/);
+  }
+});
+
+test('submit mutex is global across line and upstream entries', async () => {
+  const h = hookHarness();
+  await h.run({ key: 'line:id', endpoint: '/admin/lines/id/speedtest' }, true).start.mutationFn();
+  const other = h.run({ key: 'upstream:id', endpoint: '/admin/upstream/nodes/id/probe' }, true);
+  assert.equal(other.blocked, true);
+  assert.equal(other.activeElsewhere, true);
+  await assert.rejects(other.start.mutationFn(), /PROBE_TASK_ACTIVE/);
+  assert.equal(h.posts.length, 1);
 });
