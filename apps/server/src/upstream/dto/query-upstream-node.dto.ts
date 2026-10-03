@@ -51,4 +51,9 @@ export class QueryUpstreamNodeDto {
   @IsIn(['PRESENT', 'MISSING'])
   @IsOptional()
   presenceStatus?: 'PRESENT' | 'MISSING';
+
+  @ApiPropertyOptional({ enum: ['SUCCESS', 'FAILED', 'UNTESTED'], description: '按连通性与测速状态筛选' })
+  @IsIn(['SUCCESS', 'FAILED', 'UNTESTED'])
+  @IsOptional()
+  probeStatus?: 'SUCCESS' | 'FAILED' | 'UNTESTED';
 }

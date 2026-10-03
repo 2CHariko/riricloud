@@ -71,6 +71,9 @@ export function UpstreamNodesSheet({
   const { t } = useTranslation(['admin', 'common']);
   const [search, setSearch] = useState('');
   const [protocol, setProtocol] = useState('ALL');
+  const [probeStatus, setProbeStatus] = useState('ALL');
+  const [deliveryStatus, setDeliveryStatus] = useState('ALL');
+  const [presenceStatus, setPresenceStatus] = useState('ALL');
   const [tag, setTag] = useState('');
   const [page, setPage] = useState(1);
 
@@ -82,6 +85,15 @@ export function UpstreamNodesSheet({
       search: search.trim() || undefined,
       protocolType: protocol === 'ALL' ? undefined : protocol,
       tag: tag.trim() || undefined,
+      status: deliveryStatus === 'ALL' ? undefined : deliveryStatus,
+      presenceStatus:
+        presenceStatus === 'ALL'
+          ? undefined
+          : (presenceStatus as 'PRESENT' | 'MISSING'),
+      probeStatus:
+        probeStatus === 'ALL'
+          ? undefined
+          : (probeStatus as 'SUCCESS' | 'FAILED' | 'UNTESTED'),
     },
     open
   );
@@ -123,11 +135,12 @@ export function UpstreamNodesSheet({
             </SheetDescription>
           </SheetHeader>
 
-          {/* 筛选与批量操作区 */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* 多维精准筛选与批量操作工具栏 */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
+              {/* 搜索框 */}
               <Input
-                className="max-w-xs h-8 text-xs"
+                className="w-40 sm:w-48 h-8 text-xs"
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
@@ -135,15 +148,8 @@ export function UpstreamNodesSheet({
                 }}
                 placeholder={t('admin:upstream.searchNodesPlaceholder')}
               />
-              <Input
-                className="w-32 h-8 text-xs"
-                value={tag}
-                onChange={(e) => {
-                  setTag(e.target.value);
-                  setPage(1);
-                }}
-                placeholder={t('admin:lines.filterTag')}
-              />
+
+              {/* 协议筛选（纠正原全部状态乌龙） */}
               <Select
                 value={protocol}
                 onValueChange={(v) => {
@@ -151,12 +157,12 @@ export function UpstreamNodesSheet({
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-32 h-8 text-xs">
+                <SelectTrigger className="w-28 h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="ALL">{t('admin:upstream.protocolAll')}</SelectItem>
                   {[
-                    'ALL',
                     'VLESS',
                     'VMESS',
                     'HYSTERIA2',
@@ -168,11 +174,91 @@ export function UpstreamNodesSheet({
                     'NAIVE',
                   ].map((v) => (
                     <SelectItem key={v} value={v}>
-                      {v === 'ALL' ? t('admin:upstream.statusAll') : v}
+                      {v}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
+              {/* 连通性筛选（真正的状态维度 1） */}
+              <Select
+                value={probeStatus}
+                onValueChange={(v) => {
+                  setProbeStatus(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-32 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">{t('admin:upstream.probeAllFilter')}</SelectItem>
+                  <SelectItem value="SUCCESS">
+                    {t('admin:upstream.probeFilterSuccess')}
+                  </SelectItem>
+                  <SelectItem value="FAILED">
+                    {t('admin:upstream.probeFilterFailed')}
+                  </SelectItem>
+                  <SelectItem value="UNTESTED">
+                    {t('admin:upstream.probeFilterUntested')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* 本地分发状态筛选（真正的状态维度 2） */}
+              <Select
+                value={deliveryStatus}
+                onValueChange={(v) => {
+                  setDeliveryStatus(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-32 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">{t('admin:upstream.deliveryAll')}</SelectItem>
+                  <SelectItem value="ACTIVE">
+                    {t('admin:upstream.deliveryActive')}
+                  </SelectItem>
+                  <SelectItem value="DISABLED">
+                    {t('admin:upstream.deliveryDisabled')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* 上游存续状态筛选 */}
+              <Select
+                value={presenceStatus}
+                onValueChange={(v) => {
+                  setPresenceStatus(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-32 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">{t('admin:upstream.presenceAll')}</SelectItem>
+                  <SelectItem value="PRESENT">
+                    {t('admin:upstream.presenceOnlyPresent')}
+                  </SelectItem>
+                  <SelectItem value="MISSING">
+                    {t('admin:upstream.presenceOnlyMissing')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* 线路标签 */}
+              <Input
+                className="w-24 h-8 text-xs"
+                value={tag}
+                onChange={(e) => {
+                  setTag(e.target.value);
+                  setPage(1);
+                }}
+                placeholder={t('admin:lines.filterTag')}
+              />
             </div>
 
             <div className="flex items-center gap-2">

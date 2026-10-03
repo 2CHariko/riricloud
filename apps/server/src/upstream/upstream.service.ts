@@ -278,6 +278,11 @@ export class UpstreamService implements OnModuleInit, OnModuleDestroy {
     if (query.protocolType) where.protocolType = query.protocolType.toUpperCase();
     if (query.status) where.status = query.status;
     if (query.presenceStatus) where.presenceStatus = query.presenceStatus;
+    if (query.probeStatus) {
+      if (query.probeStatus === 'SUCCESS') where.lastTestStatus = 'SUCCESS';
+      else if (query.probeStatus === 'FAILED') where.lastTestStatus = { in: ['TIMEOUT', 'ERROR'] };
+      else if (query.probeStatus === 'UNTESTED') where.lastTestStatus = null;
+    }
     let filteredTotal: number | undefined;
     if (query.tag) {
       // 精确扫描标签后仅用本页 ID 查询，避免大型 IN 超过 SQLite 参数上限。

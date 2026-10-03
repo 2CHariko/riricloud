@@ -316,6 +316,8 @@ export const upstreamApi = {
     protocolType?: string;
     tag?: string;
     status?: string;
+    presenceStatus?: 'PRESENT' | 'MISSING';
+    probeStatus?: 'SUCCESS' | 'FAILED' | 'UNTESTED';
   }) =>
     api.get<{ data: ApiUpstreamNode[]; total: number; page: number; pageSize: number }>('/admin/upstream/nodes', { params }),
   setNodeStatus: (nodeId: string, status: UpstreamNodeStatus) =>
