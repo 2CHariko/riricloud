@@ -41,6 +41,7 @@ Linux 开发机使用系统环境安装 Node.js、pnpm 与 Go，不在仓库内�
 - **Recharts (via shadcn/ui Chart)**：用于呈现管理员流量统计与单用户流量下钻的流量/速率时序面积图、柱状图和线路 Donut 图；图表通过 CSS 语义 Token 适配明暗主题。
 - **next-themes**：暗黑/明亮主题平滑切换与系统偏好监听。
 - **i18next + react-i18next + i18next-browser-languagedetector**：全站国际化（i18n）解决方案，支持简体中文（zh-CN）、英语（en-US）与日语（ja-JP）三语切换、浏览器语言偏好探测与 localStorage 持久化；采用模块化命名空间架构（common、auth、user、admin、errors、landing）与 TypeScript 强类型键校验，确保翻译健壮性与无未翻译死角。
+- **名称国旗兼容资源（无新增 npm 依赖）**：国家/地区旗帜使用自托管 Twemoji 14.0.2 的 258 个原始 SVG 子集（约 653 KiB），共用 `FlagText` 仅修复展示，不改原始名称/订阅文本。资源由 Vite 输出同源独立文件，代码只携带 URL 映射，无 CDN、整套图形内联或运行时下载。图形按 CC-BY 4.0 分发，Twitter, Inc and other contributors 的署名、固定来源/归档摘要及完整许可保留于 `apps/web/src/assets/flags/` 与前端公开 `third-party/`；UI 操作图标继续仅使用 Lucide。
 
 ---
 

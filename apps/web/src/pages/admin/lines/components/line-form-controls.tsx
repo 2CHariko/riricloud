@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import type { LineFormValues } from './line-form-schema';
+import { FlagText } from '@/components/shared/flag-text';
 
 type FieldName = FieldPath<LineFormValues>;
 
@@ -47,7 +48,7 @@ export function SelectField({ form, name, label, options, description, disabled,
         <FormLabel>{label}</FormLabel>
         <Select value={String(field.value ?? '')} onValueChange={onValueChange ?? field.onChange} disabled={disabled}>
           <FormControl><SelectTrigger><SelectValue placeholder={t('admin:lineForm.selectPlaceholder')} /></SelectTrigger></FormControl>
-          <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+          <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value} textValue={option.label}><FlagText text={option.label} /></SelectItem>)}</SelectContent>
         </Select>
         {description && <FormDescription>{description}</FormDescription>}
         <FormMessage />

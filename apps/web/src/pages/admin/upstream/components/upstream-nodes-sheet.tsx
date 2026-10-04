@@ -54,6 +54,7 @@ import { ApiUpstreamSubscription, ApiUpstreamNode, upstreamApi } from '@/lib/api
 import { useAdminUpstreamNodes, useAdminUpstreamMutations } from '../use-upstream';
 import { ProbeTaskDialog } from '@/components/shared/probe-task-dialog';
 import { ProbeMeasurementChip } from '@/components/shared/probe-result';
+import { FlagText } from '@/components/shared/flag-text';
 
 export function UpstreamNodesSheet({
   open,
@@ -349,7 +350,7 @@ export function UpstreamNodesSheet({
                                   }`}
                                   title={node.name}
                                 >
-                                  {node.name}
+                                  <FlagText text={node.name} />
                                 </span>
                                 {node.tags.map((item) => (
                                   <Badge
@@ -415,7 +416,7 @@ export function UpstreamNodesSheet({
                                     className="flex items-center gap-1 text-[11px]"
                                   >
                                     <span className="font-medium truncate max-w-[120px]">
-                                      {line.name}
+                                      <FlagText text={line.name} />
                                     </span>
                                     <Badge
                                       variant={line.status === 'ACTIVE' ? 'default' : 'secondary'}

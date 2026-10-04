@@ -1,6 +1,7 @@
 import { Activity, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { ProbeMeasurementChip } from '@/components/shared/probe-result';
+import { FlagText } from '@/components/shared/flag-text';
 import { cn } from '@/lib/utils';
 import { usePublicSettings } from '@/lib/public-settings';
 import { formatSpeedLimit, getSpeedTierBadgeClass } from '@/lib/speed-tier';
@@ -26,7 +27,7 @@ export function LineCard({ line, className }: LineCardProps) {
     <div className={cn('flex min-w-0 flex-col justify-between gap-2.5 rounded-md border bg-card/50 p-3 transition-colors hover:bg-muted/20', className)}>
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 truncate text-sm font-medium" title={line.name}>
-          {line.name}
+          <FlagText text={line.name} />
         </p>
         <div className="flex shrink-0 items-center gap-1.5">
           <Badge variant="outline" className="text-xs">{line.protocolType}</Badge>
