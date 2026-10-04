@@ -13,6 +13,15 @@
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+
+## [0.8.7] - 2026-10-04
+
+### Added
 - **日志可信度与只读诊断快照**：日志携带 UTC `occurredAt`、安全整数 `sequence`、随机 `agentInstanceId`，内核输出与配置 receipt/check/unchanged/restart/start/exit 生命周期携带随机 `kernelInstanceId`、`operationId` 和 `configVersion`；故障补充 `errorCategory`（timeout/dns/tls/udp/connection/config/unknown）。
 - **异步只读快照能力 `singbox_diagnostics_snapshot`**：WS/HTTP 接收 `diagnostics_snapshot_task {taskId, timeoutMs:3000}`，共用单并发、10 秒限频、256 ID/15 分钟有界幂等缓存；返回 AGENT/NodeDiagnostics INFO 日志（`metadata.event=diagnostics_snapshot`），无新结果帧。60 秒周期同类采样保留本地 degraded/recovered 证据，取消和进程换代不产生伪恢复。
 - **最小只读采样**：运行/PID/uptime/实例/配置版本、已有 gopsutil 的 RSS/FD/线程数、快照开始/完成/耗时、取消/超时/换代标记；仅实际应用配置中的字面回环 Clash API `/version` 可用于本地 readiness，secret 只入 Authorization header，不输出地址、用户、配置或响应正文，不探测公网/业务目标。
@@ -26,6 +35,7 @@
 - **修复真实连接故障被 ACCESS 过滤和内核 DEBUG 被控制台 INFO 门槛阻断**：真实 WARN/ERROR 无条件保留，只有明确 QUIC 正常零错误码流关闭降 INFO；专门 Hook bypass 采集内核输出，不开启 Agent 全局 DEBUG。runner 在启动日志之前注册 Hook，日志长行有界 UTF-8 截断并纳入计数，重入/溢出与毒化均可观察。
 - **保守识别正常 QUIC 关闭**：零错误码关闭必须位于完整消息结尾；附加异常或被截断的 WARN/ERROR 不降级，防止故障藏在超长行尾部后丢失。
 - **回归覆盖**：真实进程配置换代/生命周期、本地 API 密钥头与地址拒绝、3 秒超时/取消/不重启/不阻塞 reload、周期停止与状态证据、WS/HTTP 真实任务路径、runner 启动输送、完整 JSON/metadata/poison/溢出/合并/计数/重入标识。
+
 
 
 ## [0.8.6] - 2026-10-02
