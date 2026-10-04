@@ -13,6 +13,10 @@ import { LogTable } from './components/log-table';
 import { LogTrendChart } from './components/log-trend-chart';
 import type { LogsFilter, SystemLogItem } from './types';
 import { useLiveTailStream, useLogs } from './use-logs';
+import { Activity } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { LogDiagnosticsDialog } from './components/log-diagnostics-dialog';
+import type { SnapshotNode } from './types';
 
 const DEFAULT_FILTER: LogsFilter = {
   level: 'ALL',
@@ -41,6 +45,7 @@ export default function AdminLogsPage() {
   const [selectedLog, setSelectedLog] = React.useState<SystemLogItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = React.useState(false);
   const [isCleanupOpen, setIsCleanupOpen] = React.useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = React.useState(false);
 
   // Live Tail 实时推流状态
   const [isLiveTail, setIsLiveTail] = React.useState(initialLive);
@@ -53,6 +58,7 @@ export default function AdminLogsPage() {
     const qModule = searchParams.get('module');
     const qLive = searchParams.get('live');
     if (qNodeId || qModule) {
+      setLiveTailBuffer([]);
       setFilter((prev) => ({
         ...prev,
         ...(qNodeId ? { nodeId: qNodeId } : {}),
@@ -65,17 +71,18 @@ export default function AdminLogsPage() {
     }
   }, [searchParams]);
 
-  const { logsQuery, metricsQuery, exportLogs } = useLogs(filter);
+  const { logsQuery, metricsQuery, exportLogs, isExporting } = useLogs(filter);
 
   // 获取节点列表供筛选
   const nodesQuery = useQuery({
     queryKey: ['admin-logs-nodes'],
-    queryFn: async () => {
-      const res = await api.get<Array<{ id: string; name: string }>>('/admin/nodes');
+    queryFn: async ({ signal }) => {
+      const res = await api.get<Array<SnapshotNode & { name: string }>>('/admin/nodes', { signal });
       return res.data;
-    }
+    },
+    refetchInterval: 15_000,
+    staleTime: 10_000
   });
-
   // 处理实时日志帧
   const handleNewLiveLog = React.useCallback(
     (item: SystemLogItem) => {
@@ -89,6 +96,7 @@ export default function AdminLogsPage() {
 
   const handleFilterChange = (patch: Partial<LogsFilter>) => {
     setFilter((prev) => ({ ...prev, ...patch }));
+    setLiveTailBuffer([]);
   };
 
   const handleSelectLog = (log: SystemLogItem) => {
@@ -110,6 +118,7 @@ export default function AdminLogsPage() {
 
   const handleResetFilter = () => {
     setFilter(DEFAULT_FILTER);
+    setLiveTailBuffer([]);
   };
 
   // 显示数据：推流模式下展示推流缓冲区，否则展示分页数据
@@ -119,10 +128,10 @@ export default function AdminLogsPage() {
 
   return (
     <PageContainer>
-      <PageHeader
-        title={t('admin:logs.title')}
-        description={t('admin:logs.subtitle')}
-      />
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <PageHeader title={t('admin:logs.title')} description={t('admin:logs.subtitle')} />
+        <Button variant="outline" size="sm" onClick={() => setIsDiagnosticsOpen(true)}><Activity className="size-4" />{t('admin:logs.diagnosticsTitle')}</Button>
+      </div>
 
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-muted-foreground">
         {t('admin:logs.infoBanner')}
@@ -131,6 +140,7 @@ export default function AdminLogsPage() {
       {/* 顶部指标卡 */}
       <LogMetricsCards
         metrics={metricsQuery.data}
+        hours={filter.timeRange === '7d' ? 168 : filter.timeRange === '15m' || filter.timeRange === '1h' ? 1 : 24}
         isLoading={metricsQuery.isPending}
       />
 
@@ -138,6 +148,8 @@ export default function AdminLogsPage() {
       <LogTrendChart
         trend={metricsQuery.data?.trend}
         isLoading={metricsQuery.isPending}
+        sampled={metricsQuery.data?.sampled}
+        sampleLimit={metricsQuery.data?.sampleLimit}
       />
 
       {/* 过滤控制栏 */}
@@ -148,6 +160,7 @@ export default function AdminLogsPage() {
         onReset={handleResetFilter}
         onOpenCleanup={() => setIsCleanupOpen(true)}
         onExport={exportLogs}
+        isExporting={isExporting}
         isLiveTail={isLiveTail}
         onToggleLiveTail={() => {
           setIsLiveTail((prev) => !prev);
@@ -158,6 +171,8 @@ export default function AdminLogsPage() {
         nodes={nodesQuery.data}
         isRefreshing={logsQuery.isFetching}
       />
+      <LogDiagnosticsDialog key={filter.nodeId} open={isDiagnosticsOpen} onOpenChange={setIsDiagnosticsOpen}
+        node={nodesQuery.data?.find((node) => node.id === filter.nodeId)} ingestion={metricsQuery.data?.ingestion} />
 
       {/* Live Tail 运行状态条 */}
       {isLiveTail && (

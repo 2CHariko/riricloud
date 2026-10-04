@@ -962,15 +962,15 @@ model SystemLog {
 | `metadata` | String (JSON) | 扩展元数据，包含 IP、请求方法、URL、状态码、耗时、异常调用栈堆栈等结构化信息 |
 | `nodeId` | String? | 关联的边缘节点 ID，可为空；节点删除时级联设置为 `null`（`SetNull`） |
 | `userId` | String? | 关联的操作/请求用户 ID，可为空；用户删除时级联设置为 `null`（`SetNull`） |
-| `createdAt` | DateTime | 记录产生时间戳，建有复合时序索引保障毫秒级分页检索 |
+| `createdAt` | DateTime | 合法 Agent occurredAt 的发生时间；旧 Agent 或异常时钟回退主控接收时间，按 createdAt + id 稳定排序；不是时钟同步证明 |
 
-NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；有效诊断期内仅允许不高于请求级别的 SINGBOX 日志受控绕过全局 `logsMinIngestLevel`。历史日志不迁移、不重分类；系统日志也不参与流量计费，账务继续由 StatsService、heartbeat 与 `TrafficHourlyMetric` 小时桶驱动。入库前除既有敏感键掩码外，还清洗域名、IP、Token、密码和密钥模式。
+NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；真实 WARN/ERROR 不因 ACCESS 分类过滤，有效诊断期内匹配级别受控绕过全局 logsMinIngestLevel。NodeDiagnostics 只读结果受控绕过门槛。metadata 兼容保存 receivedAt、timeQuality、sequence、agentInstanceId、kernelInstanceId、operationId、configVersion、event、errorCategory、collectorStats；无需 schema 迁移，不改历史日志或计费。凭据完整遮蔽，目标使用 Master 进程内随机 HMAC 匿名引用，重启后关联变化。
 
 ### 5.3 存储缓冲与自动滚动淘汰机制
-1. **内存队列与批量入库**：高频日志优先写入 Master 内存环形队列，每隔 1 秒或积攒 50 条日志异步执行批量写入（`createMany`），消除 SQLite 单写锁争用风险。
-2. **生命周期双上限自动清理**：后台每小时按 `SystemSetting` 中的 `logsRetentionDays`（默认 7 天）与 `logsMaxCount`（默认 100,000 条）执行旧日志清理，防止 SQLite 数据库膨胀；管理员也可从统一遥测清理中心预览、按时间/数量清理或清空。
+1. **内存队列与批量入库**：Master 内存队列（含在途批次）限制 5000 条/8 MiB，每 1 秒或积攒 50 条触发，单批最多 500 条。写库失败最多尝试 3 次、留待下一轮而非忙等，重要证据可淘汰低优先级日志；公开实例累计 filtered/dropped/persistenceFailures/retries/persisted 及 pendingEntries/pendingBytes。进程退出/重启和传输无持久化确认仍可能丢失，SSE 广播不是写库证明。
+2. **生命周期双上限自动清理**：后台每小时按 logsRetentionDays（默认 7 天）与 logsMaxCount（默认 100,000 条）清理；按条数使用 createdAt + id 的精确边界，避免同毫秒记录过量删除。管理员也可从统一遥测清理中心预览、按时间/数量清理或清空。
 3. **清理审计与数据边界**：`POST /admin/telemetry/cleanup` 按 `TrafficHourlyMetric`、`NodeRateMetric`、`SystemLog` 和旧版 `TrafficLog` 分表执行，支持部分成功结果。操作要求二次确认和 `CLEAR_HISTORY` 短语，完成后以绕过最低采集级别的 `TelemetryCleanup` 日志记录操作者、请求 ID、条件、匹配数、删除数和耗时；审计写入在数据清理之后执行，因此清空系统日志仍保留本次审计。清理不触及 `User`/`Subscription` 用量、`TrafficCursor`、节点实时快照或计费数据。
-4. **敏感信息脱敏红线**：所有 Token、密码、UUID 凭证与 Cookie 在入库前必须经过不可逆掩码处理（如 `eyJ...***`）。
+4. **敏感信息脱敏红线**：Token、密码、UUID 凭证与 Cookie 完整替换为 ***，不保留前后缀；日志 URL 不保留浏览路径或用户信息，CSV 所有字符串单元格防公式注入。导出最多 5000 条并标记截断，bundle 仅白名单节点信息，查询完整性不保证未采集/已清理/未送达数据完整。
 
 ## 6. 实时节点镜像站模型
 

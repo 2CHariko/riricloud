@@ -1649,14 +1649,58 @@ describe('AgentGatewayService', () => {
         { source: 'SINGBOX', level: 'WARN', module: 'Singbox', message: 'warning' },
         { source: 'SINGBOX', level: 'ERROR', module: 'Singbox', message: 'failure' },
         { source: 'SINGBOX', level: 'WARN', module: 'Singbox', message: 'accepted', metadata: { category: 'ACCESS' } },
+        { source: 'SINGBOX', level: 'ERROR', module: 'Singbox', message: 'outbound connection failed', metadata: { category: 'ACCESS' } },
         { source: 'AGENT', level: 'INFO', module: 'Agent', message: 'agent info' }
       ]
     });
     expect(systemLogEnqueue.mock.calls.map(([item]) => `${item.source}:${item.level}:${item.message}`)).toEqual([
       'SINGBOX:WARN:warning',
       'SINGBOX:ERROR:failure',
+      'SINGBOX:WARN:accepted',
+      'SINGBOX:ERROR:outbound connection failed',
       'AGENT:INFO:agent info'
     ]);
+  });
+
+  it('保留延迟上报发生时间，旧Agent和未来时钟明确回退', async () => {
+    prisma.node.findUnique.mockResolvedValue({ singboxLogMode: 'NORMAL' });
+    systemLogEnqueue.mockClear();
+    const occurredAt = new Date(Date.now() - 3600_000).toISOString();
+    await service.handleLogReport('node-1', { logs: [
+      { source: 'AGENT', level: 'ERROR', module: 'Agent', message: 'delayed', occurredAt, sequence: 42, agentInstanceId: 'instance-1' },
+      { level: 'INFO', module: 'Agent', message: 'legacy' },
+      { level: 'WARN', module: 'Agent', message: 'future', occurredAt: '2099-01-01T00:00:00Z' }
+    ] });
+    expect(systemLogEnqueue.mock.calls[0][0]).toMatchObject({ createdAt: new Date(occurredAt), metadata: { timeQuality: 'agent-clock', sequence: 42, agentInstanceId: 'instance-1', receivedAt: expect.any(String) } });
+    expect(systemLogEnqueue.mock.calls[1][0].metadata.timeQuality).toBe('legacy-received-time');
+    expect(systemLogEnqueue.mock.calls[2][0]).toMatchObject({ createdAt: undefined, metadata: { timeQuality: 'invalid-clock-fallback' } });
+  });
+
+  it('只读快照旧Agent拒绝，新Agent有界限频且不触发配置推送', async () => {
+    const push = jest.spyOn(service, 'pushConfig');
+    prisma.node.findUnique.mockResolvedValue({ status: 'ONLINE', capabilitiesJson: '[]' });
+    await expect(service.requestDiagnosticsSnapshot('node-1')).rejects.toThrow('请升级');
+    prisma.node.findUnique.mockResolvedValue({ status: 'ONLINE', communicationMode: 'HTTP', capabilitiesJson: '["singbox_diagnostics_snapshot"]' });
+    const result = await service.requestDiagnosticsSnapshot('node-1', 'admin-1');
+    expect(result).toMatchObject({ requested: true, taskId: expect.any(String) });
+    await expect(service.requestDiagnosticsSnapshot('node-1')).rejects.toThrow('10 秒');
+    expect(push).not.toHaveBeenCalled();
+    push.mockRestore();
+  });
+
+  it('HTTP快照仅下发一次，过期未下发快照不会延迟执行', async () => {
+    prisma.node.findUnique.mockResolvedValue({ status: 'ONLINE', communicationMode: 'HTTP', capabilitiesJson: '["singbox_diagnostics_snapshot"]' });
+    const result = await service.requestDiagnosticsSnapshot('snapshot-http-node');
+    const internals = service as unknown as {
+      takePendingTasks(id: string): Promise<unknown[]>;
+      pendingTasks: Map<string, { type: string; data: { taskId: string; timeoutMs: number }; deliveredAt: number; expiresAt: number }[]>;
+    };
+    const first = await internals.takePendingTasks('snapshot-http-node');
+    expect(first).toContainEqual({ type: 'diagnostics_snapshot_task', data: { taskId: result.taskId, timeoutMs: 3000 } });
+    expect(await internals.takePendingTasks('snapshot-http-node')).toEqual([]);
+    internals.pendingTasks.set('snapshot-http-node', [{ type: 'diagnostics_snapshot_task', data: { taskId: 'expired', timeoutMs: 3000 }, deliveredAt: 0, expiresAt: Date.now() - 1 }]);
+    expect(await internals.takePendingTasks('snapshot-http-node')).toEqual([]);
+    expect(internals.pendingTasks.has('snapshot-http-node')).toBe(false);
   });
 
   it('有效诊断模式按级别放行 Sing-box，并允许受控绕过全局门槛', async () => {

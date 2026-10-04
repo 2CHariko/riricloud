@@ -169,6 +169,7 @@ type Client struct {
 	shaper           *trafficshaper.Shaper
 	lastTrafficErrAt time.Time
 	deviceTracker    *devices.Tracker
+	diagnostics      *singbox.Diagnostics
 }
 
 func NewClient(masterURL, token string, interval time.Duration, singboxMgr *singbox.Manager, tunnelMgr *tunnel.Manager, version, osArch string, log *logrus.Entry, restarter *restart.Manager, logCollector *logging.Collector, logRotators ...*logging.RotatingWriter) *Client {
@@ -191,6 +192,7 @@ func NewClient(masterURL, token string, interval time.Duration, singboxMgr *sing
 		completedTasks: make(map[string]struct{}),
 		traffic:        trafficstats.NewCollector(log),
 		logCollector:   logCollector,
+		diagnostics:    singbox.NewDiagnostics(singboxMgr, logCollector),
 		logRotator:     logRotator,
 		shaper:         trafficshaper.NewShaper(log),
 	}
@@ -198,9 +200,11 @@ func NewClient(masterURL, token string, interval time.Duration, singboxMgr *sing
 
 // SetDeviceTracker enables active-device reporting and local kick execution.
 func (c *Client) SetDeviceTracker(tracker *devices.Tracker) { c.deviceTracker = tracker }
+func (c *Client) SetDiagnostics(d *singbox.Diagnostics)     { c.diagnostics = d }
 
 // Run 先立即轮询一次，随后采用服务端建议周期；请求失败时短暂指数退避，成功后恢复协商周期。
 func (c *Client) Run(ctx context.Context) {
+	defer c.diagnostics.Wait()
 	if c.shaper != nil {
 		defer c.shaper.Cleanup()
 	}
@@ -286,15 +290,26 @@ func (c *Client) pollOnce(ctx context.Context) error {
 			DownloadTotal: record.DownloadTotal,
 		})
 	}
-	if c.logCollector != nil {
-		payload.Logs = c.logCollector.Drain(50)
-	}
 	requeueLogs := func() {
 		if c.logCollector != nil && len(payload.Logs) > 0 {
 			c.logCollector.Requeue(payload.Logs)
 		}
 	}
 	sentResults := c.appendPendingResults(&payload)
+	if c.singboxMgr != nil && c.logCollector != nil {
+		payload.Capabilities = append(payload.Capabilities, singbox.DiagnosticsCapability)
+	}
+	if c.logCollector != nil {
+		// 按真实 HTTP 外层 JSON 大小预留，不能仅按原始 message 长度计费。
+		base, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal poll payload: %w", err)
+		}
+		budget := 64*1024 - len(base) - 16
+		if budget >= 1024 {
+			payload.Logs = c.logCollector.DrainBatch(50, budget)
+		}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		requeueLogs()
@@ -320,9 +335,11 @@ func (c *Client) pollOnce(ctx context.Context) error {
 	}
 	var response pollResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 20*1024*1024)).Decode(&response); err != nil {
+		requeueLogs()
 		return fmt.Errorf("decode poll response: %w", err)
 	}
 	if response.ProtocolVersion != protocol.Version {
+		requeueLogs()
 		return fmt.Errorf("unsupported master protocol version %d, expected %d", response.ProtocolVersion, protocol.Version)
 	}
 	c.removePendingResults(sentResults)
@@ -345,8 +362,8 @@ func (c *Client) pollOnce(ctx context.Context) error {
 			c.addResult("config", configApplyResult{Version: response.Version, Success: false, Message: err.Error()})
 			c.log.WithError(err).Error("apply polled sing-box config failed")
 		} else {
-			c.addResult("config", configApplyResult{Version: response.Version, Success: true, Message: "ok"})
-			c.log.WithField("version", response.Version).Info("polled sing-box config applied")
+			c.addResult("config", configApplyResult{Version: response.Version, Success: true, Message: "accepted"})
+			c.log.WithField("version", response.Version).Info("polled sing-box config accepted; execution pending")
 		}
 	}
 	if response.TunnelConfigs != nil && c.tunnelMgr != nil {
@@ -422,6 +439,10 @@ func (c *Client) addResult(kind string, value any) {
 }
 
 func (c *Client) startTask(parent context.Context, task taskMessage) {
+	if task.Type == "diagnostics_snapshot_task" {
+		c.diagnostics.Submit(parent, task.Data)
+		return
+	}
 	taskID := extractTaskID(task.Data)
 	if taskID == "" {
 		c.log.WithField("type", task.Type).Warn("ignore task without taskId")

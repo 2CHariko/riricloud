@@ -13,10 +13,19 @@
 ## [Unreleased]
 
 ### Added
+- **日志可信度与只读诊断快照**：日志携带 UTC `occurredAt`、安全整数 `sequence`、随机 `agentInstanceId`，内核输出与配置 receipt/check/unchanged/restart/start/exit 生命周期携带随机 `kernelInstanceId`、`operationId` 和 `configVersion`；故障补充 `errorCategory`（timeout/dns/tls/udp/connection/config/unknown）。
+- **异步只读快照能力 `singbox_diagnostics_snapshot`**：WS/HTTP 接收 `diagnostics_snapshot_task {taskId, timeoutMs:3000}`，共用单并发、10 秒限频、256 ID/15 分钟有界幂等缓存；返回 AGENT/NodeDiagnostics INFO 日志（`metadata.event=diagnostics_snapshot`），无新结果帧。60 秒周期同类采样保留本地 degraded/recovered 证据，取消和进程换代不产生伪恢复。
+- **最小只读采样**：运行/PID/uptime/实例/配置版本、已有 gopsutil 的 RSS/FD/线程数、快照开始/完成/耗时、取消/超时/换代标记；仅实际应用配置中的字面回环 Clash API `/version` 可用于本地 readiness，secret 只入 Authorization header，不输出地址、用户、配置或响应正文，不探测公网/业务目标。
 
 ### Changed
+- **可观测的有界采集/传输**：队列最多 500 条，WARN/ERROR、生命周期与快照优先；WARN 合并索引严格有界，累计 filtered/coalesced/dropped/truncated/requeued 通过每批直接生成的 `metadata.collectorStats` 上报，失败时刷新统计而不递归采集。单批最多 50 条，按完整转义 JSON（含 metadata/关联字段）计算预算；消息≤8192 字节、module≤128 字节、metadata 字符串≤4096 字节，限制深度/宽度/总节点/单条 metadata，毒化条目跳过并计数。
+- **回执与输送语义**：成功配置回执明确为 `accepted`（不代表已生效或网络健康）；WS 全部写入增加 5 秒 deadline，HTTP 请求失败、非成功状态、解码/协议错误均安全重入且保留原时间/序列。诊断不获取配置应用锁，不写配置、不重启内核，3 秒 context 控制采样/本地请求。
+- **限制说明**：队列与幂等缓存非持久化；过载/断电/断线仍可能丢失或重复，无零丢保证。FD 等资源不受平台支持或权限允许时为 unavailable；gopsutil 原生系统调用的取消取决于平台，非硬实时保证。大于 2 MiB 的应用配置跳过 readiness 解析；API 未配置/超时/不安全地址明确不可用，本地 readiness 不是业务网络健康。HTTP 非日志遥测/任务结果自身仍沿用现有预算。
 
 ### Fixed
+- **修复真实连接故障被 ACCESS 过滤和内核 DEBUG 被控制台 INFO 门槛阻断**：真实 WARN/ERROR 无条件保留，只有明确 QUIC 正常零错误码流关闭降 INFO；专门 Hook bypass 采集内核输出，不开启 Agent 全局 DEBUG。runner 在启动日志之前注册 Hook，日志长行有界 UTF-8 截断并纳入计数，重入/溢出与毒化均可观察。
+- **保守识别正常 QUIC 关闭**：零错误码关闭必须位于完整消息结尾；附加异常或被截断的 WARN/ERROR 不降级，防止故障藏在超长行尾部后丢失。
+- **回归覆盖**：真实进程配置换代/生命周期、本地 API 密钥头与地址拒绝、3 秒超时/取消/不重启/不阻塞 reload、周期停止与状态证据、WS/HTTP 真实任务路径、runner 启动输送、完整 JSON/metadata/poison/溢出/合并/计数/重入标识。
 
 
 ## [0.8.6] - 2026-10-02

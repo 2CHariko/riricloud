@@ -25,4 +25,16 @@ describe('AgentPollDto', () => {
     const errors = await validate(createDto(uploadTotal));
     expect(errors.some((error) => error.property === 'trafficSnapshots')).toBe(true);
   });
+  it('兼容旧日志与新时间字段，HTTP批次复用WS元数据和预算限制', async () => {
+    const dto = createDto('0');
+    dto.logs = [{ level: 'WARN', module: 'Singbox', message: 'old agent' },
+      { level: 'ERROR', module: 'Singbox', message: 'timeout', occurredAt: '2026-10-04T00:00:00.123456789Z', sequence: 7, agentInstanceId: 'a1', metadata: { event: 'kernel_exit', detail: null } }];
+    expect(await validate(plainToInstance(AgentPollDto, dto))).toHaveLength(0);
+    dto.logs[1].metadata = { nested: { a: { b: { c: { d: { e: 'too deep' } } } } } };
+    expect((await validate(plainToInstance(AgentPollDto, dto))).some((error) => error.property === 'logs')).toBe(true);
+    dto.logs = Array.from({ length: 50 }, () => ({ level: 'INFO', module: 'HTTP', message: 'x'.repeat(2000) }));
+    expect((await validate(plainToInstance(AgentPollDto, dto))).some((error) => error.property === 'logs')).toBe(true);
+    dto.logs = Array.from({ length: 100 }, () => ({ level: 'INFO', module: 'HTTP', message: 'ok' }));
+    expect(await validate(plainToInstance(AgentPollDto, dto))).toHaveLength(0);
+  });
 });

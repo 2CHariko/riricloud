@@ -104,8 +104,8 @@ func TestCollector_SingboxCaptureModesAndAccessFiltering(t *testing.T) {
 	logger.WithFields(logrus.Fields{"source": "AGENT", "module": "Agent"}).Info("agent info")
 
 	items := collector.Drain(20)
-	if len(items) != 1 || items[0].Source != "AGENT" {
-		t.Fatalf("normal mode should keep only agent info, got %+v", items)
+	if len(items) != 2 || items[0].Level != "WARN" || items[1].Source != "AGENT" {
+		t.Fatalf("normal mode must preserve real WARN even with ACCESS metadata, got %+v", items)
 	}
 
 	collector.SetSingboxCaptureLevel("INFO")
@@ -212,5 +212,27 @@ func TestCollector_RequeuePreservesOrderAndCapacity(t *testing.T) {
 	}
 	if bounded[0].Message != "old2" || bounded[1].Message != "msg4" || bounded[2].Message != "msg5" {
 		t.Fatalf("unexpected bounded items after overflow requeue: %+v", bounded)
+	}
+}
+
+func TestAccessWarningsAndErrorsSurviveNormalMode(t *testing.T) {
+	c := NewCollector(10)
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	l.AddHook(NewHook(c))
+	l.WithFields(logrus.Fields{"source": "SINGBOX", "category": "ACCESS"}).Error("outbound connection refused")
+	c.Push(LogItem{Source: "SINGBOX", Level: "WARN", Message: "inbound connection TLS failed", Metadata: map[string]interface{}{"category": "ACCESS"}})
+	if got := c.Drain(10); len(got) != 2 {
+		t.Fatalf("real failures lost: %+v", got)
+	}
+}
+
+func TestWarningIndexStrictlyBounded(t *testing.T) {
+	c := NewCollector(2)
+	for i := 0; i < 100; i++ {
+		c.Push(LogItem{Source: "SINGBOX", Level: "WARN", Message: time.Unix(int64(i), 0).String()})
+	}
+	if len(c.warnSeenAt) > c.capacity*4 {
+		t.Fatalf("unbounded index: %d", len(c.warnSeenAt))
 	}
 }

@@ -45,6 +45,8 @@ func Run(ctx context.Context, options Options) error {
 
 // runForeground 以前台方式启动 Agent，取消信号由调用方负责。
 func runForeground(ctx context.Context, options Options) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cfg, err := config.LoadFrom(options.ConfigPath)
 	if err != nil {
 		return err
@@ -55,10 +57,10 @@ func runForeground(ctx context.Context, options Options) error {
 		return err
 	}
 	defer closeLog()
-	log.Infof("riri-agent starting, version=%s", options.Version)
 
 	collector := logging.NewCollector(500)
 	log.AddHook(logging.NewHook(collector))
+	logging.EmitCaptured(logrus.NewEntry(log).WithField("event", "agent_start"), logrus.InfoLevel, fmt.Sprintf("riri-agent starting, version=%s", options.Version))
 
 	entry := logrus.NewEntry(log)
 	startKernelBootstrap(ctx, cfg, options, entry)
@@ -70,6 +72,9 @@ func runForeground(ctx context.Context, options Options) error {
 	}
 
 	singboxMgr := singbox.NewManager(ctx, cfg.SingboxConfPath, cfg.SingboxBinPath, entry)
+	diagnostics := singbox.NewDiagnostics(singboxMgr, collector)
+	diagnosticsDone := make(chan struct{})
+	go func() { defer close(diagnosticsDone); diagnostics.Run(ctx) }()
 	tunnelMgr := tunnel.NewManager(ctx, entry)
 	deviceTracker := devices.NewTracker(singboxMgr, entry)
 	go deviceTracker.Run(ctx)
@@ -103,6 +108,7 @@ func runForeground(ctx context.Context, options Options) error {
 			logRotator,
 		)
 		client.SetDeviceTracker(deviceTracker)
+		client.SetDiagnostics(diagnostics)
 		client.Run(ctx)
 	} else {
 		client := ws.NewClient(
@@ -119,8 +125,12 @@ func runForeground(ctx context.Context, options Options) error {
 			logRotator,
 		)
 		client.SetDeviceTracker(deviceTracker)
+		client.SetDiagnostics(diagnostics)
 		client.Run(ctx)
 	}
+	cancel()
+	<-diagnosticsDone
+	diagnostics.Wait()
 	singboxMgr.Shutdown(5 * time.Second)
 	log.Info("riri-agent stopped")
 	return nil

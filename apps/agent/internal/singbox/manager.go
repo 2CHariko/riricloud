@@ -22,6 +22,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/Nanako660/riricloud/apps/agent/internal/logging"
 	"github.com/Nanako660/riricloud/apps/agent/internal/stats"
 	"github.com/Nanako660/riricloud/apps/agent/internal/upgrade"
 )
@@ -71,21 +72,26 @@ type Manager struct {
 	binFingerprint    string
 	clashAPISupported bool
 
-	mu            sync.Mutex
-	upgradeMu     sync.Mutex // 串行化二进制升级，避免并行替换同一目标文件
-	wantRun       bool
-	upgrading     bool          // 升级窗口内禁止 supervisor 自动拉起旧二进制
-	stopping      bool          // Shutdown 已调用（终态）：收敛完成后 supervisor 退出
-	desiredConf   []byte        // ApplyConfig 提交的目标配置
-	desiredVer    int64         // ApplyConfig 提交的目标配置版本（来自 config_sync.version）
-	appliedConf   []byte        // 当前子进程使用的配置（字节比对避免无谓重启）
-	appliedVer    int64         // 当前子进程使用的配置版本（Status 上报）
-	lastError     string        // 最近一次失败原因（check/启动/运行期）
-	child         *exec.Cmd     // 当前子进程；退出后由 waiter 置 nil
-	childExit     chan struct{} // 当前子进程退出通知，每次拉起重建
-	stoppingChild *exec.Cmd     // 被主动停止（重启/Shutdown）的子进程：退出属预期，不算失败
-	nextStartAt   time.Time     // 退避期内不允许拉起；零值表示立即可拉起
-	backoff       time.Duration
+	mu                 sync.Mutex
+	applyMu            sync.Mutex
+	desiredOperationID string
+	appliedOperationID string
+	kernelInstanceID   string
+	startedAt          time.Time
+	upgradeMu          sync.Mutex // 串行化二进制升级，避免并行替换同一目标文件
+	wantRun            bool
+	upgrading          bool          // 升级窗口内禁止 supervisor 自动拉起旧二进制
+	stopping           bool          // Shutdown 已调用（终态）：收敛完成后 supervisor 退出
+	desiredConf        []byte        // ApplyConfig 提交的目标配置
+	desiredVer         int64         // ApplyConfig 提交的目标配置版本（来自 config_sync.version）
+	appliedConf        []byte        // 当前子进程使用的配置（字节比对避免无谓重启）
+	appliedVer         int64         // 当前子进程使用的配置版本（Status 上报）
+	lastError          string        // 最近一次失败原因（check/启动/运行期）
+	child              *exec.Cmd     // 当前子进程；退出后由 waiter 置 nil
+	childExit          chan struct{} // 当前子进程退出通知，每次拉起重建
+	stoppingChild      *exec.Cmd     // 被主动停止（重启/Shutdown）的子进程：退出属预期，不算失败
+	nextStartAt        time.Time     // 退避期内不允许拉起；零值表示立即可拉起
+	backoff            time.Duration
 
 	kick chan struct{} // 唤醒 supervisor（容量 1，合并重复信号）
 	done chan struct{} // supervisor 退出后关闭
@@ -109,14 +115,21 @@ func NewManager(rootCtx context.Context, confPath, binPath string, log *logrus.E
 // 预检：失败则拒绝该配置并保持 lastGood 不变（回滚语义），已在运行的内核继续使用旧配置。
 // 拉起失败（如内核二进制缺失）不在此返回错误：supervisor 按退避持续重试，Agent 本体保持存活。
 func (m *Manager) ApplyConfig(raw json.RawMessage, version int64) error {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+	operationID := logging.NewInstanceID()
+	m.lifecycle("config_receipt", operationID, version, logrus.InfoLevel, "Sing-box configuration received", nil)
 	if len(raw) == 0 {
+		m.lifecycle("config_check", operationID, version, logrus.ErrorLevel, "Sing-box empty configuration rejected", logrus.Fields{"success": false, "errorCategory": "config"})
 		return fmt.Errorf("empty singbox config")
 	}
 	raw = m.sanitizeLoopbackListeners(raw)
 	if err := m.WriteConfig(raw); err != nil {
+		m.lifecycle("config_check", operationID, version, logrus.ErrorLevel, "Sing-box configuration write rejected", logrus.Fields{"success": false, "errorCategory": "config"})
 		return err
 	}
 	if err := m.checkConfig(); err != nil {
+		m.lifecycle("config_check", operationID, version, logrus.ErrorLevel, "Sing-box configuration check rejected", logrus.Fields{"success": false, "errorCategory": "config"})
 		m.mu.Lock()
 		m.lastError = fmt.Sprintf("config check failed: %v", err)
 		m.mu.Unlock()
@@ -128,8 +141,10 @@ func (m *Manager) ApplyConfig(raw json.RawMessage, version int64) error {
 		}
 		return fmt.Errorf("sing-box check: %w", err)
 	}
+	m.lifecycle("config_check", operationID, version, logrus.InfoLevel, "Sing-box configuration accepted; execution pending", logrus.Fields{"success": true})
 	m.mu.Lock()
 	m.desiredConf = append([]byte(nil), raw...)
+	m.desiredOperationID = operationID
 	m.desiredVer = version
 	m.wantRun = true
 	m.lastError = ""
@@ -484,7 +499,9 @@ var singboxLevelPattern = regexp.MustCompile(`(?i)\b(DEBUG|TRACE|INFO|WARN(?:ING
 var singboxLevelRuntimePrefix = regexp.MustCompile(`(?i)^((?:DEBUG|TRACE|INFO|WARN(?:ING)?|ERROR|FATAL|PANIC))\s*\[[0-9:.+\-]+\]\s*`)
 var singboxLeadingTimestamp = regexp.MustCompile(`^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.+\-Z]+|[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?)\s+`)
 var singboxAccessPattern = regexp.MustCompile(`(?i)(accepted|inbound.*connection|outbound.*connection|connection.*closed|dial(?:ing)?|destination=|request.*(?:tcp|udp|http|https))`)
-var singboxBenignStreamCancelPattern = regexp.MustCompile(`(?i)\bcanceled by (?:remote|local) with error code 0\b`)
+var singboxBenignStreamCancelPattern = regexp.MustCompile(`(?i)\bcanceled by (?:remote|local) with error code 0[.!]?$`)
+var singboxNonzeroCodePattern = regexp.MustCompile(`(?i)error code (?:0x[0-9a-f]+|[1-9][0-9]*)`)
+var singboxQUICComponentPattern = regexp.MustCompile(`(?i)(?:\b(?:inbound|outbound)/(?:quic|hysteria2|tuic)\b|\bquic(?: stream| connection|:))`)
 
 func fileFingerprint(binaryPath string) string {
 	info, err := os.Stat(binaryPath)
@@ -843,6 +860,8 @@ func (m *Manager) supervisor(ctx context.Context) {
 
 // reconcile 使实际状态向期望状态收敛，返回建议的重试等待时长（0 表示挂起等事件）。
 func (m *Manager) reconcile() time.Duration {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
 	m.mu.Lock()
 	wantRun, desired, desiredVer, upgrading := m.wantRun, m.desiredConf, m.desiredVer, m.upgrading
 	m.mu.Unlock()
@@ -861,12 +880,15 @@ func (m *Manager) reconcile() time.Duration {
 		if m.appliedVer != desiredVer {
 			m.appliedVer = desiredVer
 		}
+		operationID := m.desiredOperationID
+		m.appliedOperationID = operationID
 		m.mu.Unlock()
+		m.lifecycle("config_unchanged", operationID, desiredVer, logrus.InfoLevel, "Sing-box configuration unchanged; no restart", nil)
 		return 0
 	}
 	if m.Running() {
 		// 配置变化：优雅重启（sing-box 无原生 reload，重启即热应用）
-		m.log.Info("sing-box config changed, restarting kernel")
+		m.lifecycle("kernel_restart", "", desiredVer, logrus.InfoLevel, "Sing-box configuration changed; restarting kernel", nil)
 		m.gracefulStopCurrent()
 	}
 	if delay := m.pendingBackoff(); delay > 0 {
@@ -901,14 +923,22 @@ func (m *Manager) pendingBackoff() time.Duration {
 func (m *Manager) spawn(conf []byte, version int64) error {
 	dir := filepath.Dir(m.confPath)
 	cmd := exec.Command(m.binPath, "run", "-c", m.confPath, "-D", dir)
+	m.mu.Lock()
+	operationID := m.desiredOperationID
+	m.mu.Unlock()
+	kernelID := logging.NewInstanceID()
 	stdoutWriter := newLineLogWriter(m, false)
 	stderrWriter := newLineLogWriter(m, true)
+	fields := logrus.Fields{"kernelInstanceId": kernelID, "operationId": operationID, "configVersion": version}
+	stdoutWriter.fields = fields
+	stderrWriter.fields = fields
 	stderrTail := newTailWriter(stderrTailLimit)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = io.MultiWriter(stderrWriter, stderrTail)
 	if err := cmd.Start(); err != nil {
 		stdoutWriter.Flush()
 		stderrWriter.Flush()
+		logging.EmitCaptured(m.log.WithFields(fields).WithFields(logrus.Fields{"source": "AGENT", "module": "SingboxLifecycle", "event": "kernel_start_failed", "success": false, "errorCategory": "config"}), logrus.WarnLevel, "Sing-box process start failed")
 		return fmt.Errorf("start sing-box: %w", err)
 	}
 	exitC := make(chan struct{})
@@ -918,11 +948,14 @@ func (m *Manager) spawn(conf []byte, version int64) error {
 	m.stoppingChild = nil // 新进程不在预期停止集合中
 	m.appliedConf = append([]byte(nil), conf...)
 	m.appliedVer = version
+	m.kernelInstanceID = kernelID
+	m.appliedOperationID = operationID
+	m.startedAt = time.Now()
 	// 拉起成功即代表当前无故障（崩溃退避循环恢复、主动重启均走这里）：
 	// 清掉历史失败原因，避免内核已正常运行时面板仍显示陈旧错误；随后若再崩溃由 awaitChild 重新记录
 	m.lastError = ""
 	m.mu.Unlock()
-	m.log.WithField("pid", cmd.Process.Pid).Info("sing-box started")
+	m.lifecycle("kernel_start", operationID, version, logrus.InfoLevel, "sing-box started; process only, network health unverified", logrus.Fields{"pid": cmd.Process.Pid, "kernelInstanceId": kernelID})
 	go m.awaitChild(cmd, exitC, time.Now(), stdoutWriter, stderrWriter, stderrTail)
 	return nil
 }
@@ -956,14 +989,14 @@ func (m *Manager) awaitChild(cmd *exec.Cmd, exitC chan struct{}, startedAt time.
 	}
 	m.mu.Unlock()
 	close(exitC) // 通知 supervisor：当前子进程已退出，可重新收敛
-	entry := m.log.WithField("uptime", uptime.String())
+	entry := m.log.WithFields(stdoutWriter.fields).WithFields(logrus.Fields{"source": "AGENT", "module": "SingboxLifecycle", "event": "kernel_exit", "expected": expected, "uptimeMs": uptime.Milliseconds()})
 	if err != nil {
 		entry = entry.WithError(err)
 	}
 	if err != nil && !expected {
-		entry.Error("sing-box exited unexpectedly")
+		logging.EmitCaptured(entry, logrus.ErrorLevel, "Sing-box exited unexpectedly")
 	} else {
-		entry.Info("sing-box exited")
+		logging.EmitCaptured(entry, logrus.InfoLevel, "Sing-box exited")
 	}
 }
 
@@ -1003,7 +1036,7 @@ func (m *Manager) scheduleRetry(err error) time.Duration {
 	m.backoff = nextBackoff(m.backoff)
 	m.nextStartAt = time.Now().Add(m.backoff)
 	m.lastError = err.Error()
-	m.log.WithError(err).WithField("retry_in", m.backoff.String()).Warn("sing-box start failed")
+	logging.EmitCaptured(m.log.WithFields(logrus.Fields{"source": "AGENT", "module": "SingboxLifecycle", "event": "kernel_retry", "operationId": m.desiredOperationID, "configVersion": m.desiredVer, "errorCategory": "config", "retryMs": m.backoff.Milliseconds()}), logrus.WarnLevel, "Sing-box process start scheduled for retry")
 	return m.backoff
 }
 
@@ -1079,10 +1112,12 @@ func nextBackoff(current time.Duration) time.Duration {
 }
 
 type lineLogWriter struct {
-	mu       sync.Mutex
-	buf      []byte
-	isStderr bool
-	manager  *Manager
+	mu         sync.Mutex
+	buf        []byte
+	isStderr   bool
+	manager    *Manager
+	fields     logrus.Fields
+	discarding bool
 }
 
 func newLineLogWriter(manager *Manager, isStderr bool) *lineLogWriter {
@@ -1095,21 +1130,29 @@ func newLineLogWriter(manager *Manager, isStderr bool) *lineLogWriter {
 func (w *lineLogWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.buf = append(w.buf, p...)
-	for {
-		idx := bytes.IndexByte(w.buf, '\n')
-		if idx < 0 {
-			break
+	for _, b := range p {
+		if b == '\n' {
+			if !w.discarding {
+				w.manager.logSingboxOutput(strings.TrimRight(string(w.buf), "\r"), w.isStderr, w.fields)
+			}
+			w.buf = nil
+			w.discarding = false
+			continue
 		}
-		line := strings.TrimRight(string(w.buf[:idx]), "\r")
-		w.buf = w.buf[idx+1:]
-		w.manager.logSingboxOutput(line, w.isStderr)
-	}
-	const maxBufferedBytes = 64 * 1024
-	if len(w.buf) > maxBufferedBytes {
-		line := strings.TrimRight(string(w.buf), "\r")
-		w.buf = nil
-		w.manager.logSingboxOutput(line, w.isStderr)
+		if w.discarding {
+			continue
+		}
+		if len(w.buf) == logging.MaxMessageBytes {
+			fields := logrus.Fields{"truncated": true}
+			for k, v := range w.fields {
+				fields[k] = v
+			}
+			w.manager.logSingboxOutput(logging.BoundedString(string(w.buf), logging.MaxMessageBytes), w.isStderr, fields)
+			w.buf = nil
+			w.discarding = true
+			continue
+		}
+		w.buf = append(w.buf, b)
 	}
 	return len(p), nil
 }
@@ -1120,12 +1163,21 @@ func (w *lineLogWriter) Flush() {
 	if len(w.buf) > 0 {
 		line := strings.TrimRight(string(w.buf), "\r")
 		w.buf = nil
-		w.manager.logSingboxOutput(line, w.isStderr)
+		w.manager.logSingboxOutput(line, w.isStderr, w.fields)
 	}
 }
 
-func (m *Manager) logSingboxOutput(line string, isStderr bool) {
+func (m *Manager) logSingboxOutput(line string, isStderr bool, contextFields ...logrus.Fields) {
 	level, message, category, rawLevel := classifySingboxOutput(line)
+	// 尾部缺失时无法证明这是正常零码关闭，保守保留原始告警级别。
+	if len(contextFields) > 0 && contextFields[0]["truncated"] == true {
+		switch rawLevel {
+		case "WARN", "WARNING":
+			level, category = logrus.WarnLevel, "EVENT"
+		case "ERROR", "FATAL", "PANIC":
+			level, category = logrus.ErrorLevel, "EVENT"
+		}
+	}
 	if message == "" {
 		return
 	}
@@ -1135,10 +1187,18 @@ func (m *Manager) logSingboxOutput(line string, isStderr bool) {
 		"category": category,
 		"stream":   streamName(isStderr),
 	}
+	if len(contextFields) > 0 {
+		for k, v := range contextFields[0] {
+			fields[k] = v
+		}
+	}
+	if level <= logrus.WarnLevel {
+		fields["errorCategory"] = errorCategory(message)
+	}
 	if rawLevel != "" {
 		fields["rawLevel"] = rawLevel
 	}
-	m.log.WithFields(fields).Log(level, message)
+	logging.EmitCaptured(m.log.WithFields(fields), level, message)
 }
 
 func classifySingboxOutput(line string) (logrus.Level, string, string, string) {
@@ -1164,10 +1224,10 @@ func classifySingboxOutput(line string) (logrus.Level, string, string, string) {
 		level = logrus.ErrorLevel
 	}
 	category := "EVENT"
-	if singboxBenignStreamCancelPattern.MatchString(message) {
+	if rawLevel != "FATAL" && rawLevel != "PANIC" && singboxBenignStreamCancelPattern.MatchString(message) && isQUICOutput(message) && !hasOtherFailure(message) && !singboxNonzeroCodePattern.MatchString(message) {
 		category = "ACCESS"
 		level = logrus.InfoLevel
-	} else if singboxAccessPattern.MatchString(message) {
+	} else if level > logrus.WarnLevel && singboxAccessPattern.MatchString(message) {
 		category = "ACCESS"
 	}
 	return level, message, category, rawLevel
@@ -1178,4 +1238,52 @@ func streamName(isStderr bool) string {
 		return "stderr"
 	}
 	return "stdout"
+}
+
+func isQUICOutput(message string) bool {
+	return singboxQUICComponentPattern.MatchString(message)
+}
+func hasOtherFailure(message string) bool {
+	text := strings.ToLower(message)
+	for _, marker := range []string{"timeout", "timed out", "deadline", "refused", "failed", "failure", "certificate", "tls", "dns", "permission denied", "reset", "unreachable", "error code 1", "error code 2"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+func errorCategory(message string) string {
+	text := strings.ToLower(message)
+	for _, rule := range []struct {
+		category string
+		markers  []string
+	}{
+		{"timeout", []string{"timeout", "timed out", "deadline exceeded"}},
+		{"dns", []string{"dns", "lookup", "resolve", "no such host"}},
+		{"tls", []string{"tls", "certificate", "handshake", "x509"}},
+		{"config", []string{"config", "decode", "bind", "permission denied"}},
+		{"udp", []string{"udp", "quic", "hysteria", "tuic"}},
+		{"connection", []string{"connection", "dial", "network", "tcp", "broken pipe", "eof"}},
+	} {
+		for _, marker := range rule.markers {
+			if strings.Contains(text, marker) {
+				return rule.category
+			}
+		}
+	}
+	return "unknown"
+}
+
+func (m *Manager) lifecycle(event, operationID string, version int64, level logrus.Level, message string, extra logrus.Fields) {
+	m.mu.Lock()
+	if operationID == "" {
+		operationID = m.desiredOperationID
+	}
+	kernelID := m.kernelInstanceID
+	m.mu.Unlock()
+	fields := logrus.Fields{"source": "AGENT", "module": "SingboxLifecycle", "event": event, "operationId": operationID, "kernelInstanceId": kernelID, "configVersion": version}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	logging.EmitCaptured(m.log.WithFields(fields), level, message)
 }

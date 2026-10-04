@@ -230,12 +230,15 @@ test('API helpers omit policy and global error toasts do not leak ordinary test 
     interceptors: { request: { use: () => {} }, response: { use: (_, reject) => { rejectResponse = reject; } } },
     post: (...args) => { posts.push(args); }
   };
+  const failureExports = {};
+  runInNewContext(ts.transpileModule(source('./api-failure.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: failureExports });
   const modules = {
     axios: { default: { create: () => api } },
     sonner: { toast: { error: (message) => toasts.push(message) } },
     '@/i18n': { default: { t: (key) => key } },
     '@/stores/auth': { useAuthStore: { getState: () => ({ user: true, logout: () => { loggedOut = true; } }) } },
-    '@/lib/logger': { frontendLogger: { warn: (...args) => logs.push(args), error: (...args) => logs.push(args) } },
+    '@/lib/logger': { frontendLogger: { setTransport: () => {}, warn: (...args) => logs.push(args), error: (...args) => logs.push(args) } },
+    '@/lib/api-failure': failureExports,
     '@/i18n/error-mapping': { getLocalizedErrorMessage: (error) => error.response.data.message }
   };
   const result = {};
@@ -246,6 +249,12 @@ test('API helpers omit policy and global error toasts do not leak ordinary test 
   for (const post of posts) assert.equal(post[1], undefined);
   assert.equal(posts[0][2].params.subscriptionId, 'source-id');
   const errorFor = (url, status = 500) => ({ config: { url }, response: { status, data: { message: 'Mihomo Sing-box secret version fallback' } } });
+  for (const error of [{ code: 'ERR_CANCELED', config: { url: '/admin/nodes' } }, errorFor('/logs/frontend', 500), errorFor('/logs/frontend', 401)]) {
+    await assert.rejects(rejectResponse(error), (rejected) => rejected === error);
+  }
+  assert.equal(toasts.length, 0);
+  assert.equal(logs.length, 0);
+  assert.equal(loggedOut, false);
   for (const url of ['/admin/lines/id/speedtest', '/admin/lines/speedtest-all', '/admin/upstream/probe-all', '/admin/upstream/nodes/id/probe', '/admin/probe-tasks/id', '/admin/probe-tasks/id/results']) {
     const error = errorFor(url);
     await assert.rejects(rejectResponse(error), (rejected) => rejected === error);

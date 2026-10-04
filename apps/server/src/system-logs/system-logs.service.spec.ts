@@ -203,4 +203,72 @@ describe('SystemLogsService', () => {
     expect(publishSpy).toHaveBeenCalledWith(expect.objectContaining({ source: 'SINGBOX', level: 'INFO' }));
   });
 
+  it('500条失败批次应有界重试，而不是静默丢弃', async () => {
+    jest.spyOn(service, 'flush').mockResolvedValue(undefined);
+    for (let i = 0; i < 500; i++) service.enqueue({ source: 'AGENT', level: 'ERROR', module: 'Singbox', message: `failure ${i}` });
+    jest.restoreAllMocks();
+    telemetryPrisma.systemLog.createMany.mockRejectedValueOnce(new Error('SQLITE_BUSY'));
+    await service.flush();
+    expect(service.getIngestionStatus()).toMatchObject({ pendingEntries: 500, persistenceFailures: 1, dropped: 0 });
+    await service.flush();
+    expect(service.getIngestionStatus()).toMatchObject({ pendingEntries: 0, persisted: 500, retries: 500 });
+  });
+
+  it('持续写库失败重试三次后显式计数并保持队列上限', async () => {
+    telemetryPrisma.systemLog.createMany.mockRejectedValue(new Error('disk full'));
+    service.enqueue({ source: 'SERVER', level: 'ERROR', module: 'DB', message: 'failure' });
+    for (let i = 0; i < 4; i++) await service.flush();
+    expect(service.getIngestionStatus()).toMatchObject({ pendingEntries: 0, dropped: 1, persistenceFailures: 3, retries: 2 });
+  });
+
+  it('高优先级事件可淘汰低优先级日志，低优先级不淘汰错误', () => {
+    jest.spyOn(service, 'flush').mockResolvedValue(undefined);
+    for (let i = 0; i < 5000; i++) service.enqueue({ source: 'SERVER', level: 'INFO', module: 'HTTP', message: 'request' });
+    service.enqueue({ source: 'AGENT', level: 'ERROR', module: 'Singbox', message: 'important' });
+    expect(service.getIngestionStatus()).toMatchObject({ pendingEntries: 5000, dropped: 1 });
+    jest.restoreAllMocks();
+  });
+
+  it('指标过滤复用日志条件，平均耗时仅来自主控 HTTP', async () => {
+    telemetryPrisma.systemLog.findMany.mockResolvedValueOnce([
+      { level: 'INFO', source: 'SERVER', module: 'HTTP', metadata: '{"durationMs":10}', createdAt: new Date() },
+      { level: 'INFO', source: 'AGENT', module: 'Probe', metadata: '{"durationMs":900}', createdAt: new Date() }
+    ]);
+    const result = await service.getMetrics(24, { nodeId: 'n1', keyword: 'timeout' });
+    expect(result.avgLatencyMs).toBe(10);
+    expect(telemetryPrisma.systemLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ nodeId: 'n1', OR: expect.any(Array) }) }));
+  });
+
+  it('bundle导出包含截断/完整性清单而普通JSON仍为数组', async () => {
+    telemetryPrisma.systemLog.count.mockResolvedValue(5001);
+    const bundle = JSON.parse(await service.export({}, 'bundle'));
+    expect(bundle).toMatchObject({ schemaVersion: 1, manifest: { matchedCount: 5001, exportedCount: 0, truncated: true, limit: 5000, pending: 0 }, logs: [], nodes: [] });
+    expect(Array.isArray(JSON.parse(await service.export({}, 'json')))).toBe(true);
+  });
+  it('同时间清理仅删除pivot之前，CSV单元格防公式注入', async () => {
+    const createdAt = new Date('2026-10-04T00:00:00Z');
+    telemetryPrisma.systemLog.findMany.mockResolvedValueOnce([{ id: 'pivot', createdAt }]);
+    await service.clean(undefined, 5);
+    expect(telemetryPrisma.systemLog.deleteMany).toHaveBeenCalledWith({ where: { OR: [{ createdAt: { lt: createdAt } }, { createdAt, id: { lte: 'pivot' } }] } });
+    telemetryPrisma.systemLog.findMany.mockResolvedValueOnce([{ id: 'l1', createdAt, source: 'WEB', level: 'ERROR', module: '=cmd', traceId: '=x', nodeId: null, message: '+cmd', metadata: '{}' }]);
+    const csv = await service.export({}, 'csv');
+    expect(csv).toContain("'=cmd");
+    expect(csv).toContain("'=x");
+    expect(csv).toContain("'+cmd");
+  });
+  it('100字段和超大元数据截断不丢时间质量/任务实例关联', async () => {
+    const publish = jest.spyOn(sseHub, 'publish');
+    const identity = { receivedAt: '2026-10-04T00:01:00Z', occurredAt: '2026-10-04T00:00:00Z', timeQuality: 'agent-clock', sequence: 7, agentInstanceId: 'agent-1', taskId: 'task-1', event: 'diagnostics_snapshot' };
+    const metadata = { ...Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`field${i}`, 'ok'])), ...identity };
+    service.enqueue({ source: 'AGENT', level: 'INFO', module: 'NodeDiagnostics', message: 'snapshot', metadata });
+    expect(JSON.parse(publish.mock.calls[0][0].metadata)).toMatchObject(identity);
+    service.enqueue({ source: 'AGENT', level: 'INFO', module: 'NodeDiagnostics', message: 'snapshot', metadata: { ...metadata, field0: 'x'.repeat(20000) } });
+    expect(JSON.parse(publish.mock.calls[1][0].metadata)).toMatchObject({ ...identity, truncated: true });
+    await service.flush();
+    const written = telemetryPrisma.systemLog.createMany.mock.calls[0][0].data as { metadata: string }[];
+    expect(JSON.parse(written[0].metadata)).toMatchObject(identity);
+    expect(JSON.parse(written[1].metadata)).toMatchObject(identity);
+  });
+
+
 });

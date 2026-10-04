@@ -1,5 +1,6 @@
+import * as React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, Radio, RefreshCw, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { Download, Radio, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
@@ -7,7 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import type { LogLevel, LogsFilter, LogSource } from '../types';
+import type { LogExportFormat, LogLevel, LogsFilter, LogSource } from '../types';
+import { LogAdvancedFilterDialog } from './log-advanced-filter-dialog';
 
 interface LogFilterBarProps {
   filter: LogsFilter;
@@ -15,7 +17,8 @@ interface LogFilterBarProps {
   onRefresh: () => void;
   onReset?: () => void;
   onOpenCleanup: () => void;
-  onExport: (format: 'json' | 'csv') => void;
+  onExport: (format: LogExportFormat) => void;
+  isExporting?: boolean;
   isLiveTail: boolean;
   onToggleLiveTail: () => void;
   nodes?: Array<{ id: string; name: string }>;
@@ -37,12 +40,15 @@ export function LogFilterBar({
   onReset,
   onOpenCleanup,
   onExport,
+  isExporting,
   isLiveTail,
   onToggleLiveTail,
   nodes,
   isRefreshing
 }: LogFilterBarProps) {
   const { t } = useTranslation(['admin', 'common']);
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const advancedCount = Number(Boolean(filter.module)) + Number(Boolean(filter.startTime || filter.endTime));
   const isFiltered =
     filter.level !== 'ALL' ||
     filter.source !== 'ALL' ||
@@ -50,17 +56,17 @@ export function LogFilterBar({
     Boolean(filter.module) ||
     Boolean(filter.traceId) ||
     Boolean(filter.keyword) ||
-    filter.timeRange !== '24h';
+    Boolean(filter.startTime || filter.endTime) || filter.timeRange !== '24h';
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border bg-card/70 p-3 shadow-2xs backdrop-blur-xs">
+    <div className="flex flex-col gap-2.5">
       {/* 顶部一排：快速时间范围、级别 Pills、右侧控制动作 */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {/* 时间范围 */}
           <Tabs
             value={filter.timeRange}
-            onValueChange={(val) => onChange({ timeRange: val as LogsFilter['timeRange'], page: 1 })}
+            onValueChange={(val) => onChange({ timeRange: val as LogsFilter['timeRange'], startTime: undefined, endTime: undefined, page: 1 })}
           >
             <TabsList className="h-8 p-0.5">
               <TabsTrigger value="15m" className="h-7 text-xs px-2.5">{t('admin:logs.filter15m')}</TabsTrigger>
@@ -91,8 +97,12 @@ export function LogFilterBar({
         </div>
 
         {/* 右侧主操作区 */}
-        <div className="flex items-center gap-1.5 ml-auto">
+        <div className="flex flex-wrap items-center gap-1.5 ml-auto">
           {/* 重置全部筛选条件 */}
+          <Button type="button" variant="outline" size="sm" onClick={() => setAdvancedOpen(true)}>
+            <SlidersHorizontal className="size-4" />{t('admin:logs.advancedFilters')}
+            {advancedCount > 0 && <Badge variant="secondary" className="h-5 px-1.5 py-0 text-[10px]">{advancedCount}</Badge>}
+          </Button>
           {isFiltered && onReset && (
             <Button
               type="button"
@@ -132,7 +142,7 @@ export function LogFilterBar({
           </IconButton>
 
           {/* 导出下拉 */}
-          <Select onValueChange={(val) => onExport(val as 'json' | 'csv')}>
+          <Select value="" disabled={isExporting} onValueChange={(val) => onExport(val as LogExportFormat)}>
             <SelectTrigger className="h-8 w-24 text-xs gap-1">
               <Download className="size-3.5" />
               <span>{t('admin:logs.export')}</span>
@@ -140,6 +150,7 @@ export function LogFilterBar({
             <SelectContent align="end">
               <SelectItem value="json">{t('admin:logs.exportJson')}</SelectItem>
               <SelectItem value="csv">{t('admin:logs.exportCsv')}</SelectItem>
+              <SelectItem value="bundle">{t('admin:logs.exportBundle')}</SelectItem>
             </SelectContent>
           </Select>
 
@@ -240,12 +251,20 @@ export function LogFilterBar({
         </div>
       </div>
 
+      {Boolean(filter.startTime || filter.endTime) && (
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="min-w-0 break-words">{t('admin:logs.customTimeRange')}: {filter.startTime ? new Date(filter.startTime).toLocaleString() : '—'} → {filter.endTime ? new Date(filter.endTime).toLocaleString() : '—'}</span>
+          <IconButton type="button" variant="ghost" size="icon-xs" aria-label={t('admin:logs.clearTimeRange')}
+            onClick={() => onChange({ startTime: undefined, endTime: undefined, timeRange: '24h', page: 1 })}><X className="size-4" /></IconButton>
+        </div>
+      )}
+      <LogAdvancedFilterDialog open={advancedOpen} onOpenChange={setAdvancedOpen} filter={filter} onChange={onChange} />
       {/* 活跃的快速过滤徽标（模块等） */}
       {filter.module && (
-        <div className="flex items-center gap-2 pt-1 border-t border-border/40">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 pt-1 border-t border-border/40">
           <span className="text-[11px] text-muted-foreground">{t('admin:logs.filteringModule')}</span>
-          <Badge variant="secondary" className="min-h-7 gap-1 py-0.5 pl-2 pr-0.5 font-mono text-[11px]">
-            <span>[{filter.module}]</span>
+          <Badge variant="secondary" className="max-w-full min-h-7 gap-1 py-0.5 pl-2 pr-0.5 font-mono text-[11px]">
+            <span className="min-w-0 truncate">[{filter.module}]</span>
             <IconButton
               type="button"
               variant="ghost"

@@ -1,8 +1,11 @@
 package singbox
 
 import (
+	"encoding/json"
 	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nanako660/riricloud/apps/agent/internal/logging"
 	"github.com/sirupsen/logrus"
@@ -74,5 +77,152 @@ func TestLogSingboxOutputBenignStreamCancelFilteredInNormalMode(t *testing.T) {
 	manager.logSingboxOutput("ERROR[0012.345] inbound/hysteria2[line-1]: stream 4 canceled by remote with error code 0", true)
 	if items := collector.Drain(10); len(items) != 0 {
 		t.Fatalf("benign stream cancel with error code 0 must be filtered in normal mode, got %+v", items)
+	}
+}
+
+func TestConnectionErrorsAreNotAccess(t *testing.T) {
+	for _, line := range []string{"ERROR outbound/direct: outbound connection: dial tcp: connection refused", "WARN inbound/trojan: inbound connection: TLS handshake failed", "ERROR connection closed: timeout", "ERROR tcp: canceled by remote with error code 0", "ERROR inbound/hysteria2: canceled by remote with error code 0; timeout", "ERROR inbound/quic: canceled by remote with error code 0; error code 9", "FATAL inbound/tuic: canceled by remote with error code 0"} {
+		level, _, category, _ := classifySingboxOutput(line)
+		if category == "ACCESS" || level > logrus.WarnLevel {
+			t.Errorf("real failure downgraded: %q level=%v category=%s", line, level, category)
+		}
+	}
+}
+
+func TestKernelDebugBypassesConsoleThreshold(t *testing.T) {
+	c := logging.NewCollector(10)
+	c.SetSingboxCaptureLevel("DEBUG")
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	l.AddHook(logging.NewHook(c))
+	m := &Manager{log: logrus.NewEntry(l)}
+	m.logSingboxOutput("DEBUG outbound/direct: dialing", false)
+	l.Debug("agent debug must not leak")
+	items := c.Drain(10)
+	if len(items) != 1 || items[0].Level != "DEBUG" {
+		t.Fatalf("kernel debug not captured: %+v", items)
+	}
+}
+
+func TestKernelLineWriterBoundedAndCountsTruncation(t *testing.T) {
+	c := logging.NewCollector(10)
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	l.AddHook(logging.NewHook(c))
+	m := &Manager{log: logrus.NewEntry(l)}
+	writer := newLineLogWriter(m, true)
+	long := "ERROR " + strings.Repeat("文", 10000)
+	if n, err := writer.Write([]byte(long)); err != nil || n != len(long) {
+		t.Fatalf("write failed %d %v", n, err)
+	}
+	if len(writer.buf) > logging.MaxMessageBytes {
+		t.Fatal("unbounded kernel line")
+	}
+	writer.Write([]byte("\nERROR next line\n"))
+	writer.Flush()
+	items := c.Drain(10)
+	if len(items) != 2 || len(items[0].Message) > 8192 || items[0].Metadata["truncated"] != true || c.Stats().Truncated != 1 {
+		t.Fatalf("truncation missing: %+v stats=%+v", items, c.Stats())
+	}
+	exact := "ERROR " + strings.Repeat("x", 8192-len("ERROR "))
+	writer.Write([]byte(exact + "\n"))
+	items = c.Drain(10)
+	if len(items) != 1 || items[0].Metadata["truncated"] == true || c.Stats().Truncated != 1 {
+		t.Fatal("exact-length line falsely truncated")
+	}
+}
+
+func TestLifecycleCorrelationAndProcessGeneration(t *testing.T) {
+	c := logging.NewCollector(100)
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	l.AddHook(logging.NewHook(c))
+	m := newStubManager(t)
+	m.log = logrus.NewEntry(l)
+	conf := json.RawMessage(`{"inbounds":[]}`)
+	if err := m.ApplyConfig(conf, 1); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, m.Running)
+	m.mu.Lock()
+	initialID := m.kernelInstanceID
+	m.mu.Unlock()
+	if err := m.ApplyConfig(conf, 2); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return m.Status().AppliedConfigVersion == 2 })
+	m.mu.Lock()
+	unchangedID := m.kernelInstanceID
+	m.mu.Unlock()
+	if initialID == "" || initialID != unchangedID {
+		t.Fatal("unchanged config restarted kernel")
+	}
+	if err := m.ApplyConfig(json.RawMessage(`{"inbounds":[],"changed":true}`), 3); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return m.Running() && m.Status().AppliedConfigVersion == 3 })
+	m.mu.Lock()
+	replacementID := m.kernelInstanceID
+	m.mu.Unlock()
+	if initialID == replacementID {
+		t.Fatal("restart reused kernel instance")
+	}
+	m.Shutdown(5 * time.Second)
+	seen := map[string]bool{}
+	operations := map[int64]string{}
+	for _, item := range c.Drain(50) {
+		event, _ := item.Metadata["event"].(string)
+		if event == "" {
+			continue
+		}
+		seen[event] = true
+		// 保留 dev-e2e.sh 使用的旧启动标记，同时明确不代表网络健康。
+		if event == "kernel_start" && (!strings.Contains(item.Message, "sing-box started") || !strings.Contains(item.Message, "network health unverified")) {
+			t.Fatal("kernel startup marker or safety qualification changed")
+		}
+		operation, _ := item.Metadata["operationId"].(string)
+		if operation == "" {
+			t.Fatalf("missing operation: %+v", item)
+		}
+		version, _ := item.Metadata["configVersion"].(int64)
+		if prior := operations[version]; prior != "" && prior != operation {
+			t.Fatalf("operation miscorrelated: %+v", item)
+		}
+		operations[version] = operation
+		if event == "kernel_exit" && version == 1 && item.Metadata["kernelInstanceId"] != initialID {
+			t.Fatal("old exit stamped with new process")
+		}
+	}
+	for _, event := range []string{"config_receipt", "config_check", "config_unchanged", "kernel_restart", "kernel_start", "kernel_exit"} {
+		if !seen[event] {
+			t.Fatalf("missing lifecycle event %s: %+v", event, seen)
+		}
+	}
+}
+
+func TestQUICClosureWithAdditionalOrTruncatedFailureKeepsSeverity(t *testing.T) {
+	for _, line := range []string{
+		"ERROR inbound/quic: canceled by remote with error code 0; unexpected EOF",
+		"WARN inbound/quic: canceled by remote with error code 0; invalid response",
+	} {
+		level, _, category, _ := classifySingboxOutput(line)
+		if level > logrus.WarnLevel || category == "ACCESS" {
+			t.Errorf("ambiguous closure downgraded: %q", line)
+		}
+	}
+	c := logging.NewCollector(10)
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	l.AddHook(logging.NewHook(c))
+	m := &Manager{log: logrus.NewEntry(l)}
+	w := newLineLogWriter(m, true)
+	// 被截断的尾部可能含真实故障，不能以保存下来的零码关闭前缀证明正常。
+	line := "ERROR inbound/quic: canceled by remote with error code 0" + strings.Repeat(" ", 8192) + "; timeout\n"
+	if _, err := w.Write([]byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	items := c.Drain(10)
+	if len(items) != 1 || items[0].Level != "ERROR" || items[0].Metadata["category"] == "ACCESS" {
+		t.Fatalf("truncated failure lost: %+v", items)
 	}
 }
