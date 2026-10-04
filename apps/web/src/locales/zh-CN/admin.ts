@@ -1166,6 +1166,27 @@ const admin = {
     chartPeakUp: '峰值上行'
   },
   logs: {
+    copyField: '复制{{label}}',
+    detail: {
+      description: '查看日志内容、时间证据、来源归属、实例关联与原始元数据',
+      messageTitle: '日志内容', timeTitle: '时间信息', timeHelp: '查看时间采用与回退说明',
+      recordedAt: '记录时间', reportedAt: 'Agent 上报时间（原始值）',
+      qualityAgent: '采用 Agent 时间', qualityLegacy: '旧版：接收时间', qualityFallback: '时间异常：已回退',
+      qualityUnknown: '未知时间来源', notProvided: '未提供', identityTitle: '实例与关联', contextTitle: '来源与归属',
+      collectorTitle: '采集统计', cumulativeSnapshot: '实例累计快照', collectorHelp: '查看采集统计口径',
+      collectorHint: '这是该日志记录携带的 Agent 实例累计快照，实例重启后归零，不随当前筛选变化，也不是实时指标。过滤、合并、重入队不直接代表故障；零丢弃不保证日志零丢失，上报成功不等于已落库。',
+      collector: { filtered: '已过滤', coalesced: '重复合并', requeued: '重入队', dropped: '已丢弃', truncated: '已截断' },
+      stackTitle: '异常堆栈', rawMetadata: '原始元数据', viewRaw: '展开查看原始内容',
+      emptyMetadata: '此记录没有元数据', invalidMetadata: '元数据无法解析为 JSON 对象，已保留原文供查看和复制。'
+    },
+    advancedFilters: '高级筛选',
+    advancedFiltersDescription: '按模块或自定义时间范围检索，点击应用后生效；取消不改变当前筛选。',
+    invalidDateTime: '请输入有效的日期和时间',
+    invalidTimeRange: '结束时间不能早于开始时间',
+    customTimeRange: '自定义时间（本地时区）',
+    clearTimeRange: '清除自定义时间范围',
+    diagnosticsTitle: '诊断信息',
+    diagnosticsDescription: '当前节点：{{name}}。在此查看只读快照与采集状态，不修改配置或重启内核。',
     startTime: '开始时间（本地时区）',
     endTime: '结束时间（本地时区）',
     metricsWindow: '错误、告警、HTTP 均值与趋势为当前筛选条件和最近 {{hours}} 小时的交集；日志总量遵循完整筛选范围。',

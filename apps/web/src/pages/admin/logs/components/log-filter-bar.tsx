@@ -1,14 +1,15 @@
+import * as React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, Radio, RefreshCw, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { Download, Radio, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import type { LogExportFormat, LogLevel, LogsFilter, LogSource } from '../types';
+import { LogAdvancedFilterDialog } from './log-advanced-filter-dialog';
 
 interface LogFilterBarProps {
   filter: LogsFilter;
@@ -46,6 +47,8 @@ export function LogFilterBar({
   isRefreshing
 }: LogFilterBarProps) {
   const { t } = useTranslation(['admin', 'common']);
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const advancedCount = Number(Boolean(filter.module)) + Number(Boolean(filter.startTime || filter.endTime));
   const isFiltered =
     filter.level !== 'ALL' ||
     filter.source !== 'ALL' ||
@@ -96,6 +99,10 @@ export function LogFilterBar({
         {/* 右侧主操作区 */}
         <div className="flex flex-wrap items-center gap-1.5 ml-auto">
           {/* 重置全部筛选条件 */}
+          <Button type="button" variant="outline" size="sm" onClick={() => setAdvancedOpen(true)}>
+            <SlidersHorizontal className="size-4" />{t('admin:logs.advancedFilters')}
+            {advancedCount > 0 && <Badge variant="secondary" className="h-5 px-1.5 py-0 text-[10px]">{advancedCount}</Badge>}
+          </Button>
           {isFiltered && onReset && (
             <Button
               type="button"
@@ -197,7 +204,6 @@ export function LogFilterBar({
             ))}
           </SelectContent>
         </Select>
-        <Input aria-label={t('admin:logs.moduleTitle')} placeholder={t('admin:logs.moduleTitle')} value={filter.module} onChange={(e) => onChange({ module: e.target.value, page: 1 })} className="h-8 text-xs" />
 
         {/* TraceId 精确检索 */}
         <div className="relative">
@@ -222,7 +228,7 @@ export function LogFilterBar({
         </div>
 
         {/* 关键词模糊搜索 */}
-        <div className="relative">
+        <div className="relative xl:col-span-2">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder={t('admin:logs.keywordPlaceholder')}
@@ -244,23 +250,21 @@ export function LogFilterBar({
           )}
         </div>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {(['startTime', 'endTime'] as const).map((key) => (
-          <Label key={key} className="space-y-1 text-xs text-muted-foreground">
-            <span>{t(`admin:logs.${key}`)}</span>
-            <Input type="datetime-local" aria-label={t(`admin:logs.${key}`)}
-              value={filter[key] ? new Date(new Date(filter[key]!).getTime() - new Date(filter[key]!).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
-              onChange={(event) => onChange({ [key]: event.target.value ? new Date(event.target.value).toISOString() : undefined, timeRange: 'all', page: 1 })} />
-          </Label>
-        ))}
-      </div>
 
+      {Boolean(filter.startTime || filter.endTime) && (
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="min-w-0 break-words">{t('admin:logs.customTimeRange')}: {filter.startTime ? new Date(filter.startTime).toLocaleString() : '—'} → {filter.endTime ? new Date(filter.endTime).toLocaleString() : '—'}</span>
+          <IconButton type="button" variant="ghost" size="icon-xs" aria-label={t('admin:logs.clearTimeRange')}
+            onClick={() => onChange({ startTime: undefined, endTime: undefined, timeRange: '24h', page: 1 })}><X className="size-4" /></IconButton>
+        </div>
+      )}
+      <LogAdvancedFilterDialog open={advancedOpen} onOpenChange={setAdvancedOpen} filter={filter} onChange={onChange} />
       {/* 活跃的快速过滤徽标（模块等） */}
       {filter.module && (
-        <div className="flex items-center gap-2 pt-1 border-t border-border/40">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 pt-1 border-t border-border/40">
           <span className="text-[11px] text-muted-foreground">{t('admin:logs.filteringModule')}</span>
-          <Badge variant="secondary" className="min-h-7 gap-1 py-0.5 pl-2 pr-0.5 font-mono text-[11px]">
-            <span>[{filter.module}]</span>
+          <Badge variant="secondary" className="max-w-full min-h-7 gap-1 py-0.5 pl-2 pr-0.5 font-mono text-[11px]">
+            <span className="min-w-0 truncate">[{filter.module}]</span>
             <IconButton
               type="button"
               variant="ghost"

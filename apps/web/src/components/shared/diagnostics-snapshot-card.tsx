@@ -8,13 +8,18 @@ import type { SnapshotNode } from '@/lib/log-types';
 import { LogCorrelation } from './log-correlation';
 
 export function DiagnosticsSnapshotCard({ node }: { node?: SnapshotNode }) {
+  const snapshot = useDiagnosticsSnapshot(node?.id ?? '');
+  return <Card><DiagnosticsSnapshotContent node={node} snapshot={snapshot} /></Card>;
+}
+
+export function DiagnosticsSnapshotContent({ node, snapshot }: { node?: SnapshotNode; snapshot: ReturnType<typeof useDiagnosticsSnapshot> }) {
   const { t } = useTranslation(['admin']);
-  const { request, receipt, result, status } = useDiagnosticsSnapshot(node?.id ?? '');
+  const { request, receipt, result, status } = snapshot;
   const available = supportsSnapshot(node);
   const busy = status === 'requesting' || status === 'waiting';
   const hint = !node ? 'snapshotSelectNode' : node.status !== 'ONLINE' ? 'snapshotOffline' : !available ? 'snapshotUnsupported' : 'snapshotDescription';
   return (
-    <Card>
+    <>
       <CardHeader className="pb-2"><CardTitle className="text-sm">{t('admin:logs.snapshotTitle')}</CardTitle></CardHeader>
       <CardContent className="space-y-3 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -37,6 +42,6 @@ export function DiagnosticsSnapshotCard({ node }: { node?: SnapshotNode }) {
           )}
         </div>
       </CardContent>
-    </Card>
+    </>
   );
 }

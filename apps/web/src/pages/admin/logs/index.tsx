@@ -13,8 +13,9 @@ import { LogTable } from './components/log-table';
 import { LogTrendChart } from './components/log-trend-chart';
 import type { LogsFilter, SystemLogItem } from './types';
 import { useLiveTailStream, useLogs } from './use-logs';
-import { DiagnosticsSnapshotCard } from '@/components/shared/diagnostics-snapshot-card';
-import { LogIngestionCard } from './components/log-ingestion-card';
+import { Activity } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { LogDiagnosticsDialog } from './components/log-diagnostics-dialog';
 import type { SnapshotNode } from './types';
 
 const DEFAULT_FILTER: LogsFilter = {
@@ -44,6 +45,7 @@ export default function AdminLogsPage() {
   const [selectedLog, setSelectedLog] = React.useState<SystemLogItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = React.useState(false);
   const [isCleanupOpen, setIsCleanupOpen] = React.useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = React.useState(false);
 
   // Live Tail 实时推流状态
   const [isLiveTail, setIsLiveTail] = React.useState(initialLive);
@@ -126,10 +128,10 @@ export default function AdminLogsPage() {
 
   return (
     <PageContainer>
-      <PageHeader
-        title={t('admin:logs.title')}
-        description={t('admin:logs.subtitle')}
-      />
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <PageHeader title={t('admin:logs.title')} description={t('admin:logs.subtitle')} />
+        <Button variant="outline" size="sm" onClick={() => setIsDiagnosticsOpen(true)}><Activity className="size-4" />{t('admin:logs.diagnosticsTitle')}</Button>
+      </div>
 
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-muted-foreground">
         {t('admin:logs.infoBanner')}
@@ -149,7 +151,6 @@ export default function AdminLogsPage() {
         sampled={metricsQuery.data?.sampled}
         sampleLimit={metricsQuery.data?.sampleLimit}
       />
-      <LogIngestionCard ingestion={metricsQuery.data?.ingestion} />
 
       {/* 过滤控制栏 */}
       <LogFilterBar
@@ -170,7 +171,8 @@ export default function AdminLogsPage() {
         nodes={nodesQuery.data}
         isRefreshing={logsQuery.isFetching}
       />
-      <DiagnosticsSnapshotCard key={filter.nodeId} node={nodesQuery.data?.find((node) => node.id === filter.nodeId)} />
+      <LogDiagnosticsDialog key={filter.nodeId} open={isDiagnosticsOpen} onOpenChange={setIsDiagnosticsOpen}
+        node={nodesQuery.data?.find((node) => node.id === filter.nodeId)} ingestion={metricsQuery.data?.ingestion} />
 
       {/* Live Tail 运行状态条 */}
       {isLiveTail && (

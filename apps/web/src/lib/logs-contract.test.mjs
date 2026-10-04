@@ -209,7 +209,8 @@ test('snapshot empty polls keep observing, new tasks survive old cleanup, deadli
   assert.equal(timer.timers.size, 0);
 });
 test('snapshot cards are isolated by selected node and reload remains independent', () => {
-  assert.match(source('../pages/admin/logs/index.tsx'), /DiagnosticsSnapshotCard key=\{filter.nodeId\}/);
+  assert.match(source('../pages/admin/logs/index.tsx'), /LogDiagnosticsDialog key=\{filter.nodeId\}/);
+  assert.match(source('../pages/admin/logs/components/log-diagnostics-dialog.tsx'), /useDiagnosticsSnapshot\(node\?\.id/);
   const detail = source('../pages/admin/nodes/detail.tsx');
   assert.match(detail, /DiagnosticsSnapshotCard key=\{node.id\}/);
   assert.match(detail, /disabled=\{reloadNode.isPending\} onClick=\{\(\) => reloadNode.mutate\(node.id\)\}/);

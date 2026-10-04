@@ -32,6 +32,8 @@
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
 | [日志可信度与无重启诊断全链路优化](./archive/2026-10-04-logs-diagnostics-overhaul.md) | `Unreleased` | 2026-10-04 | — |
+| [系统日志页紧凑布局恢复](./archive/2026-10-04-logs-compact-ui.md) | `Unreleased` | 2026-10-04 | — |
+| [日志详情信息卡片化与元数据降噪](./archive/2026-10-04-log-detail-cards.md) | `Unreleased` | 2026-10-04 | — |
 | [订阅预览原生校验与外部资源诊断](./archive/2026-10-03-template-kernel-validation.md) | `Unreleased` | 2026-10-03 | — |
 | [统一延迟测试入口并保留严格调试能力](./archive/2026-10-03-probe-latency-test.md) | `Unreleased` | 2026-10-03 | — |
 | [线路最终落地 HTTP/SOCKS5 出站](./archive/2026-10-02-line-egress-proxy.md) | `下一次 MINOR 发布` | 2026-10-02 | — |
