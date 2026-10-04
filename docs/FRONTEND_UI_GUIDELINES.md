@@ -119,6 +119,7 @@ apps/web/src/
    - **Large (24px / `size-6`)**：统计面板大卡片图标、状态占位图。
    - **图标按钮尺寸**：常规工具栏/表格行操作使用 `icon-sm`（32px）；紧凑输入框、徽标或编辑器内联操作使用 `icon-xs`（28px）；仅无密度约束的独立主要操作使用 `icon`（36px）。图标按钮内部图形统一为 16px（`size-4`），不得用额外高度/宽度类覆盖按钮尺寸。
    - **图标按钮 Tooltip 与无障碍名称**：仅图标操作必须使用 `@/components/ui/icon-button` 的 `IconButton`，提供本地化且能描述具体操作的 `aria-label`；组件默认以该名称展示 Tooltip，需要更贴合上下文的提示时通过 `tooltip` 指定。不得再手写仅含图标的 `Button` 或为其重复嵌套 Tooltip；富文本说明可通过 IconButton 的 Tooltip 属性呈现。
+   - **名称中的国旗内容**：用户/上游名称自带的国家/地区国旗不是 UI 操作图标，由 `components/shared/flag-text.tsx` 的 `FlagText` 兼容展示；导航、按钮、状态等 UI 图标仍仅使用 Lucide。组件仅将已知区域指示符对绘制为本地 Twemoji 14.0.2 SVG，保留可选择的原始 Unicode 文本，图片为不重复读屏且不可拖拽的装饰覆盖层，尺寸随 `em` 缩放并沿用父级截断。未知序列/图片加载失败回退原字符；不替换全站 DOM，不变更名称、搜索、复制按钮或订阅输出。原生输入框/`title` 提示、普通/组合表情及独立代理客户端不在此兼容范围。选择项需保留原始 `textValue`；静态资源来源、固定归档摘要与完整许可见 `apps/web/src/assets/flags/README.md`，分发署名与许可保留在 `public/third-party/`，禁止第三方 CDN 或把整套 SVG 内联进 JS。
 5. **操作区域层级统一**：表单中承载 `Switch`、`Checkbox` 或操作按钮的区域必须使用 shadcn/ui `FormItem` / `Card` 结构；普通页面按既有卡片规范保持层级一致，线路编辑弹窗使用平面 `FormItem` 与 `Separator`，不增加边框容器或嵌套卡片。
 
 ### 4.2 严格禁止清单 (Don'ts)

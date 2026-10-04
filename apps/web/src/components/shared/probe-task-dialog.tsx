@@ -11,6 +11,7 @@ import { ProbeResultCard } from '@/components/shared/probe-result';
 import { useProbeTask, type ProbeTaskRequest } from '@/hooks/use-probe-task';
 import { parseLastProbe } from '@/lib/probe-types';
 import { formatDateTime } from '@/lib/utils';
+import { FlagText } from '@/components/shared/flag-text';
 
 export interface ProbeTaskDialogProps {
   open: boolean;
@@ -30,7 +31,7 @@ export function ProbeTaskDialog({ open, onOpenChange, request, title }: ProbeTas
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{title ?? t('admin:latencyTest.title')}</DialogTitle>
+            <DialogTitle><FlagText text={title ?? t('admin:latencyTest.title')} /></DialogTitle>
             <DialogDescription className="text-xs">{t('admin:latencyTest.description')}</DialogDescription>
           </DialogHeader>
 

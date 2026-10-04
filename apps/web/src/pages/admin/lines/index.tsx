@@ -71,6 +71,7 @@ import { usePublicSettings } from '@/lib/public-settings';
 import { formatSpeedLimit, getSpeedTierBadgeClass } from '@/lib/speed-tier';
 import { useAdminLines, useLineMutations, type AdminLine } from './use-lines';
 import { ProxyPoolDrawer } from './components/proxy-pool-drawer';
+import { FlagText } from '@/components/shared/flag-text';
 
 export default function AdminLinesPage() {
   const { t } = useTranslation(['admin', 'common']);
@@ -370,7 +371,7 @@ export default function AdminLinesPage() {
                       <div className="flex flex-col gap-0.5">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-medium text-sm text-foreground">
-                            {line.name}
+                            <FlagText text={line.name} />
                           </span>
                           {!line.isPublic && (
                             <Badge

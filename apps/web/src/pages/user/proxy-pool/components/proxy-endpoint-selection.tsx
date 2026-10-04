@@ -4,6 +4,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProbeMeasurementChip } from '@/components/shared/probe-result';
+import { FlagText } from '@/components/shared/flag-text';
 import { cn } from '@/lib/utils';
 import { proxyAuthority } from '../proxy-snippets';
 import type { ProxyPoolEndpoint } from '../use-proxy-pool';
@@ -103,7 +104,7 @@ export function ProxyEndpointSelection({
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex items-center justify-between gap-1.5">
                       <span className="truncate text-sm font-medium text-foreground" title={endpoint.name}>
-                        {endpoint.name}
+                        <FlagText text={endpoint.name} />
                       </span>
                       <Badge
                         variant={endpoint.routeKind === 'UPSTREAM_RELAY' ? 'secondary' : 'outline'}
