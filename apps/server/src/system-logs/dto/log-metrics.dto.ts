@@ -13,4 +13,7 @@ export interface LogMetricsDto {
   warnCount24h: number;
   avgLatencyMs: number;
   trend: TrendBucket[];
+  ingestion?: { instanceId: string; filtered: number; dropped: number; persistenceFailures: number; retries: number; persisted: number; pendingEntries: number; pendingBytes: number };
+  sampled?: boolean;
+  sampleLimit?: number;
 }

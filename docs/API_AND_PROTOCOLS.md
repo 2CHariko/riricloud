@@ -248,17 +248,17 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 - `POST /admin/help/articles/reset-defaults`：一键重置为官方预置文档。⭐ 请求 `{ overwriteExisting?: boolean }`；默认仅增补缺失文档，`overwriteExisting=true` 时将官方预置文档的标题、正文、排序和平台全量覆盖恢复。
 
 #### 系统日志管理 (`/logs`)
-- `GET /logs?page&pageSize&level&source&nodeId&traceId&keyword&startTime&endTime`：管理员分页多维查询系统日志。⭐ 支持日志级别（DEBUG/INFO/WARN/ERROR）、来源端（SERVER/WEB/AGENT/SINGBOX）、关联 VPS 节点 UUID、全链路 TraceId 与关键词全文模糊检索；返回统一分页结构 `{ items: SystemLog[], total, page, pageSize, totalPages }`。服务端拦截器对常规的日志自查读取请求（状态码 `< 400`）静默放行，避免产生自循环 HTTP 访问日志。
-- `GET /logs/metrics?hours=24`：管理员获取过去指定小时内日志大盘指标与趋势统计。⭐ 响应包含 `totalLogs`、`errorCount24h`、`warnCount24h`、`avgLatencyMs` 以及按小时聚合的分级时序柱状图数据 `trend`。
+- `GET /logs?page&pageSize&level&source&nodeId&module&traceId&keyword&startTime&endTime`：管理员分页多维查询系统日志。⭐ 支持日志级别（DEBUG/INFO/WARN/ERROR）、来源端（SERVER/WEB/AGENT/SINGBOX）、关联 VPS 节点 UUID、模块、全链路 TraceId 与关键词检索（message/module/traceId/metadata）；返回统一分页结构 `{ items: SystemLog[], total, page, pageSize, totalPages }`。服务端拦截器对常规的日志自查读取请求（状态码 `< 400`）静默放行，避免产生自循环 HTTP 访问日志。
+- `GET /logs/metrics?hours=24&level&source&nodeId&module&traceId&keyword&startTime&endTime`：管理员获取同款过滤下的日志大盘指标与趋势。⭐ 响应保留 `totalLogs`、`errorCount24h`、`warnCount24h`、`avgLatencyMs` 和 `trend`，加性提供 `sampled`、`sampleLimit`、`ingestion`；带 24h 的历史字段名称保持兼容，实际按所选范围统计，HTTP 耗时不代表代理延迟。
 - `POST /logs/stream-ticket` 与 `GET /logs/stream-ticket`：管理员创建一次性、60 秒有效的 SSE 实时推流票据（双通道兼容）。⭐
-- `GET /logs/stream?ticket=<ONE_TIME_TICKET>&level&source&nodeId&keyword`：SSE (Server-Sent Events) 实时推流通道（Live Tail）。⭐ 票据只允许消费一次且不得替代长期 JWT；支持动态按级别、来源端、节点和关键词实时推流最新日志事件。
+- `GET /logs/stream?ticket=<ONE_TIME_TICKET>&level&source&nodeId&module&traceId&userId&keyword&startTime&endTime`：SSE (Server-Sent Events) 实时推流通道（Live Tail）。⭐ 票据只允许消费一次且不得替代长期 JWT；推流使用同款字段过滤，不保证重放或持久化成功。
 - `POST /logs/frontend`：前端批量上报异常与关键操作日志。⭐ 无需管理员鉴权（`@Public()`）；请求 `{ logs: [{ level, module, message, traceId?, metadata? }] }`；服务端自动补齐 Client IP、User Agent 与当前登录用户 ID，深度脱敏后缓冲入库并广播至 SSE 监听端。
 - `POST /admin/telemetry/cleanup/preview`：管理员预览历史观测数据清理。⭐ 请求 `{ targets: [{ kind: "trafficHourly"|"nodeRate"|"systemLog"|"legacyTraffic", mode: "retention"|"before"|"range"|"count"|"all", before?, from?, to?, keepLatest? }] }`；每类返回匹配数、估算字节、最早/最新时间、实际条件和当前策略，不执行删除。
 - `POST /admin/telemetry/cleanup`：管理员执行历史观测数据清理。⭐ 必须提交固定确认短语 `{ confirmationPhrase: "CLEAR_HISTORY" }`，服务端按目标逐表执行并返回 `SUCCEEDED`、`PARTIAL` 或 `FAILED` 及每类匹配/删除数、耗时和错误；执行完毕后自动执行 WAL 截断与 `VACUUM` 物理收缩磁盘空间并返回 `vacuum` 释放详情；完成后追加不可被本次清空删除的 `TelemetryCleanup` 审计日志。清理只触及四类观测数据，不修改额度、订阅用量、流量游标、节点实时状态或计费数据。
 - `GET /admin/telemetry/cleanup/database-stats`：管理员获取 SQLite 数据库物理文件尺寸。⭐ 返回主业务库（`riri.db`）与观测库（`telemetry.db`）的主文件、WAL 与 SHM 尺寸及合计占用 `{ databases: [{ target, path, size, walSize, shmSize, totalSize }], totalBytes }`。
 - `POST /admin/telemetry/cleanup/vacuum`：管理员手动触发数据库碎片整理与空间收缩（VACUUM）。⭐ 可选指定 `{ targets?: ("main"|"telemetry")[] }`（默认全量）；依次执行 `PRAGMA wal_checkpoint(TRUNCATE)` 与 `VACUUM`，向操作系统归还物理磁盘空间；返回 `{ results: [{ target, path, bytesBefore, bytesAfter, reclaimedBytes }], totalReclaimedBytes, completedAt }`。
 - `DELETE /logs?retentionDays&maxRecords`：旧版系统日志清理兼容接口。⭐ 新管理端统一使用上述遥测清理接口；后台每小时根据 `logsRetentionDays` 与 `logsMaxCount` 清理系统日志，手动清空使用 `mode=all`，不再用 `retentionDays=0` 表示清空。
-- `GET /logs/export?format=json|csv&level&source&nodeId&traceId&keyword&startTime&endTime`：管理员按当前过滤条件导出日志文件。⭐ 单次最多导出 5000 条，支持导出为 JSON 或 CSV 文件。
+- `GET /logs/export?format=json|csv|bundle&level&source&nodeId&module&traceId&keyword&startTime&endTime`：管理员按当前过滤条件导出日志文件。⭐ 单次最多导出 5000 条；JSON 保持数组、CSV 防公式注入，bundle 提供诊断 manifest 与节点白名单上下文，详见日志可信度扩展。
 
 #### HTTP 请求日志智能降噪与采集门槛
 1. **高频探针与轮询降噪**：`HttpLoggingInterceptor` 对状态码 `< 400` 的常规成功请求静默跳过，不写入 `SystemLog`，包含：
@@ -267,7 +267,7 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
    - 客户端订阅拉取：`/sub/*`、`/api/v1/sub/*`
    - 线路测速探针：`/api/v1/admin/lines/speedtest*`、`/api/v1/lines/speedtest*`
    - 静态忽略端点：`/api/v1/logs/stream`、`/api/v1/logs/frontend`、`/api/docs`
-   - 任何端点在状态码 `>= 400`（如 401 未鉴权、404 凭据失效、500 内部异常）时 100% 完整捕获入库供排查。
+   - 任何端点在状态码 `>= 400`（如 401 未鉴权、404 凭据失效、500 内部异常）时纳入错误采集，不因成功请求降噪规则被跳过；仍受最低级别、内存容量、重试和保留策略约束，不承诺零丢失。
 2. **动态采集门槛（`logsMinIngestLevel`）**：支持在系统设置中配置最低采集级别（`DEBUG` / `INFO` / `WARN` / `ERROR`，默认 `INFO`），低于门槛的日志在入口即被抛弃，避免不必要的 SQLite I/O 与内存开销。
 3. **流量时序小时桶聚合与自动淘汰**：
    - Agent 心跳上报的秒级流量数据在网关内存中经 `TrafficHourlyMetricBuffer` 聚合为小时时序桶（`TrafficHourlyMetric`），每 10~15 秒微批 Upsert 入库，彻底消除秒级 raw `TrafficLog` 插入；
@@ -548,9 +548,20 @@ Agent 对下载文件流式计算 SHA-256；Sing-box 升级还会使用当前配
 #### 7. 运行日志上报 (`log_report`) —— Agent -> Master (v0.6.12，v0.8.13 扩展)
 Agent 在运行期通过有界环形缓冲区采集自身运行日志与托管的 Sing-box 日志并批量上报，交由 Master `SystemLogsService` 统一入库与实时推流：
 - **真实级别解析**：Agent 去除 ANSI 控制字符，解析 Sing-box `DEBUG/TRACE -> DEBUG`、`INFO -> INFO`、`WARN -> WARN`、`ERROR/FATAL/PANIC -> ERROR`；stderr 仅作为 `metadata.stream` 元数据，不再自动升级为 WARN，未知级别默认按 INFO；QUIC/Hysteria2 正常流关闭（`canceled by remote/local with error code 0`）识别为 `ACCESS` 并降级为 `INFO`。进程异常退出、启动失败和配置预检失败由 Agent supervisor 生成结构化生命周期 WARN/ERROR；Agent 结构化日志中的 `error` 接口字段统一序列化为可读错误字符串。
-- **分级过滤策略**：Agent 自身日志继续上报 `INFO` / `WARN` / `ERROR`；Sing-box 在 `NORMAL` 模式只上报真实 `WARN/ERROR`，并丢弃 `ACCESS` 高频连接日志；管理员开启 `INFO`/`DEBUG` 诊断后按下发门槛放行，固定 30 分钟后自动恢复。Master 会再次按节点有效诊断状态拦截旧 Agent 或异常客户端发送的 Sing-box INFO/DEBUG。
+- **分级过滤策略**：Agent 自身日志继续上报 `INFO` / `WARN` / `ERROR`；Sing-box 在 `NORMAL` 模式只上报真实 `WARN/ERROR`，仅抑制 INFO/DEBUG 级别的 `ACCESS` 高频连接日志。管理员开启 `INFO`/`DEBUG` 诊断后按下发门槛放行，固定 30 分钟后自动恢复。Master 会再次按节点有效诊断状态拦截旧 Agent 或异常客户端发送的 Sing-box INFO/DEBUG。
 - **重复合并与安全**：相同节点、模块、标准化消息的 Sing-box WARN 在 60 秒内合并为一条并在 `metadata.repeatCount` 记录次数；ERROR 不合并。入库和实时推流沿用日志脱敏，并清洗域名、IP、Token、密码与密钥模式。系统日志不承担流量计费，流量仍来自 StatsService/heartbeat/小时桶。
 - **上报触发与失败重入队机制**：WS 长连接下通过绑定单次会话生命周期的独立 goroutine 每 2 秒批量上报（单次至多 50 条），当捕获到 `ERROR` 级别日志时立即触发快速刷新上报；HTTP 轮询模式下随 `POST /api/v1/agent/poll` 请求体中的可选 `logs` 数组字段批量携带上报。当 WS 帧发送或 HTTP 轮询请求失败时，已取出的日志批次会重入队至有界环形缓冲区且不打印递归 WARN 日志，待重连后继续上报。
+
+##### 日志可信度与只读快照扩展（加性兼容）
+- `log_report.logs[]` 及 HTTP poll 的 `logs[]` 可选携带 `occurredAt`（RFC3339 UTC）、`sequence`（安全非负整数）、`agentInstanceId`（≤128 字符）。缺失字段兼容旧 Agent；Master 使用合法且不超过接收时间 5 分钟的发生时间排序，异常时回退接收时间，在 metadata 保留 `receivedAt`、`timeQuality` 和上述关联字段。相同时间按 id 稳定排序；时间质量不等于时钟同步保证。
+- ACCESS 仅抑制 INFO/DEBUG，任何真实 WARN/ERROR 都不得因连接关键词被过滤；只有明确的 QUIC 正常关闭可降为 INFO。采集门槛独立于 Agent 控制台门槛。metadata 可含 `event`、`errorCategory`、`operationId`、`kernelInstanceId` 和累计 `collectorStats`（filtered/coalesced/dropped/truncated/requeued），计数按实例重置，WS 成功不等于持久化确认。Agent 队列最多 500 条，上报最多 50 条且完整 JSON 留在 64 KiB 预算内；HTTP 服务端继续兼容旧 Agent 的 100 条短日志批次，WS 上限仍为 50 条，二者共用内容/时间/metadata 校验。WS 写入使用 5 秒 deadline，HTTP 请求失败、非成功状态、响应解码或协议错误重入队，均为内存尽力投递而非持久化确认。
+- 能力 `singbox_diagnostics_snapshot` 支持 `diagnostics_snapshot_task` 下行 `{ taskId, timeoutMs: 3000 }`，WS 与 HTTP tasks 共用。Agent 异步收集不修改配置、不重启内核的只读快照，通过 AGENT/NodeDiagnostics 日志返回 `metadata.event=diagnostics_snapshot`、`metadata.taskId`、运行实例/PID/uptime/进程资源和本地 API 有界检查结果（不可用明确标记，不输出连接地址或凭据）。实际 applied 配置中仅允许字面 loopback Clash API `/version`，不查询连接，不访问公共目标；每 60 秒周期采样与手动任务共用单并发、10 秒限频和 3 秒 context 预算，任务 ID 去重缓存最多 256 条、15 分钟。资源 API 取消能力依赖平台，不承诺硬实时；取消/进程换代不能产生伪恢复。快照不持有配置应用锁、不阻断 reload；HTTP 快照任务仅下发一次、未下发请求 30 秒过期，该任务不沿用升级持久化语义。
+- 管理员 `POST /admin/nodes/:id/diagnostics-snapshot` 返回 `{ nodeId, taskId, requested }`；仅在线且宣告能力的节点支持，旧 Agent 返回 409 升级提示。结果通过日志按 taskId 检索，未收到结果不代表健康。配置回执 success 只表示配置已接受/预检通过，不表示重启完成或业务网络恢复，生命周期日志分别记录 unchanged/restart/start/exit。
+- `GET /logs/metrics` 接受日志查询同款过滤及 `hours`（1–168，默认24）；旧字段 `avgLatencyMs` 仅统计 SERVER/HTTP 的 HTTP 请求 `durationMs`，不是代理延迟。趋势最多取 20,000 条并通过 `sampled`/`sampleLimit` 显式提示，分类计数仍查询全量。加性 `ingestion` 提供主控实例累计 filtered/dropped/persistenceFailures/retries/persisted、队列条数与字节；其中 retries 为重入队条数，不是批次数。内存累计指标重启归零，实时流未承诺已落库。
+- Master 持久化队列最多 5000 条/8 MiB（含 in-flight），每批最多 500 条、失败最多尝试 3 次，下一次刷新再重试；容量紧张优先保留 WARN/ERROR 和结构化诊断证据，超过预算仍可能丢失并计数。SSE 可见不表示已写库，进程退出也不保证内存日志全部送达。
+- `GET /logs/export?format=bundle` 增加诊断 JSON `{ schemaVersion:1, manifest, nodes, logs }`：manifest 含生成时间、过滤、匹配条数/导出条数、5000 上限、truncated、pending、ingestion 与时间范围，nodes 仅白名单版本/架构/配置状态，不输出 host/token/config。原 json 数组与 csv 保持兼容，响应头 `X-Logs-Truncated` 提示5000上限；bundle完整性只指本次查询，不承诺未采集/已清理/未确认日志零丢失。
+- 日志目标以进程内随机 HMAC 密钥生成匿名引用，保留同一 Master 进程内相关性，重启改变引用；凭据全部遮蔽，不保留前后缀。脱敏识别合法 IP/目标上下文，不把时间、代码标识符和版本误当目标。
+- SSE 过滤新增 module/traceId/userId/startTime/endTime，与查询一致；不提供重放保证。
 ```json
 {
   "type": "log_report",

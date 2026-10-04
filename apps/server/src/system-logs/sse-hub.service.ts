@@ -19,6 +19,11 @@ export interface StreamFilter {
   source?: string;
   nodeId?: string;
   keyword?: string;
+  module?: string;
+  traceId?: string;
+  userId?: string;
+  startTime?: string;
+  endTime?: string;
 }
 
 @Injectable()
@@ -57,9 +62,14 @@ export class SSEHubService {
         if (filterCriteria.nodeId && filterCriteria.nodeId !== 'ALL') {
           if (entry.nodeId !== filterCriteria.nodeId) return false;
         }
+        if (filterCriteria.module && !entry.module.toLowerCase().includes(filterCriteria.module.trim().toLowerCase())) return false;
+        if (filterCriteria.traceId && entry.traceId !== filterCriteria.traceId) return false;
+        if (filterCriteria.userId && entry.userId !== filterCriteria.userId) return false;
+        if (filterCriteria.startTime && entry.createdAt < new Date(filterCriteria.startTime)) return false;
+        if (filterCriteria.endTime && entry.createdAt > new Date(filterCriteria.endTime)) return false;
 
         if (filterCriteria.keyword) {
-          const kw = filterCriteria.keyword.toLowerCase();
+          const kw = filterCriteria.keyword.trim().toLowerCase();
           const matchMsg = entry.message.toLowerCase().includes(kw);
           const matchMod = entry.module.toLowerCase().includes(kw);
           const matchMeta = entry.metadata.toLowerCase().includes(kw);

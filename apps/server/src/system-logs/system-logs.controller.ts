@@ -21,10 +21,18 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../common/roles.decorator';
 import { RateLimitService } from '../common/rate-limit.service';
 import { CreateFrontendLogsDto } from './dto/create-frontend-logs.dto';
-import { CleanLogsDto, ExportLogsDto, QueryLogsDto } from './dto/query-logs.dto';
+import { CleanLogsDto, ExportLogsDto, LogMetricsQueryDto, QueryLogsDto } from './dto/query-logs.dto';
 import { SSEHubService } from './sse-hub.service';
 import { SystemLogsService } from './system-logs.service';
 import { SseTicketService } from './sse-ticket.service';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
+
+class StreamLogsQueryDto extends QueryLogsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  ticket?: string;
+}
 
 @ApiTags('system-logs')
 @Controller('logs')
@@ -49,8 +57,8 @@ export class SystemLogsController {
   @Roles('ADMIN')
   @ApiOperation({ summary: '获取日志大盘指标统计与趋势' })
   @ApiQuery({ name: 'hours', required: false, type: Number, description: '统计过去多少小时，默认 24' })
-  getMetrics(@Query('hours') hours?: string) {
-    return this.logsService.getMetrics(hours ? Number(hours) : 24);
+  getMetrics(@Query() query: LogMetricsQueryDto) {
+    return this.logsService.getMetrics(query.hours ?? 24, query);
   }
 
   @Post('stream-ticket')
@@ -74,15 +82,12 @@ export class SystemLogsController {
   @ApiOperation({ summary: 'SSE 实时日志流推流通道（一次性短期票据）' })
   streamLogs(
     @Query('ticket') ticket: string | undefined,
-    @Query('level') level?: string,
-    @Query('source') source?: string,
-    @Query('nodeId') nodeId?: string,
-    @Query('keyword') keyword?: string
+    @Query() query: StreamLogsQueryDto
   ): Observable<MessageEvent> {
     if (!ticket || !this.ticketService.consume(ticket)) {
       throw new HttpException('SSE 票据无效或已过期', HttpStatus.UNAUTHORIZED);
     }
-    return this.sseHub.subscribe({ level, source, nodeId, keyword });
+    return this.sseHub.subscribe(query);
   }
 
   @Post('frontend')
@@ -132,15 +137,16 @@ export class SystemLogsController {
   @Get('export')
   @ApiBearerAuth()
   @Roles('ADMIN')
-  @ApiOperation({ summary: '按条件导出日志文件（JSON 或 CSV）' })
-  @ApiQuery({ name: 'format', required: false, enum: ['json', 'csv'], description: '导出格式' })
+  @ApiOperation({ summary: '按条件导出日志文件（JSON、CSV 或诊断 bundle）' })
+  @ApiQuery({ name: 'format', required: false, enum: ['json', 'csv', 'bundle'], description: '导出格式' })
   async exportLogs(
     @Query() query: ExportLogsDto,
     @Res({ passthrough: true }) res: Response
   ) {
     const format = query.format || 'json';
-    const data = await this.logsService.export(query, format);
-    const filename = `riricloud-logs-${new Date().toISOString().slice(0, 10)}.${format}`;
+    const { data, truncated } = await this.logsService.exportWithManifest(query, format);
+    res.setHeader('X-Logs-Truncated', String(truncated));
+    const filename = `riricloud-logs-${new Date().toISOString().slice(0, 10)}.${format === 'bundle' ? 'json' : format}`;
 
     if (format === 'csv') {
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');

@@ -219,6 +219,7 @@ type Client struct {
 	shaper           *trafficshaper.Shaper
 	lastTrafficErrAt time.Time
 	deviceTracker    *devices.Tracker
+	diagnostics      *singbox.Diagnostics
 }
 
 func NewClient(masterURL, token string, heartbeat time.Duration, singboxMgr *singbox.Manager, tunnelMgr *tunnel.Manager, version, osArch string, log *logrus.Entry, restarter *restart.Manager, logCollector *logging.Collector, logRotators ...*logging.RotatingWriter) *Client {
@@ -240,6 +241,7 @@ func NewClient(masterURL, token string, heartbeat time.Duration, singboxMgr *sin
 		mirrorExec:    mirror.NewExecutor(),
 		mirrorCancels: make(map[string]context.CancelFunc),
 		logCollector:  logCollector,
+		diagnostics:   singbox.NewDiagnostics(singboxMgr, logCollector),
 		logRotator:    logRotator,
 		shaper:        trafficshaper.NewShaper(log),
 	}
@@ -247,9 +249,11 @@ func NewClient(masterURL, token string, heartbeat time.Duration, singboxMgr *sin
 
 // SetDeviceTracker enables active-device reporting and local kick execution.
 func (c *Client) SetDeviceTracker(tracker *devices.Tracker) { c.deviceTracker = tracker }
+func (c *Client) SetDiagnostics(d *singbox.Diagnostics)     { c.diagnostics = d }
 
 // Run 主循环：断线后指数退避重连（上限 60s + 抖动），ctx 取消即退出
 func (c *Client) Run(ctx context.Context) {
+	defer c.diagnostics.Wait()
 	if c.shaper != nil {
 		defer c.shaper.Cleanup()
 	}
@@ -391,8 +395,10 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 					c.log.WithError(err).Warn("apply traffic shaping failed")
 				}
 			}
-			c.log.WithField("version", sync.Version).Info("singbox config applied")
-			c.sendApplyResult(conn, sync.Version, true, "ok")
+			c.log.WithField("version", sync.Version).Info("singbox config accepted; execution pending")
+			c.sendApplyResult(conn, sync.Version, true, "accepted")
+		case "diagnostics_snapshot_task":
+			c.diagnostics.Submit(ctx, msg.Data)
 		case "upgrade_task":
 			var task upgradeTask
 			if err := json.Unmarshal(msg.Data, &task); err != nil {
@@ -660,6 +666,9 @@ func (c *Client) heartbeatLoop(ctx context.Context, conn *websocket.Conn) error 
 				}
 			}
 			capabilities := []string{"mirror_proxy", "singbox_log_capture", "agent_log_rotation"}
+			if c.singboxMgr != nil && c.logCollector != nil {
+				capabilities = append(capabilities, singbox.DiagnosticsCapability)
+			}
 			if supportsClash {
 				capabilities = append(capabilities, "device_tracking")
 			}
@@ -702,6 +711,10 @@ func (c *Client) heartbeatLoop(ctx context.Context, conn *websocket.Conn) error 
 				continue
 			}
 			c.writeMu.Lock()
+			if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				c.writeMu.Unlock()
+				return err
+			}
 			err = conn.WriteMessage(websocket.TextMessage, frame)
 			c.writeMu.Unlock()
 			if err != nil {
@@ -725,7 +738,7 @@ func (c *Client) logFlushLoop(ctx context.Context, conn *websocket.Conn) error {
 	defer ticker.Stop()
 
 	flush := func() error {
-		logs := c.logCollector.Drain(50)
+		logs := c.logCollector.DrainBatch(50, logging.MaxBatchBytes)
 		if len(logs) == 0 {
 			return nil
 		}
@@ -764,6 +777,9 @@ func (c *Client) sendApplyResult(conn *websocket.Conn, version int, success bool
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return
+	}
 	if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
 		c.log.WithError(err).Warn("send config_apply_result failed")
 	}
@@ -812,6 +828,9 @@ func (c *Client) sendLogReport(conn *websocket.Conn, logs []agentLogItem) error 
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
 	return conn.WriteMessage(websocket.TextMessage, frame)
 }
 
@@ -847,6 +866,9 @@ func (c *Client) sendMirrorChunk(conn *websocket.Conn, taskID string, chunk []by
 	copy(frame[2+len(taskID):], chunk)
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
 	return conn.WriteMessage(websocket.BinaryMessage, frame)
 }
 
@@ -862,6 +884,9 @@ func (c *Client) sendFrameWithError(conn *websocket.Conn, messageType string, da
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
 	if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
 		c.log.WithError(err).Warn("send agent frame failed")
 		return err

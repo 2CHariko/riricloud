@@ -4,10 +4,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import type { LogLevel, LogsFilter, LogSource } from '../types';
+import type { LogExportFormat, LogLevel, LogsFilter, LogSource } from '../types';
 
 interface LogFilterBarProps {
   filter: LogsFilter;
@@ -15,7 +16,8 @@ interface LogFilterBarProps {
   onRefresh: () => void;
   onReset?: () => void;
   onOpenCleanup: () => void;
-  onExport: (format: 'json' | 'csv') => void;
+  onExport: (format: LogExportFormat) => void;
+  isExporting?: boolean;
   isLiveTail: boolean;
   onToggleLiveTail: () => void;
   nodes?: Array<{ id: string; name: string }>;
@@ -37,6 +39,7 @@ export function LogFilterBar({
   onReset,
   onOpenCleanup,
   onExport,
+  isExporting,
   isLiveTail,
   onToggleLiveTail,
   nodes,
@@ -50,17 +53,17 @@ export function LogFilterBar({
     Boolean(filter.module) ||
     Boolean(filter.traceId) ||
     Boolean(filter.keyword) ||
-    filter.timeRange !== '24h';
+    Boolean(filter.startTime || filter.endTime) || filter.timeRange !== '24h';
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border bg-card/70 p-3 shadow-2xs backdrop-blur-xs">
+    <div className="flex flex-col gap-2.5">
       {/* 顶部一排：快速时间范围、级别 Pills、右侧控制动作 */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {/* 时间范围 */}
           <Tabs
             value={filter.timeRange}
-            onValueChange={(val) => onChange({ timeRange: val as LogsFilter['timeRange'], page: 1 })}
+            onValueChange={(val) => onChange({ timeRange: val as LogsFilter['timeRange'], startTime: undefined, endTime: undefined, page: 1 })}
           >
             <TabsList className="h-8 p-0.5">
               <TabsTrigger value="15m" className="h-7 text-xs px-2.5">{t('admin:logs.filter15m')}</TabsTrigger>
@@ -91,7 +94,7 @@ export function LogFilterBar({
         </div>
 
         {/* 右侧主操作区 */}
-        <div className="flex items-center gap-1.5 ml-auto">
+        <div className="flex flex-wrap items-center gap-1.5 ml-auto">
           {/* 重置全部筛选条件 */}
           {isFiltered && onReset && (
             <Button
@@ -132,7 +135,7 @@ export function LogFilterBar({
           </IconButton>
 
           {/* 导出下拉 */}
-          <Select onValueChange={(val) => onExport(val as 'json' | 'csv')}>
+          <Select value="" disabled={isExporting} onValueChange={(val) => onExport(val as LogExportFormat)}>
             <SelectTrigger className="h-8 w-24 text-xs gap-1">
               <Download className="size-3.5" />
               <span>{t('admin:logs.export')}</span>
@@ -140,6 +143,7 @@ export function LogFilterBar({
             <SelectContent align="end">
               <SelectItem value="json">{t('admin:logs.exportJson')}</SelectItem>
               <SelectItem value="csv">{t('admin:logs.exportCsv')}</SelectItem>
+              <SelectItem value="bundle">{t('admin:logs.exportBundle')}</SelectItem>
             </SelectContent>
           </Select>
 
@@ -193,6 +197,7 @@ export function LogFilterBar({
             ))}
           </SelectContent>
         </Select>
+        <Input aria-label={t('admin:logs.moduleTitle')} placeholder={t('admin:logs.moduleTitle')} value={filter.module} onChange={(e) => onChange({ module: e.target.value, page: 1 })} className="h-8 text-xs" />
 
         {/* TraceId 精确检索 */}
         <div className="relative">
@@ -217,7 +222,7 @@ export function LogFilterBar({
         </div>
 
         {/* 关键词模糊搜索 */}
-        <div className="relative xl:col-span-2">
+        <div className="relative">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder={t('admin:logs.keywordPlaceholder')}
@@ -238,6 +243,16 @@ export function LogFilterBar({
             </IconButton>
           )}
         </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {(['startTime', 'endTime'] as const).map((key) => (
+          <Label key={key} className="space-y-1 text-xs text-muted-foreground">
+            <span>{t(`admin:logs.${key}`)}</span>
+            <Input type="datetime-local" aria-label={t(`admin:logs.${key}`)}
+              value={filter[key] ? new Date(new Date(filter[key]!).getTime() - new Date(filter[key]!).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+              onChange={(event) => onChange({ [key]: event.target.value ? new Date(event.target.value).toISOString() : undefined, timeRange: 'all', page: 1 })} />
+          </Label>
+        ))}
       </div>
 
       {/* 活跃的快速过滤徽标（模块等） */}

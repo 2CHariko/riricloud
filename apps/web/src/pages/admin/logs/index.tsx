@@ -13,6 +13,9 @@ import { LogTable } from './components/log-table';
 import { LogTrendChart } from './components/log-trend-chart';
 import type { LogsFilter, SystemLogItem } from './types';
 import { useLiveTailStream, useLogs } from './use-logs';
+import { DiagnosticsSnapshotCard } from '@/components/shared/diagnostics-snapshot-card';
+import { LogIngestionCard } from './components/log-ingestion-card';
+import type { SnapshotNode } from './types';
 
 const DEFAULT_FILTER: LogsFilter = {
   level: 'ALL',
@@ -53,6 +56,7 @@ export default function AdminLogsPage() {
     const qModule = searchParams.get('module');
     const qLive = searchParams.get('live');
     if (qNodeId || qModule) {
+      setLiveTailBuffer([]);
       setFilter((prev) => ({
         ...prev,
         ...(qNodeId ? { nodeId: qNodeId } : {}),
@@ -65,17 +69,18 @@ export default function AdminLogsPage() {
     }
   }, [searchParams]);
 
-  const { logsQuery, metricsQuery, exportLogs } = useLogs(filter);
+  const { logsQuery, metricsQuery, exportLogs, isExporting } = useLogs(filter);
 
   // 获取节点列表供筛选
   const nodesQuery = useQuery({
     queryKey: ['admin-logs-nodes'],
-    queryFn: async () => {
-      const res = await api.get<Array<{ id: string; name: string }>>('/admin/nodes');
+    queryFn: async ({ signal }) => {
+      const res = await api.get<Array<SnapshotNode & { name: string }>>('/admin/nodes', { signal });
       return res.data;
-    }
+    },
+    refetchInterval: 15_000,
+    staleTime: 10_000
   });
-
   // 处理实时日志帧
   const handleNewLiveLog = React.useCallback(
     (item: SystemLogItem) => {
@@ -89,6 +94,7 @@ export default function AdminLogsPage() {
 
   const handleFilterChange = (patch: Partial<LogsFilter>) => {
     setFilter((prev) => ({ ...prev, ...patch }));
+    setLiveTailBuffer([]);
   };
 
   const handleSelectLog = (log: SystemLogItem) => {
@@ -110,6 +116,7 @@ export default function AdminLogsPage() {
 
   const handleResetFilter = () => {
     setFilter(DEFAULT_FILTER);
+    setLiveTailBuffer([]);
   };
 
   // 显示数据：推流模式下展示推流缓冲区，否则展示分页数据
@@ -131,6 +138,7 @@ export default function AdminLogsPage() {
       {/* 顶部指标卡 */}
       <LogMetricsCards
         metrics={metricsQuery.data}
+        hours={filter.timeRange === '7d' ? 168 : filter.timeRange === '15m' || filter.timeRange === '1h' ? 1 : 24}
         isLoading={metricsQuery.isPending}
       />
 
@@ -138,7 +146,10 @@ export default function AdminLogsPage() {
       <LogTrendChart
         trend={metricsQuery.data?.trend}
         isLoading={metricsQuery.isPending}
+        sampled={metricsQuery.data?.sampled}
+        sampleLimit={metricsQuery.data?.sampleLimit}
       />
+      <LogIngestionCard ingestion={metricsQuery.data?.ingestion} />
 
       {/* 过滤控制栏 */}
       <LogFilterBar
@@ -148,6 +159,7 @@ export default function AdminLogsPage() {
         onReset={handleResetFilter}
         onOpenCleanup={() => setIsCleanupOpen(true)}
         onExport={exportLogs}
+        isExporting={isExporting}
         isLiveTail={isLiveTail}
         onToggleLiveTail={() => {
           setIsLiveTail((prev) => !prev);
@@ -158,6 +170,7 @@ export default function AdminLogsPage() {
         nodes={nodesQuery.data}
         isRefreshing={logsQuery.isFetching}
       />
+      <DiagnosticsSnapshotCard key={filter.nodeId} node={nodesQuery.data?.find((node) => node.id === filter.nodeId)} />
 
       {/* Live Tail 运行状态条 */}
       {isLiveTail && (

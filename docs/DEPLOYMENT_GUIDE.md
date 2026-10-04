@@ -430,6 +430,16 @@ journalctl -u riri-agent -f -n 50
 systemctl restart riri-agent
 ```
 
+### 4.1.1 长时间运行退化：先保留证据，再按需恢复
+
+1. 故障期间先在节点详情或日志页请求「只读快照」，确认 Agent 心跳含 singbox_diagnostics_snapshot；旧 Agent 仍可通信但须升级才支持。任务不重启、不改配置，等待上限 30 秒，未返回表示未知而非健康。HTTP 间隔较长可能错过观察窗口，未下发快照 30 秒过期，可在合适窗口重新请求。
+2. 按节点/时间筛选并导出诊断 bundle，保留发生时间与 receivedAt、Agent/内核实例、配置版本/operationId、进程 PID/uptime/RSS/FD/线程数、本地 API readiness 和 dropped/retries/pending。资源字段不可用须如实保留；HMAC 目标关联仅在本次 Master 进程内有效。
+3. 对比退化前/故障中/人工恢复后的周期快照与生命周期，区分 DNS、拨号超时、资源增长、本地 API 超时等证据。/version 成功只证明本地接口响应，不证明出口、DNS 或网页恢复；配置 accepted 也不代表完成重启。禁止仅凭日志稀疏断言内存泄漏。
+4. 紧急恢复可以照常 reload/重启，无需等待快照；记录操作时点。INFO/DEBUG 临时诊断是另一种操作，仍可能触发内核重启且有隐私风险，30 分钟自动回收，不能把它误当无重启快照。
+5. bundle/JSON/CSV 最多导出 5000 条；统计趋势最多采样 20,000 条。采集/传输/写库均为有界最佳努力，实时可见不是已持久化；必要时分时间窗口导出并同时保留安全的本地 Agent 日志。不使用定时重启替代排障，不公开本地 Clash API，不收集全量访问内容。
+
+本次改动不要求 schema 迁移或新增服务；Master 与 Agent 的当前版本保持不变，发布时分别按 Unreleased 进入各自版本轨道。
+
 ### 4.2 节点网络与端口检测
 - 检查 Sing-box 监听端口是否正常（将 `<port>` 替换为管理端显示的实际五位端口）：
   ```bash

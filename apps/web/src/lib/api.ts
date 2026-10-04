@@ -5,6 +5,7 @@ import i18n from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { frontendLogger } from '@/lib/logger';
 import { getLocalizedErrorMessage } from '@/i18n/error-mapping';
+import { classifyApiFailure } from '@/lib/api-failure';
 
 // 统一 API 客户端：组件内禁止裸 fetch/自建 axios 实例（CODE_REVIEW W1）
 export const api = axios.create({
@@ -24,8 +25,13 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError<{ message?: string }>) => {
+    const category = classifyApiFailure(error);
+    // 取消是请求生命周期的正常结束，不上报错误，也不弹提示。
+    if (category === 'CANCELED') return Promise.reject(error);
     const status = error.response?.status;
     const config = error.config as (Record<string, unknown> & { url?: string; method?: string }) | undefined;
+    // 日志上传失败由 SDK 自己计数/退避，不触发 toast、注销或递归上报。
+    if (config?.url?.includes('/logs/frontend')) return Promise.reject(error);
     // 普通延迟测试的底层错误只显示安全文案，不影响 Agent 探针与模板诊断。
     const latencyTestRequest = /^\/admin\/(?:probe-tasks\/[^/?]+(?:\/results)?|lines\/(?:[^/?]+\/speedtest|speedtest-all)|upstream\/(?:probe-all|nodes\/[^/?]+\/probe))(?:\?|$)/.test(config?.url ?? '');
     const message = latencyTestRequest ? i18n.t('admin:latencyTest.requestFailed') : getLocalizedErrorMessage(error, i18n.t('errors:network.serverError'));
@@ -37,12 +43,13 @@ api.interceptors.response.use(
     if (status !== 401 && config?.url && !config.url.includes('/logs/frontend')) {
       const logMethod = status === 404 ? frontendLogger.warn.bind(frontendLogger) : frontendLogger.error.bind(frontendLogger);
       logMethod(
-        `API ${String(config.method || 'GET').toUpperCase()} ${config.url} -> ${status ?? 'Network Error'}`,
+        `API ${String(config.method || 'GET').toUpperCase()} ${config.url} -> ${status ?? category}`,
         'Axios',
         {
           url: config.url,
           method: config.method,
           status,
+          category,
           durationMs,
           message
         },
@@ -63,6 +70,9 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// 注入统一客户端，logger 不反向 import api，避免模块循环。
+frontendLogger.setTransport((logs) => api.post('/logs/frontend', { logs }));
 
 // 统一错误消息提取（表单与 mutation 复用，支持多语言映射）
 export function extractErrorMessage(error: unknown, fallback?: string): string {

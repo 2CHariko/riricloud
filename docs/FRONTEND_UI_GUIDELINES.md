@@ -311,6 +311,8 @@ export function NodeCardSkeleton() {
 
 节点详情页的 Sing-box 诊断卡片属于高风险运维操作：使用 `Select` 选择 INFO/DEBUG，使用 `AlertDialog` 确认重启与隐私风险，诊断有效期显示倒计时并提供停止操作；离线、能力不支持、下发中和自动过期状态必须可见，禁止使用裸 HTML 交互标签。订阅履约操作属于用户管理的综合弹窗；旧地址 `/admin/subscriptions` 仅作为兼容入口重定向至 `/admin/users`，不得再次作为平级菜单展示。
 
+只读快照与 INFO/DEBUG 重启诊断分开显示：共用 DiagnosticsSnapshotCard 按在线状态及能力禁用，显示请求中/等待/收到/失败/超时，30 秒未收到不显示健康；结果按节点 + AGENT/NodeDiagnostics + taskId 严格匹配。日志页列表/指标/实时流/导出共用过滤，显示主控 HTTP 平均耗时、趋势采样和实例累计采集损失（不冒充当前过滤统计）；详情显示发生/接收时间质量、实例与操作关联。JSON/CSV 保留，bundle 提示上限/截断/待写入与证据限制。SSE 断开以新的一次性票据有界重连并清理资源，浏览器主动取消不记录 ERROR；超时、真实网络失败和响应错误分别归类。
+
 ```tsx
 interface PageContainerProps {
   title: string;

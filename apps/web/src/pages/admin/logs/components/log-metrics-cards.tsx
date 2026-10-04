@@ -8,9 +8,10 @@ import type { LogMetrics } from '../types';
 interface LogMetricsCardsProps {
   metrics?: LogMetrics;
   isLoading: boolean;
+  hours: number;
 }
 
-export function LogMetricsCards({ metrics, isLoading }: LogMetricsCardsProps) {
+export function LogMetricsCards({ metrics, isLoading, hours }: LogMetricsCardsProps) {
   const { t } = useTranslation(['admin', 'common']);
 
   if (isLoading && !metrics) {
@@ -25,38 +26,40 @@ export function LogMetricsCards({ metrics, isLoading }: LogMetricsCardsProps) {
 
   const cards = [
     {
-      title: t('admin:logs.metricTotalLogs'),
+      title: t('admin:logs.filteredTotal'),
       value: metrics?.totalLogs.toLocaleString() ?? '0',
-      desc: t('admin:logs.metricTotalLogsDesc'),
+      desc: t('admin:logs.filteredTotalDesc'),
       icon: FileText,
       color: 'text-blue-500'
     },
     {
-      title: t('admin:logs.metricError24h'),
+      title: t('admin:logs.filteredErrors'),
       value: metrics?.errorCount24h.toLocaleString() ?? '0',
-      desc: (metrics?.errorCount24h ?? 0) > 0 ? t('admin:logs.metricErrorNeedFix') : t('admin:logs.metricErrorSmooth'),
+      desc: (metrics?.errorCount24h ?? 0) > 0 ? t('admin:logs.metricErrorNeedFix') : t('admin:logs.noErrors'),
       icon: AlertCircle,
       color: (metrics?.errorCount24h ?? 0) > 0 ? 'text-rose-500' : 'text-muted-foreground',
       highlight: (metrics?.errorCount24h ?? 0) > 0
     },
     {
-      title: t('admin:logs.metricWarn24h'),
+      title: t('admin:logs.filteredWarns'),
       value: metrics?.warnCount24h.toLocaleString() ?? '0',
-      desc: (metrics?.warnCount24h ?? 0) > 0 ? t('admin:logs.metricWarnRetry') : t('admin:logs.metricWarnNone'),
+      desc: (metrics?.warnCount24h ?? 0) > 0 ? t('admin:logs.metricWarnRetry') : t('admin:logs.noWarnings'),
       icon: AlertTriangle,
       color: (metrics?.warnCount24h ?? 0) > 0 ? 'text-amber-500' : 'text-muted-foreground'
     },
     {
-      title: t('admin:logs.metricAvgLatency'),
+      title: t('admin:logs.httpDuration'),
       value: `${metrics?.avgLatencyMs ?? 0} ms`,
-      desc: t('admin:logs.metricAvgLatencyDesc'),
+      desc: t('admin:logs.httpDurationDesc'),
       icon: Zap,
       color: 'text-emerald-500'
     }
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">{t('admin:logs.metricsWindow', { hours })}</p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       {cards.map((c) => (
         <Card key={c.title} className={cn('relative overflow-hidden', c.highlight && 'border-rose-500/40 bg-rose-500/5')}>
           <CardHeader className="flex flex-row items-center justify-between pb-1.5 pt-3 px-4">
@@ -70,5 +73,6 @@ export function LogMetricsCards({ metrics, isLoading }: LogMetricsCardsProps) {
         </Card>
       ))}
     </div>
+      </div>
   );
 }

@@ -145,7 +145,7 @@ type TrafficProxyKeyDelegate = {
 };
 
 type OnlineDeviceReport = { userId: string; userUuid: string; ip: string; nodeId: string; lineId: string | null; connections: number; lastSeenAt: number; firstSeenAt: number };
-type PendingTask = AgentTaskMessage & { deliveredAt: number };
+type PendingTask = AgentTaskMessage & { deliveredAt: number; expiresAt?: number };
 
 type TaskResult = {
   taskId: string;
@@ -278,6 +278,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(AgentService.name);
   private readonly sockets = new Map<string, AgentSocket>();
   private readonly pendingTasks = new Map<string, PendingTask[]>();
+  private readonly snapshotRequestedAt = new Map<string, number>();
   private readonly onlineDeviceReports = new Map<string, Map<string, OnlineDeviceReport>>();
   private readonly deviceEnforcementAt = new Map<string, number>();
   private deviceOnlineWindowSecs = 60;
@@ -1516,8 +1517,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       source: 'AGENT',
       level: data.success ? 'INFO' : 'ERROR',
       module: 'ConfigSync',
-      message: `节点配置应用${data.success ? '成功' : '失败'}${data.message ? `: ${data.message}` : ''}`,
-      metadata: { version: data.version, success: data.success, error: data.message }
+      message: data.success ? 'Node configuration accepted; runtime readiness is reported separately' : `Node configuration rejected: ${data.message}`,
+      metadata: { version: data.version, success: data.success, stage: data.success ? 'accepted' : 'rejected', error: data.success ? undefined : data.message }
     });
   }
 
@@ -1646,8 +1647,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       const source = item.source === 'SINGBOX' ? 'SINGBOX' : 'AGENT';
       const itemSeverity = this.logSeverity(item.level);
       const isSingbox = source === 'SINGBOX';
-      const isAccess = Boolean(item.metadata && typeof item.metadata === 'object' && item.metadata.category === 'ACCESS');
-      if (isSingbox && (itemSeverity < minimumSeverity || (mode === 'NORMAL' && isAccess))) {
+      if (isSingbox && itemSeverity < minimumSeverity) {
+        this.systemLogsService.recordFiltered?.();
         continue;
       }
       this.systemLogsService.enqueue({
@@ -1656,11 +1657,42 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         level: item.level,
         module: item.module || 'Agent',
         message: item.message,
-        metadata: item.metadata,
+        createdAt: this.agentLogTime(item.occurredAt),
+        metadata: {
+          ...item.metadata,
+          receivedAt: new Date().toISOString(),
+          timeQuality: this.agentLogTime(item.occurredAt) ? 'agent-clock' : item.occurredAt ? 'invalid-clock-fallback' : 'legacy-received-time',
+          occurredAt: item.occurredAt,
+          sequence: item.sequence,
+          agentInstanceId: item.agentInstanceId
+        },
         // 诊断动作是管理员显式开启的，仅允许该节点的 Sing-box 日志绕过全局门槛。
-        bypassMinIngestLevel: isSingbox && mode !== 'NORMAL'
+        bypassMinIngestLevel: (isSingbox && mode !== 'NORMAL') || (source === 'AGENT' && item.module === 'NodeDiagnostics')
       });
     }
+  }
+
+  private agentLogTime(value?: string): Date | undefined {
+    if (!value) return undefined;
+    const time = Date.parse(value);
+    return Number.isFinite(time) && time >= 0 && time <= Date.now() + 300_000 ? new Date(time) : undefined;
+  }
+
+  async requestDiagnosticsSnapshot(nodeId: string, operatorId?: string) {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { status: true, capabilitiesJson: true } });
+    if (!node) throw new NotFoundException('节点不存在');
+    if (node.status !== 'ONLINE' || !this.parseCapabilities(node.capabilitiesJson).includes('singbox_diagnostics_snapshot')) {
+      throw new ConflictException('只读快照要求在线且支持诊断快照的 Agent，请升级后重试');
+    }
+    const now = Date.now();
+    for (const [id, at] of this.snapshotRequestedAt) if (now - at >= 10_000) this.snapshotRequestedAt.delete(id);
+    if (this.snapshotRequestedAt.has(nodeId)) throw new ConflictException('诊断快照请求过于频繁，请等待 10 秒');
+    if (this.snapshotRequestedAt.size >= 1024) throw new ConflictException('诊断快照任务繁忙');
+    this.snapshotRequestedAt.set(nodeId, now);
+    const taskId = randomUUID();
+    const requested = await this.sendTask(nodeId, 'diagnostics_snapshot_task', { taskId, timeoutMs: 3000 });
+    this.systemLogsService?.enqueue({ nodeId, userId: operatorId, source: 'SERVER', level: 'INFO', module: 'NodeDiagnostics', message: 'Read-only diagnostics snapshot requested', metadata: { event: 'diagnostics_snapshot_requested', taskId, requested }, bypassMinIngestLevel: true });
+    return { nodeId, taskId, requested };
   }
 
   private logSeverity(level: string): number {
@@ -2709,7 +2741,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  private async sendTask(nodeId: string, type: 'upgrade_task' | 'probe_task' | 'restart_agent_task', data: unknown): Promise<boolean> {
+  private async sendTask(nodeId: string, type: 'upgrade_task' | 'probe_task' | 'restart_agent_task' | 'diagnostics_snapshot_task', data: unknown): Promise<boolean> {
     const socket = this.sockets.get(nodeId);
     if (socket) {
       try {
@@ -2727,8 +2759,9 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     });
     if (node?.status !== 'ONLINE' || node.communicationMode !== 'HTTP') return false;
     const task = { type, data } as AgentTaskMessage;
-    const tasks = this.pendingTasks.get(nodeId) ?? [];
-    tasks.push({ ...task, deliveredAt: 0 } as PendingTask);
+    const tasks = (this.pendingTasks.get(nodeId) ?? []).filter((task) => !task.expiresAt || task.expiresAt > Date.now());
+    if (tasks.length >= 32) return false;
+    tasks.push({ ...task, deliveredAt: 0, ...(type === 'diagnostics_snapshot_task' ? { expiresAt: Date.now() + 30_000 } : {}) } as PendingTask);
     this.pendingTasks.set(nodeId, tasks);
     return true;
   }
@@ -2751,14 +2784,19 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
   private async takePendingTasks(nodeId: string): Promise<AgentTaskMessage[]> {
     const result: AgentTaskMessage[] = [];
-    const tasks = this.pendingTasks.get(nodeId) ?? [];
     const now = Date.now();
+    const tasks = (this.pendingTasks.get(nodeId) ?? []).filter((task) => !task.expiresAt || task.expiresAt > now);
     const selected = tasks.filter((task) => task.deliveredAt === 0 || now - task.deliveredAt >= 60_000).slice(0, 8);
     selected.forEach((task) => { task.deliveredAt = now; });
+    // 快照一次下发，不以未回执为理由重复采样；结果走日志而非升级任务回执。
+    const remaining = tasks.filter((task) => task.type !== 'diagnostics_snapshot_task' || task.deliveredAt === 0);
+    if (remaining.length) this.pendingTasks.set(nodeId, remaining);
+    else this.pendingTasks.delete(nodeId);
     result.push(...selected.map((task): AgentTaskMessage => {
       if (task.type === 'upgrade_task') return { type: 'upgrade_task', data: task.data };
       if (task.type === 'probe_task') return { type: 'probe_task', data: task.data };
       if (task.type === 'restart_agent_task') return { type: 'restart_agent_task', data: task.data };
+      if (task.type === 'diagnostics_snapshot_task') return { type: task.type, data: task.data };
       return { type: 'kick_devices_task', data: task.data };
     }));
     const delegate = this.deploymentTasks();
@@ -2927,6 +2965,11 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       select: { id: true, communicationMode: true, pollIntervalSecs: true, lastSeenAt: true }
     });
     const now = Date.now();
+    for (const [nodeId, tasks] of this.pendingTasks) {
+      const remaining = tasks.filter((task) => !task.expiresAt || task.expiresAt > now);
+      if (remaining.length) this.pendingTasks.set(nodeId, remaining);
+      else this.pendingTasks.delete(nodeId);
+    }
     const staleNodes = nodes
       .filter((node) => {
         if (!node.lastSeenAt) return true;

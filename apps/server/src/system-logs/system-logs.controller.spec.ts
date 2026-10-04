@@ -14,7 +14,7 @@ describe('SystemLogsController', () => {
     query: jest.Mock;
     getMetrics: jest.Mock;
     clean: jest.Mock;
-    export: jest.Mock;
+    exportWithManifest: jest.Mock;
     enqueue: jest.Mock;
   };
   let sseHub: {
@@ -30,7 +30,7 @@ describe('SystemLogsController', () => {
       query: jest.fn().mockResolvedValue({ data: [], total: 0, page: 1, pageSize: 50, totalPages: 0 }),
       getMetrics: jest.fn().mockResolvedValue({ totalLogs: 0, errorCount24h: 0, warnCount24h: 0, avgLatencyMs: 0, trend: [] }),
       clean: jest.fn().mockResolvedValue({ deletedCount: 10 }),
-      export: jest.fn().mockResolvedValue('id,createdAt,source\n1,2026-09-06,SERVER'),
+      exportWithManifest: jest.fn().mockResolvedValue({ data: 'id,createdAt,source\n1,2026-09-06,SERVER', truncated: false }),
       enqueue: jest.fn()
     };
     sseHub = {
@@ -65,13 +65,13 @@ describe('SystemLogsController', () => {
 
     const stream = { subscribe: true };
     sseHub.subscribe.mockReturnValue(stream);
-    expect(controller.streamLogs('ticket-1')).toBe(stream);
+    expect(controller.streamLogs('ticket-1', {})).toBe(stream);
     expect(ticketService.consume).toHaveBeenCalledWith('ticket-1');
   });
 
   it('拒绝无效或已消费的 SSE 票据', () => {
     ticketService.consume.mockReturnValue(null);
-    expect(() => controller.streamLogs('expired-ticket')).toThrow('SSE 票据无效或已过期');
+    expect(() => controller.streamLogs('expired-ticket', {})).toThrow('SSE 票据无效或已过期');
   });
 
   describe('ValidationPipe with ExportLogsDto', () => {
@@ -138,7 +138,8 @@ describe('SystemLogsController', () => {
 
       const result = await controller.exportLogs(query, mockRes);
 
-      expect(logsService.export).toHaveBeenCalledWith(query, 'csv');
+      expect(logsService.exportWithManifest).toHaveBeenCalledWith(query, 'csv');
+      expect(mockRes.setHeader).toHaveBeenCalledWith('X-Logs-Truncated', 'false');
       expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'text/csv; charset=utf-8');
       expect(mockRes.setHeader).toHaveBeenCalledWith(
         'Content-Disposition',
@@ -148,7 +149,7 @@ describe('SystemLogsController', () => {
     });
 
     it('should set json content headers when format is json', async () => {
-      logsService.export.mockResolvedValue('[]');
+      logsService.exportWithManifest.mockResolvedValue({ data: '[]', truncated: false });
       const mockRes = {
         setHeader: jest.fn()
       } as unknown as Response;
@@ -159,7 +160,7 @@ describe('SystemLogsController', () => {
 
       const result = await controller.exportLogs(query, mockRes);
 
-      expect(logsService.export).toHaveBeenCalledWith(query, 'json');
+      expect(logsService.exportWithManifest).toHaveBeenCalledWith(query, 'json');
       expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'application/json; charset=utf-8');
       expect(result).toBe('[]');
     });

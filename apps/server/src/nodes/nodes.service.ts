@@ -148,6 +148,11 @@ export class NodesService {
     return this.agentGateway.disableSingboxLogDiagnostics(id, operatorId);
   }
 
+  async requestDiagnosticsSnapshot(id: string, operatorId?: string) {
+    await this.requireNode(id);
+    return this.agentGateway.requestDiagnosticsSnapshot(id, operatorId);
+  }
+
   async requestReload(id: string) {
     await this.requireNode(id);
     const pushed = await this.agentGateway.pushConfig(id);

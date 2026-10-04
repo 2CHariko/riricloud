@@ -11,6 +11,8 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
+  IsISO8601,
   Min,
   registerDecorator,
   type ValidationOptions,
@@ -18,7 +20,7 @@ import {
   ValidatorConstraint,
   type ValidatorConstraintInterface
 } from 'class-validator';
-import { AGENT_PROTOCOL_VERSION } from '../agent-message';
+import { AGENT_PROTOCOL_VERSION, isLogReportData } from '../agent-message';
 
 const MAX_UINT64 = 18446744073709551615n;
 
@@ -47,6 +49,25 @@ function IsUint64String(validationOptions?: ValidationOptions): PropertyDecorato
       options: validationOptions,
       validator: IsUint64StringConstraint
     });
+  };
+}
+
+@ValidatorConstraint({ name: 'isSafeLogBatch', async: false })
+class IsSafeLogBatchConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    // 保持 HTTP 旧上限 100 条，复用 WS 的字段、元数据和字节预算校验。
+    return isLogReportData({ logs: value }, 100);
+  }
+
+  defaultMessage(): string {
+    return 'logs must satisfy the bounded Agent log contract';
+  }
+}
+
+function IsSafeLogBatch(): PropertyDecorator {
+  return (target, propertyKey) => {
+    registerDecorator({ name: 'isSafeLogBatch', target: target.constructor,
+      propertyName: propertyKey.toString(), validator: IsSafeLogBatchConstraint });
   };
 }
 
@@ -190,6 +211,7 @@ export class PollLogItemDto {
   level!: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
   @IsString()
+  @MaxLength(128)
   module!: string;
 
   @IsOptional()
@@ -197,10 +219,27 @@ export class PollLogItemDto {
   source?: 'AGENT' | 'SINGBOX';
 
   @IsString()
+  @MaxLength(8192)
   message!: string;
 
   @IsOptional()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  @MaxLength(64)
+  occurredAt?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(Number.MAX_SAFE_INTEGER)
+  sequence?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  agentInstanceId?: string;
 }
 
 export class AgentPollDto {
@@ -316,5 +355,6 @@ export class AgentPollDto {
   @ArrayMaxSize(100)
   @ValidateNested({ each: true })
   @Type(() => PollLogItemDto)
+  @IsSafeLogBatch()
   logs?: PollLogItemDto[];
 }

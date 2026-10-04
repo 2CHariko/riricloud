@@ -96,6 +96,16 @@ describe('AgentGateway', () => {
     }))).toBeNull();
   });
 
+  it('兼容新旧日志字段并校验发生时间、序号与metadata总大小', () => {
+    const item = { level: 'ERROR', module: 'Singbox', message: 'timeout' };
+    const parse = (logs: unknown[]) => parseAgentInboundMessage(JSON.stringify({ type: 'log_report', data: { logs } }));
+    expect(parse([item])).not.toBeNull();
+    expect(parse([{ ...item, occurredAt: '2026-10-04T06:12:00.123456789Z', sequence: 1, agentInstanceId: 'instance' }])).not.toBeNull();
+    expect(parse([{ ...item, occurredAt: 'not-a-date' }])).toBeNull();
+    expect(parse([{ ...item, sequence: Number.MAX_SAFE_INTEGER + 1 }])).toBeNull();
+    expect(parse(Array.from({ length: 50 }, () => ({ ...item, metadata: { detail: 'x'.repeat(4096) } })))).toBeNull();
+  });
+
   it('按连接限制 Agent 消息速率和累计字节数', () => {
     const gateway = createGateway();
     const quotas = (gateway as unknown as { quotas: Map<unknown, { windowStartedAt: number; messages: number; bytes: number }> }).quotas;

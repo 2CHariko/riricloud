@@ -227,7 +227,8 @@ export type AgentTaskMessage =
   | { type: 'upgrade_task'; data: UpgradeTaskData }
   | { type: 'probe_task'; data: ProbeTaskData }
   | { type: 'restart_agent_task'; data: RestartAgentTaskData }
-  | { type: 'kick_devices_task'; data: KickDevicesTaskData };
+  | { type: 'kick_devices_task'; data: KickDevicesTaskData }
+  | { type: 'diagnostics_snapshot_task'; data: { taskId: string; timeoutMs: number } };
 
 export interface AgentPollResponse {
   protocolVersion: number;
@@ -249,6 +250,9 @@ export interface AgentLogItem {
   source?: 'AGENT' | 'SINGBOX';
   message: string;
   metadata?: Record<string, unknown>;
+  occurredAt?: string;
+  sequence?: number;
+  agentInstanceId?: string;
 }
 
 export interface LogReportData {
@@ -411,9 +415,9 @@ function isMirrorErrorData(value: unknown): value is MirrorErrorData {
   return isJsonObject(value) && isNonEmptyString(value.taskId, 128) && isNonEmptyString(value.code, 64) && typeof value.message === 'string' && value.message.length <= 1024;
 }
 
-function isLogReportData(value: unknown): value is LogReportData {
+export function isLogReportData(value: unknown, maxItems = 50): value is LogReportData {
   if (!isJsonObject(value) || !Array.isArray(value.logs)) return false;
-  if (value.logs.length > 50) return false;
+  if (value.logs.length > maxItems) return false;
   let totalBytes = 0;
   return value.logs.every((item) => {
     if (!isJsonObject(item)) return false;
@@ -422,17 +426,20 @@ function isLogReportData(value: unknown): value is LogReportData {
     const validModule = typeof item.module === 'string' && item.module.length <= 128;
     const validSource = item.source === undefined || item.source === 'AGENT' || item.source === 'SINGBOX';
     const validMetadata = item.metadata === undefined || isSafeMetadata(item.metadata);
+    const validTime = item.occurredAt === undefined || (typeof item.occurredAt === 'string' && item.occurredAt.length <= 64 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(item.occurredAt) && Number.isFinite(Date.parse(item.occurredAt)));
+    const validSequence = item.sequence === undefined || isSafeNonNegativeInteger(item.sequence);
+    const validInstance = item.agentInstanceId === undefined || isNonEmptyString(item.agentInstanceId, 128);
+    if (item.metadata !== undefined) totalBytes += Buffer.byteLength(JSON.stringify(item.metadata), 'utf8');
     if (validMessage) totalBytes += Buffer.byteLength(item.message as string, 'utf8');
     if (validModule) totalBytes += Buffer.byteLength(item.module as string, 'utf8');
-    return validLevel && validMessage && validModule && validSource && validMetadata && totalBytes <= 64 * 1024;
+    return validLevel && validMessage && validModule && validSource && validMetadata && validTime && validSequence && validInstance && totalBytes <= 64 * 1024;
   });
 }
 
 function isSafeMetadata(value: unknown, depth = 0): boolean {
   if (depth > 5) return false;
-  if (value === null || typeof value !== 'object') {
-    return typeof value !== 'string' || value.length <= 4096;
-  }
+  if (value === null) return true;
+  if (typeof value !== 'object') return typeof value === 'string' ? value.length <= 4096 : typeof value === 'boolean' || isFiniteNumber(value);
   if (Array.isArray(value) && value.length > 100) return false;
   if (!Array.isArray(value) && Object.keys(value).length > 100) return false;
   const entries = Array.isArray(value) ? value : Object.entries(value);

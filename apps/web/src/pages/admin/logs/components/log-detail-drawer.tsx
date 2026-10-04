@@ -13,6 +13,8 @@ import {
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import type { SystemLogItem } from '../types';
+import { LogCorrelation } from '@/components/shared/log-correlation';
+import { parseLogMetadata } from '@/lib/log-contract';
 
 interface LogDetailDrawerProps {
   log: SystemLogItem | null;
@@ -43,13 +45,8 @@ export function LogDetailDrawer({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  let parsedMetadata: Record<string, unknown> = {};
-  let parseError = false;
-  try {
-    parsedMetadata = JSON.parse(log.metadata) as Record<string, unknown>;
-  } catch {
-    parseError = true;
-  }
+  const parsedMetadata = parseLogMetadata(log.metadata);
+  const parseError = !Object.keys(parsedMetadata).length && log.metadata !== '{}';
 
   const stackTrace = typeof parsedMetadata.errorStack === 'string'
     ? parsedMetadata.errorStack
@@ -84,6 +81,7 @@ export function LogDetailDrawer({
 
         {/* 内容滚动区 */}
         <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-1 text-xs">
+          <LogCorrelation log={log} />
           {/* 全链路 Trace 追踪栏 */}
           {log.traceId ? (
             <div className="rounded-lg border bg-muted/30 p-3">
@@ -239,7 +237,7 @@ export function LogDetailDrawer({
                 {t('admin:logs.copyJson')}
               </Button>
             </div>
-            <pre className="rounded-lg border bg-zinc-950 text-zinc-100 p-3 font-mono text-[11px] select-text overflow-x-auto leading-relaxed">
+            <pre className="rounded-lg border bg-muted/40 p-3 font-mono text-[11px] select-text overflow-x-auto leading-relaxed">
               {parseError ? log.metadata : JSON.stringify(parsedMetadata, null, 2)}
             </pre>
           </div>

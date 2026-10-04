@@ -5,16 +5,21 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
 	"github.com/Nanako660/riricloud/apps/agent/internal/config"
 	"github.com/Nanako660/riricloud/apps/agent/internal/embedded"
+	"github.com/Nanako660/riricloud/apps/agent/internal/logging"
 )
 
 func TestNewLoggerFileOnlyReceivesLogs(t *testing.T) {
@@ -134,5 +139,63 @@ func TestStartKernelBootstrapOverwritesStaleOnDiskKernelFromEmbedded(t *testing.
 	}
 	if !bytes.Equal(actual, newKernelPayload) {
 		t.Fatalf("expected stale on-disk sing-box to be overwritten by embedded kernel, got %q", string(actual))
+	}
+}
+
+func TestRunForegroundCapturesStartupOnActualPollPath(t *testing.T) {
+	for _, key := range []string{"MASTER_URL", "MASTER_WS_URL", "AGENT_MODE", "AGENT_TOKEN", "SINGBOX_CONFIG_PATH", "SINGBOX_BINARY_PATH", "RIRICLOUD_LOG_PATH", "RIRICLOUD_LOG_MAX_SIZE_MB", "RIRICLOUD_LOG_MAX_FILES", "POLL_INTERVAL_SECS", "HEARTBEAT_SECS"} {
+		t.Setenv(key, "")
+	}
+	received := make(chan []logging.LogItem, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Logs []logging.LogItem `json:"logs"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+			return
+		}
+		io.WriteString(w, `{"protocolVersion":2,"tasks":[]}`)
+		select {
+		case received <- payload.Logs:
+		default:
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	cfg := &config.Config{MasterURL: srv.URL, Mode: config.ModeHTTP, AgentToken: "test-token", SingboxConfPath: filepath.Join(dir, "kernel.json"), SingboxBinPath: filepath.Join(dir, "missing-kernel"), HeartbeatSecs: 5, PollIntervalSecs: 5, LogPath: filepath.Join(dir, "agent.log"), LogMaxSizeMb: 1, LogMaxFiles: 2}
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runForeground(ctx, Options{ConfigPath: path, Version: "test", SingboxSource: "none"}) }()
+	select {
+	case items := <-received:
+		found := 0
+		for _, item := range items {
+			if item.Metadata["event"] == "agent_start" {
+				found++
+				if item.Sequence != 1 || item.AgentInstanceID == "" || item.OccurredAt == "" {
+					t.Errorf("startup missing initial correlation %+v", item)
+				}
+			}
+		}
+		if found != 1 {
+			t.Errorf("startup preceded Hook and was lost: %+v", items)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("runner never polled")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Error(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("runner shutdown leaked diagnostics")
 	}
 }

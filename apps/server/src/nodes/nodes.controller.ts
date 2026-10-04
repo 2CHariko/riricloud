@@ -95,6 +95,11 @@ export class NodesController {
     return this.nodesService.remove(id);
   }
 
+  @Post(':id/diagnostics-snapshot')
+  diagnosticsSnapshot(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: { id: string }) {
+    return this.nodesService.requestDiagnosticsSnapshot(id, user.id);
+  }
+
   @Post(':id/reload')
   reload(@Param('id') id: string) {
     return this.nodesService.requestReload(id);
