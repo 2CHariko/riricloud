@@ -1177,7 +1177,8 @@ const admin = {
       collectorHint: '这是该日志记录携带的 Agent 实例累计快照，实例重启后归零，不随当前筛选变化，也不是实时指标。过滤、合并、重入队不直接代表故障；零丢弃不保证日志零丢失，上报成功不等于已落库。',
       collector: { filtered: '已过滤', coalesced: '重复合并', requeued: '重入队', dropped: '已丢弃', truncated: '已截断' },
       stackTitle: '异常堆栈', rawMetadata: '原始元数据', viewRaw: '展开查看原始内容',
-      emptyMetadata: '此记录没有元数据', invalidMetadata: '元数据无法解析为 JSON 对象，已保留原文供查看和复制。'
+      emptyMetadata: '此记录没有元数据', invalidMetadata: '元数据无法解析为 JSON 对象，已保留原文供查看和复制。',
+      diagnosticsSection: '底层实例与采集诊断', hasAnomaly: '存在异常指标'
     },
     advancedFilters: '高级筛选',
     advancedFiltersDescription: '按模块或自定义时间范围检索，点击应用后生效；取消不改变当前筛选。',

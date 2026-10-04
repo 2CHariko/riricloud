@@ -236,3 +236,6 @@ flowchart TD
 ### 日志详情信息卡片化增量台账
 
 2026-10-04：UI-32 详情抽屉正文优先，时间/来源/实例/采集计数使用平面 Card 网格，说明移入 Tooltip，原始 JSON 默认折叠且可直接复制；共用 LogCorrelation 同步影响 UI-43/UI-10 快照结果的时间/实例证据，不改变任务行为。源码覆盖 shared/log-info-card.tsx、log-copy-button.tsx、log-correlation.tsx、logs/components/log-detail-drawer.tsx、log-context-cards.tsx、log-collector-stats.tsx、log-metadata-section.tsx。Antigravity 按需核对 Light/Dark、1440x900/375x812/768x1024：长 ID 完整换行、卡片标签/值、系统时区/毫秒/回退标签、0/缺失/非零丢弃语义、未知/非法 JSON 原文、默认折叠及切日志重置、过滤关闭、复制成功/拒绝、键盘提示与局部滚动。PI-Desktop 本次仅执行轻量映射/React 静态渲染/回调/模拟剪贴板异步清理和门禁，**未执行浏览器视觉走查或真实剪贴板验证**，不引入重型框架或 CI/hook 视觉测试。
+### 日志详情视觉重构与极客美学恢复增量台账
+
+2026-10-04：按用户旧版高对比度极客风格重构 UI-32 日志详情抽屉：抽屉副标题直接整合记录时间（系统时区毫秒+ISO）、时钟回退警告与序号；恢复全宽独立 Trace ID 专属栏（单行等宽防换行，带即时复制与一键按链路过滤并关闭抽屉）；基础上下文改为轻量两列微底色网格，移除厚重 Card 边框与阴影；结构化元数据 JSON 恢复深色终端风格（bg-zinc-950）直接展开呈现，取消强制手风琴折叠，配置有界内部滚动与一键复制；进阶实例与采集指标收纳至底部折叠诊断面板，有异常时高亮展开。按需由 Antigravity 在 Light/Dark、1440x900/375x812/768x1024 走查。PI-Desktop 本次仅执行轻量契约、React 渲染与门禁校验，**未执行浏览器视觉走查或真实剪贴板验证**。

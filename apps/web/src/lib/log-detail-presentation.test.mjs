@@ -14,7 +14,10 @@ function load(path, modules = {}, context = {}) {
   const exports = {};
   runInNewContext(ts.transpileModule(source(path), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX
-  } }).outputText, { exports, require: (name) => modules[name] ?? require(name), ...context });
+  } }).outputText, { exports, require: (name) => {
+    if (name in modules) return modules[name];
+    return require(name);
+  }, ...context });
   return exports;
 }
 const utils = load('./utils.ts', { '@/i18n/config': { default: { t: (key) => key } } });
@@ -67,19 +70,20 @@ test('collector metrics preserve zero, reject invalid counts and flag only actua
   assert.equal(fields.find((field) => field.key === 'sequence').value, '0');
 });
 
-test('detail UI is card based, message first and metadata collapsed with complete copy payload', () => {
+test('detail UI is message first with full-width trace, clean context and direct dark metadata', () => {
   const drawer = source('../pages/admin/logs/components/log-detail-drawer.tsx');
-  assert.doesNotMatch(drawer, /generatedAt|toLocaleString|clipboard.writeText|setTimeout/);
-  assert.ok(drawer.indexOf('log.message') < drawer.indexOf('<LogCorrelation'));
+  assert.doesNotMatch(drawer, /clipboard.writeText|setTimeout/);
+  assert.match(drawer, /generatedAt/);
+  assert.match(drawer, /formatDetailTime/);
+  assert.match(drawer, /traceIdTitle/);
   for (const name of ['LogContextCards', 'LogCollectorStats', 'LogMetadataSection', 'LogCopyButton']) assert.match(drawer, new RegExp(name));
   const correlation = source('../components/shared/log-correlation.tsx');
   assert.match(correlation, /LogInfoCard/);
   assert.match(correlation, /qualityLabels/);
   assert.match(correlation, /IconButton/);
   const metadata = source('../pages/admin/logs/components/log-metadata-section.tsx');
-  assert.match(metadata, /Accordion/);
-  assert.doesNotMatch(metadata, /defaultValue|forceMount/);
-  assert.match(metadata, /value=\{metadata.text\}/);
+  assert.match(metadata, /bg-zinc-950/);
+  assert.match(metadata, /metadata.text/);
   assert.match(drawer, /key=\{log.id\}/);
 });
 
@@ -95,7 +99,7 @@ const cardModule = load('../components/shared/log-info-card.tsx', {
   '@/lib/utils': utils, '@/components/ui/card': load('../components/ui/card.tsx', { '@/lib/utils': utils }), './log-copy-button': copyModule
 });
 const shared = { 'lucide-react': icons, 'react-i18next': translation, '@/lib/utils': utils,
-  '@/lib/log-detail-presentation': helpers(), '@/components/ui/icon-button': { IconButton }, '@/components/shared/log-info-card': cardModule };
+  '@/lib/log-detail-presentation': helpers(), '@/components/ui/button': { Button }, '@/components/ui/icon-button': { IconButton }, '@/components/shared/log-info-card': cardModule };
 const { LogCorrelation } = load('../components/shared/log-correlation.tsx', {
   ...shared, './log-info-card': cardModule, '@/components/ui/badge': load('../components/ui/badge.tsx', { '@/lib/utils': utils })
 });
@@ -130,11 +134,11 @@ test('rendered evidence uses labeled cards, preserves long IDs and zero sequence
   assert.match(stats, />0<\/div>/);
 });
 
-test('raw metadata is closed by default and its copy action preserves formatted or invalid evidence', () => {
+test('raw metadata displays directly in dark terminal and its copy action preserves formatted or invalid evidence', () => {
   const metadata = helpers().detailMetadata('{"unknown":"retained"}');
   const html = render(LogMetadataSection, { metadata });
-  assert.match(html, /data-state="closed"/);
-  assert.doesNotMatch(html, /<pre|retained/);
+  assert.match(html, /retained/);
+  assert.match(html, /bg-zinc-950/);
   const raw = helpers().detailMetadata('invalid raw');
   const tree = LogMetadataSection({ metadata: raw });
   const copy = findElements(tree, (element) => element.type === copyModule.LogCopyButton)[0];
@@ -142,7 +146,6 @@ test('raw metadata is closed by default and its copy action preserves formatted 
   const empty = render(LogMetadataSection, { metadata: helpers().detailMetadata('{}') });
   assert.match(empty, /emptyMetadata/);
 });
-
 function findElements(tree, predicate, found = []) {
   if (!tree || typeof tree !== 'object') return found;
   if (predicate(tree)) found.push(tree);
@@ -152,20 +155,21 @@ function findElements(tree, predicate, found = []) {
 
 test('context filter callbacks keep trace, node and module values and close the drawer', () => {
   const calls = [];
-  const tree = LogContextCards({ log, onFilterByTraceId: (value) => calls.push(value), onFilterByNodeId: (value) => calls.push(value), onFilterByModule: (value) => calls.push(value) });
-  const infoCards = findElements(tree, (element) => element.type === cardModule.LogInfoCard);
-  infoCards.filter((element) => element.props.actions).forEach((element) => element.props.actions.props.onClick());
-  assert.deepEqual(calls, ['Collector', 'node', 'trace-123']);
+  const tree = LogContextCards({ log, onFilterByNodeId: (value) => calls.push(value), onFilterByModule: (value) => calls.push(value) });
+  const buttons = findElements(tree, (element) => element.type === Button);
+  buttons.forEach((btn) => btn.props.onClick());
+  assert.deepEqual(calls, ['Collector', 'node']);
   const parts = new Proxy({}, { get: (_target, key) => key });
   const { LogDetailDrawer } = load('../pages/admin/logs/components/log-detail-drawer.tsx', { ...shared,
-    '@/components/ui/sheet': parts, '@/components/ui/card': parts, '@/components/ui/badge': parts,
+    '@/components/ui/sheet': parts, '@/components/ui/card': parts, '@/components/ui/badge': parts, '@/components/ui/accordion': parts,
     '@/components/shared/log-correlation': { LogCorrelation }, '@/components/shared/log-copy-button': copyModule,
     './log-context-cards': { LogContextCards }, './log-collector-stats': { LogCollectorStats }, './log-metadata-section': { LogMetadataSection }
   });
   const drawer = LogDetailDrawer({ log, open: true, onOpenChange: (value) => calls.push(value), onFilterByTraceId: (value) => calls.push(value) });
   const content = findElements(drawer, (element) => element.key === log.id)[0];
-  const context = findElements(content.type(content.props), (element) => element.type === LogContextCards)[0];
-  context.props.onFilterByTraceId('trace-123');
+  const contentTree = content.type(content.props);
+  const traceFilterBtn = findElements(contentTree, (element) => element.type === Button && element.props.variant === 'secondary')[0];
+  traceFilterBtn.props.onClick();
   assert.deepEqual(calls.slice(-2), ['trace-123', false]);
 });
 

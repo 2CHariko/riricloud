@@ -33,6 +33,7 @@
 | :--- | :--- | :--- | :--- |
 | [日志可信度与无重启诊断全链路优化](./archive/2026-10-04-logs-diagnostics-overhaul.md) | `Unreleased` | 2026-10-04 | — |
 | [系统日志页紧凑布局恢复](./archive/2026-10-04-logs-compact-ui.md) | `Unreleased` | 2026-10-04 | — |
+| [日志详情抽屉视觉重构与极客美学恢复](./archive/2026-10-04-log-detail-redesign.md) | `Unreleased` | 2026-10-04 | — |
 | [日志详情信息卡片化与元数据降噪](./archive/2026-10-04-log-detail-cards.md) | `Unreleased` | 2026-10-04 | — |
 | [订阅预览原生校验与外部资源诊断](./archive/2026-10-03-template-kernel-validation.md) | `Unreleased` | 2026-10-03 | — |
 | [统一延迟测试入口并保留严格调试能力](./archive/2026-10-03-probe-latency-test.md) | `Unreleased` | 2026-10-03 | — |
