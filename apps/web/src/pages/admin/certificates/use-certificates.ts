@@ -41,7 +41,8 @@ export function useCertificateDetail(id: string | null, enabled = true) {
   return useQuery({
     queryKey: ['admin', 'certificates', 'detail', id],
     enabled: enabled && Boolean(id),
-    queryFn: async () => (await api.get<{ certificate: ApiCertificateDetail }>(`/admin/certificates/${id}`)).data.certificate
+    gcTime: 0,
+    queryFn: async ({ signal }) => (await api.get<{ certificate: ApiCertificateDetail }>(`/admin/certificates/${id}`, { signal })).data.certificate
   });
 }
 
@@ -53,6 +54,7 @@ export function useCertificateMutations() {
   };
   const onError = (error: unknown, fallback: string) => toast.error(extractErrorMessage(error, fallback));
   const parse = useMutation({
+    gcTime: 0,
     mutationFn: async (payload: { certificatePem: string; privateKeyPem?: string }) => (await api.post<ParsedCertificate>('/admin/certificates/parse', payload)).data,
     onError: () => undefined
   });

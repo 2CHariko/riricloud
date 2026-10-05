@@ -54,7 +54,7 @@
 | **`UI-22`** | 节点运维 | 远程升级弹窗 | `/admin/nodes/:id`（点击“升级中心”） | `apps/web/src/pages/admin/nodes/components/upgrade-node-dialog.tsx` | 界面收敛为纯粹的「Agent 升级」单动作（Sing-box 内嵌提示与当前 Agent/托管内核版本双画像）、当前/推荐版本对比、ACTIVE 资源选择（展示平台资产数）、自定义 URL/SHA-256 校验、导入主控、HTTP/WS 任务等待、下发中禁用状态、错误 Toast |
 | **`UI-23`** | 线路管理 | 线路管理列表与异步延迟测试 | `/admin/lines`（点击延迟测试或结果 Badge） | `apps/web/src/pages/admin/lines/**`, `apps/web/src/components/shared/probe-task-dialog.tsx`, `probe-result.tsx` | 类型/状态/标签与排序、批量启停；单条/全量统一「延迟测试」，提交后展示任务 ID、状态、进度、计数与时间；启动/重测、刷新、显式取消、关闭后重开、分页结果与到期错误；仅 schemaVersion=2、measurement=MIHOMO_URL_TEST、perspective=MASTER 的安全结果展示延迟，不使用旧 HTTP/TCP 数字回退；显示安全状态文案、目标与时间，不展示内核、版本、兼容性、回退策略、原始 message/errorCode/阶段或高级入口；取消、STALE、跳过、暂不可用和不支持不冒充断线；EXTERNAL 无入口、倍率/中继信息与限速标签、删除确认 |
 | **`UI-24`** | 线路管理 | 新建/编辑线路双页签弹窗 | `/admin/lines`（点击“新建线路/编辑线路”） | `apps/web/src/pages/admin/lines/components/line-form-dialog.tsx` | 默认“入站配置”页签包含协议/入口节点/监听地址与端口、入口节点选择器过滤排除 NAT 节点仅允许公网 VPS、平面展开的 Transport/TLS/Reality/ACME/专属参数、标准 TLS/ACME 的 ALPN 预设多选、ShadowTLS v3 + SS2022 内层字段、可增删请求头、Reality 参数生成（Short IDs、公钥、私钥）与保存后客户端更新订阅提示；Reality 不显示 ALPN；入站配置内嵌「网络底座与监听调优」（单端口物理限速 speedLimitMbps、PROXY Protocol v1/v2 及无头容错、TCP Fast Open、TCP MultiPath、UDP 分片与超时设置）与「客户端多路复用 Multiplex」（smux/yamux/h2mux 协议、最大连接数/并发流数、最小流数、数据包填充与 TCP Brutal 拥塞控制上行/下行速率）；协议高级项包含 Hysteria 2 HTTP 伪装模式（file/proxy/string）与 Shadowsocks UDP over TCP 开关；安全传输层包含 TLS 最低/最高版本选择与自定义密码套件输入；“线路高级设置”页签包含落地拓扑（落地节点支持选择公网或 NAT 节点，选定 NAT 节点时自动激活「NAT 安全反向穿透」卡片并提供「允许访问落地端局域网资源」安全开关与隧道参数提示，直连模式自适应隐藏落地设置）、客户端接入端点、中继回源端点（`landingEndpointOverrideEnabled` / `landingServerHost` / `landingServerPort`，切换协议不丢失，NAT 节点显示回环隧道提示）、倍率/状态；TARGET_LINE 选项显示为“协议转换：桥接已有线路”，并显示目标直连筛选、目标节点/协议/端口摘要（含目标线路对外端点自动继承提示）且隐藏落地手填字段；两页统一保存 |
-| **`UI-26`** | 证书管理 | 证书管理列表与证书操作弹窗 | `/admin/certificates`（点击新建/编辑/查看） | `apps/web/src/pages/admin/certificates/**` | 证书名称、SAN 标签、签发者、统一时区有效期状态展示、关联线路数、PEM 粘贴/上传、解析反馈、私钥查看、引用线路删除拦截 |
+| **`UI-26`** | 证书管理 | 证书管理列表与证书操作弹窗 | `/admin/certificates`（点击新建/编辑/查看） | `apps/web/src/pages/admin/certificates/**` | 证书名称、SAN 标签、签发者、统一时区有效期状态展示、关联线路数、PEM 粘贴/上传、解析反馈、编辑直接显示完整私钥与留空保留说明、详情加载/失败重试与保存禁用、详情私钥查看开关、引用线路删除拦截 |
 | **`UI-27`** | 流量统计 | 全站流量统计 | `/admin/traffic` | `apps/web/src/pages/admin/traffic/**` | 今日/24 小时/7 天/30 天 Tabs、流量与当前速率摘要、平均/峰值速率图、线路/用户 Top 5 + 其他 Donut 切换、线路明细/用户排行 Tabs、历史观测数据清理快捷入口与共享预览确认弹窗、邮箱搜索、角色筛选、本地分页、前三名徽标、排行表格数字字段不换行、明暗主题与移动端局部横向滚动 |
 | **`UI-28`** | 用户管理与流量统计 | 单用户流量明细下钻 | `/admin/users` 或 `/admin/traffic`（点击“流量明细”） | `apps/web/src/pages/admin/users/components/user-traffic-dialog.tsx` | 用户配额画像、周期走势图、线路占比、明细表格、无记录 EmptyState、桌面 `max-w-5xl` Dialog/移动 Sheet、外层无横向溢出且明细表局部滚动、明暗主题 |
 | **`UI-29`** | 用户中心 | 个人中心 | `/profile` | `apps/web/src/pages/user/profile/**` | 顶部 Profile Header 身份横幅（个性化 Avatar、大字昵称弹窗修改、换绑邮箱 Dialog 验证码 60s 倒计时与密码验证、邮箱超长截断带 hover title、状态徽标与「立即验证/更换」按钮防断行 whitespace-nowrap 并在移动端窄屏下整簇折行、数字 UID 复制胶囊、角色徽标、加入时间）；强制邮箱验证开启且未验证时的暂不可用提示横幅；Tabs 双页签（账号与安全 / 资产与财务）；账号安全页签（登录密码修改、代理凭据 UUID 掩码切换/一键复制/红色危险区域与二次重置弹窗）；资产财务页签（资产三指标概览与卡密兑换并排、全宽收支流水表格、分页与 EmptyState）；客服联系渠道卡片；移动端自适应折行、明暗双主题自适应 |
@@ -90,6 +90,10 @@
 ### Reality 参数生成增量台账
 
 2026-10-05：UI-24 的「生成密钥对」改为「生成参数」，一次回填随机 Short ID、公钥和私钥，新增保存生效与客户端更新订阅提示。沿用 shadcn Button 和原字段布局，生成期间禁用生成/保存；失败、取消、关闭重开、切线路/协议/安全模式及手动编辑不得覆盖新草稿。Antigravity 按需核对 Light/Dark、1440x900/375x812/768x1024 的按钮、提示换行、密码遮蔽和无横向溢出。当前 Codex Desktop 仅执行轻量契约、编译和质量门禁，**未执行 Antigravity 视觉走查**，不接入 CI/hook 或引入重型测试框架。
+
+### 证书编辑私钥回填增量台账
+
+2026-10-06：UI-26 编辑弹窗直接回填完整私钥，允许编辑/上传替换并明确留空保留原私钥；详情加载期间不可编辑/保存，失败提供重试。关闭或切换证书销毁旧草稿并取消详情请求，后台刷新不覆盖草稿；详情查询无观察者后立即回收缓存。Antigravity 按需核对双主题与桌面/手机/平板的 PEM 长文本、说明换行、加载/重试状态和无横向溢出。当前 Codex Desktop 仅执行轻量回归与质量门禁，**未执行 Antigravity 视觉走查**，不接入 CI/hook 或引入测试框架。本次不改变 REST/WS、鉴权、响应结构或节点生命周期，E2E 接口消费者无需同步调整。
 
 ### 2.1 移动端附加检查项
 

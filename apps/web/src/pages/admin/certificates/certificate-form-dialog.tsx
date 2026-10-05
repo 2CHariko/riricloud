@@ -21,19 +21,44 @@ interface CertificateFormValues {
   privateKeyPem?: string;
 }
 
-export function CertificateFormDialog({
-  open,
-  onOpenChange,
-  certificateId,
-  pending,
-  onSubmit
-}: {
+interface CertificateFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   certificateId: string | null;
   pending: boolean;
   onSubmit: (payload: CertificatePayload) => void;
-}) {
+}
+
+export function CertificateFormDialog(props: CertificateFormDialogProps) {
+  const { open, onOpenChange, certificateId, pending } = props;
+  const { t } = useTranslation(['admin', 'common']);
+  const detail = useCertificateDetail(certificateId, open);
+  const ready = !certificateId || Boolean(detail.data);
+
+  return (
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent size="wide" className="min-w-0 overflow-x-hidden">
+        <DialogHeader className="min-w-0">
+          <DialogTitle>{certificateId ? t('admin:certificates.formEditTitle') : t('admin:certificates.formCreateTitle')}</DialogTitle>
+          <DialogDescription>{t('admin:certificates.formDesc')}</DialogDescription>
+        </DialogHeader>
+        {open && ready && <CertificateFormSession key={certificateId ?? 'create'} {...props} detail={detail} />}
+        {!ready && <>
+          <p role="status" className={detail.isError ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>
+            {detail.isError ? t('admin:certificates.loadFailed') : t('common:actions.loading')}
+          </p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common:actions.cancel')}</Button>
+            {detail.isError && <Button type="button" variant="outline" disabled={detail.isFetching} onClick={() => void detail.refetch()}>{t('common:actions.retry')}</Button>}
+            <Button type="button" disabled>{pending ? t('admin:certificates.saving') : t('admin:certificates.saveCert')}</Button>
+          </DialogFooter>
+        </>}
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
+  );
+}
+
+function CertificateFormSession({ onOpenChange, certificateId, pending, onSubmit, detail }: CertificateFormDialogProps & { detail: ReturnType<typeof useCertificateDetail> }) {
   const { t } = useTranslation(['admin', 'common']);
 
   const certificateFormSchema = React.useMemo(() => z.object({
@@ -51,25 +76,25 @@ export function CertificateFormDialog({
 
   const form = useForm<CertificateFormValues>({
     resolver: zodResolver(certificateFormSchema),
-    defaultValues: { name: '', certificatePem: '', privateKeyPem: '' }
+    defaultValues: {
+      name: detail.data?.name ?? '',
+      certificatePem: detail.data?.certificatePem ?? '',
+      privateKeyPem: detail.data?.privateKeyPem ?? ''
+    }
   });
-  const detail = useCertificateDetail(certificateId, open);
   const { parse } = useCertificateMutations();
   const { mutate: parseCertificate, reset: resetParse } = parse;
   const certificatePem = form.watch('certificatePem');
   const privateKeyPem = form.watch('privateKeyPem');
 
-  // 仅在打开弹窗或切换证书时初始化草稿；详情重新获取不得清空已粘贴的 PEM 与私钥
+  // 会话随关闭或切换证书卸载；后台刷新不得覆盖已初始化的私钥草稿
   useFormResetOnKey({
-    open,
     resetKey: certificateId ?? 'create',
-    dataRevision: certificateId ? detail.dataUpdatedAt : undefined,
-    isDirty: form.formState.isDirty,
     reset: () => {
       if (!certificateId) {
         form.reset({ name: '', certificatePem: '', privateKeyPem: '' });
       } else if (detail.data) {
-        form.reset({ name: detail.data.name, certificatePem: detail.data.certificatePem, privateKeyPem: '' });
+        form.reset({ name: detail.data.name, certificatePem: detail.data.certificatePem, privateKeyPem: detail.data.privateKeyPem });
       }
     }
   });
@@ -94,6 +119,7 @@ export function CertificateFormDialog({
   };
 
   const submit = (values: CertificateFormValues) => {
+    if (pending) return;
     if (!certificateId && !values.privateKeyPem?.trim()) {
       form.setError('privateKeyPem', { message: t('admin:certificates.valKeyRequired') });
       return;
@@ -106,67 +132,59 @@ export function CertificateFormDialog({
   };
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent size="wide" className="min-w-0 overflow-x-hidden">
-        <DialogHeader className="min-w-0">
-          <DialogTitle>{certificateId ? t('admin:certificates.formEditTitle') : t('admin:certificates.formCreateTitle')}</DialogTitle>
-          <DialogDescription>{t('admin:certificates.formDesc')}</DialogDescription>
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(submit)} className="min-w-0 space-y-4">
-            <FormField control={form.control} name="name" render={({ field }) => (
-              <FormItem className="min-w-0">
-                <FormLabel>{t('admin:certificates.nameLabel')}</FormLabel>
-                <FormControl><Input placeholder={t('admin:certificates.namePlaceholder')} {...field} /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )} />
-            <FormField control={form.control} name="certificatePem" render={({ field }) => (
-              <FormItem className="min-w-0">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <FormLabel>{t('admin:certificates.labelCertPem')}</FormLabel>
-                  <Button type="button" variant="outline" size="sm" asChild>
-                    <label><FileText />{t('admin:certificates.uploadCertFile')}<Input className="sr-only" type="file" accept=".pem,.crt,.cer,text/plain" onChange={(event) => void readFile('certificatePem', event)} /></label>
-                  </Button>
-                </div>
-                <FormControl><Textarea className="min-h-44 min-w-0 max-w-full font-mono text-xs" spellCheck={false} placeholder="-----BEGIN CERTIFICATE-----" {...field} /></FormControl>
-                <FormDescription>{t('admin:certificates.certPemDesc')}</FormDescription>
-                <FormMessage />
-              </FormItem>
-            )} />
-            <FormField control={form.control} name="privateKeyPem" render={({ field }) => (
-              <FormItem className="min-w-0">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <FormLabel>{t('admin:certificates.labelKeyPem')}</FormLabel>
-                  <Button type="button" variant="outline" size="sm" asChild>
-                    <label><FileKey2 />{t('admin:certificates.uploadKeyFile')}<Input className="sr-only" type="file" accept=".pem,.key,text/plain" onChange={(event) => void readFile('privateKeyPem', event)} /></label>
-                  </Button>
-                </div>
-                <FormControl><Textarea className="min-h-36 min-w-0 max-w-full font-mono text-xs" spellCheck={false} placeholder={certificateId ? t('admin:certificates.keyPlaceholderEdit') : t('admin:certificates.keyPlaceholderNew')} {...field} value={field.value ?? ''} /></FormControl>
-                <FormDescription>{certificateId ? t('admin:certificates.keyDescEdit') : t('admin:certificates.keyDescCreate')}</FormDescription>
-                <FormMessage />
-              </FormItem>
-            )} />
+    <Form {...form}>
+      <form noValidate onSubmit={form.handleSubmit(submit)} className="min-w-0 space-y-4">
+        <FormField control={form.control} name="name" render={({ field }) => (
+          <FormItem className="min-w-0">
+            <FormLabel>{t('admin:certificates.nameLabel')}</FormLabel>
+            <FormControl><Input placeholder={t('admin:certificates.namePlaceholder')} {...field} /></FormControl>
+            <FormMessage />
+          </FormItem>
+        )} />
+        <FormField control={form.control} name="certificatePem" render={({ field }) => (
+          <FormItem className="min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <FormLabel>{t('admin:certificates.labelCertPem')}</FormLabel>
+              <Button type="button" variant="outline" size="sm" asChild>
+                <label><FileText />{t('admin:certificates.uploadCertFile')}<Input className="sr-only" type="file" accept=".pem,.crt,.cer,text/plain" onChange={(event) => void readFile('certificatePem', event)} /></label>
+              </Button>
+            </div>
+            <FormControl><Textarea className="min-h-44 min-w-0 max-w-full font-mono text-xs" spellCheck={false} placeholder="-----BEGIN CERTIFICATE-----" {...field} /></FormControl>
+            <FormDescription>{t('admin:certificates.certPemDesc')}</FormDescription>
+            <FormMessage />
+          </FormItem>
+        )} />
+        <FormField control={form.control} name="privateKeyPem" render={({ field }) => (
+          <FormItem className="min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <FormLabel>{t('admin:certificates.labelKeyPem')}</FormLabel>
+              <Button type="button" variant="outline" size="sm" asChild>
+                <label><FileKey2 />{t('admin:certificates.uploadKeyFile')}<Input className="sr-only" type="file" accept=".pem,.key,text/plain" onChange={(event) => void readFile('privateKeyPem', event)} /></label>
+              </Button>
+            </div>
+            <FormControl><Textarea className="min-h-36 min-w-0 max-w-full font-mono text-xs" spellCheck={false} placeholder={certificateId ? t('admin:certificates.keyPlaceholderEdit') : t('admin:certificates.keyPlaceholderNew')} {...field} value={field.value ?? ''} /></FormControl>
+            <FormDescription>{certificateId ? t('admin:certificates.keyDescEdit') : t('admin:certificates.keyDescCreate')}</FormDescription>
+            <FormMessage />
+          </FormItem>
+        )} />
 
-            {parse.isPending && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{t('admin:certificates.parsing')}</div>}
-            {parse.isError && <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{extractErrorMessage(parse.error, t('admin:certificates.parseFailed'))}</p>}
-            {parse.data && <div className="min-w-0 space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{t('admin:certificates.parseResult')}</span><span className="text-muted-foreground">{statusLabels[parse.data.status]}</span></div>
-              <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                <span>{t('admin:certificates.labelIssuer')}{parse.data.issuer}</span>
-                <span>{t('admin:certificates.validitySpan', { from: formatDate(parse.data.validFrom), to: formatDate(parse.data.validTo) })}</span>
-                <span className="sm:col-span-2">{t('admin:certificates.labelSans')}{parse.data.sans.join(', ')}</span>
-                {parse.data.privateKeyMatched !== null && <span>{t('admin:certificates.keyMatch')}{parse.data.privateKeyMatched ? t('admin:certificates.yes') : t('admin:certificates.no')}</span>}
-              </div>
-            </div>}
+        {parse.isPending && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{t('admin:certificates.parsing')}</div>}
+        {parse.isError && <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{extractErrorMessage(parse.error, t('admin:certificates.parseFailed'))}</p>}
+        {parse.data && <div className="min-w-0 space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{t('admin:certificates.parseResult')}</span><span className="text-muted-foreground">{statusLabels[parse.data.status]}</span></div>
+          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+            <span>{t('admin:certificates.labelIssuer')}{parse.data.issuer}</span>
+            <span>{t('admin:certificates.validitySpan', { from: formatDate(parse.data.validFrom), to: formatDate(parse.data.validTo) })}</span>
+            <span className="sm:col-span-2">{t('admin:certificates.labelSans')}{parse.data.sans.join(', ')}</span>
+            {parse.data.privateKeyMatched !== null && <span>{t('admin:certificates.keyMatch')}{parse.data.privateKeyMatched ? t('admin:certificates.yes') : t('admin:certificates.no')}</span>}
+          </div>
+        </div>}
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common:actions.cancel')}</Button>
-              <Button type="submit" disabled={pending || (certificateId !== null && detail.isLoading)}>{pending ? t('admin:certificates.saving') : t('admin:certificates.saveCert')}</Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common:actions.cancel')}</Button>
+          <Button type="submit" disabled={pending}>{pending ? t('admin:certificates.saving') : t('admin:certificates.saveCert')}</Button>
+        </DialogFooter>
+      </form>
+    </Form>
   );
 }

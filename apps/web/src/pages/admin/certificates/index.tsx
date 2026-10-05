@@ -108,7 +108,8 @@ export default function AdminCertificatesPage() {
           )}
         </CardContent>
       </Card>
-      <CertificateFormDialog
+      {formOpen && <CertificateFormDialog
+        key={editingId ?? 'create'}
         open={formOpen}
         onOpenChange={setFormOpen}
         certificateId={editingId}
@@ -116,8 +117,8 @@ export default function AdminCertificatesPage() {
         onSubmit={(payload) => editingId
           ? update.mutate({ id: editingId, ...payload }, { onSuccess: () => setFormOpen(false) })
           : create.mutate(payload, { onSuccess: () => setFormOpen(false) })}
-      />
-      <CertificateDetailDialog open={detailOpen} onOpenChange={setDetailOpen} certificateId={detailId} />
+      />}
+      {detailOpen && <CertificateDetailDialog open={detailOpen} onOpenChange={setDetailOpen} certificateId={detailId} />}
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
