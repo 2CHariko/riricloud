@@ -100,4 +100,37 @@ describe('TemplatesService', () => {
     expect(preview).toEqual(expect.objectContaining({ content: expect.any(String), stats: expect.any(Object), warnings: expect.any(Array) }));
     expect(kernels.validate).toHaveBeenCalledWith('MIHOMO', preview.content);
   });
+
+  it('预览提供修复草稿，不写入数据库也不自动改变验证内容', async () => {
+    const template = { ruleSets: [{ type: 'domain_suffix', rules: ['a.test', 'a.test'], target: 'DIRECT' }] };
+    const preview = await service.previewTemplate({ format: 'clash', template });
+    expect(preview.repair.template.ruleSets).toEqual([{ type: 'domain-suffix', rules: ['a.test'], target: 'DIRECT' }]);
+    expect(preview.stats.rulesCount).toBe(2);
+    expect(preview.analysis.counts.info).toBeGreaterThan(0);
+    expect(prisma.subscriptionTemplate.update).not.toHaveBeenCalled();
+    expect(prisma.subscriptionTemplate.create).not.toHaveBeenCalled();
+    expect(kernels.validate).toHaveBeenCalledWith('MIHOMO', preview.content);
+  });
+
+  it('保存和复制保留独立校验策略，部分更新使用存量门禁', async () => {
+    const validationConfig = { checks: { shadow: 'error' }, saveGate: 'error' };
+    const current = { id: 'policy', name: 'policy', description: null, isDefault: false, isBuiltin: false,
+      proxyGroupsJson: '[]', ruleSetsJson: '[]', dnsConfigJson: '{}', customInjectYaml: null, customInjectJson: null, validationConfigJson: JSON.stringify(validationConfig) };
+    prisma.subscriptionTemplate.create.mockResolvedValue(current);
+    await service.create({ name: 'policy', validationConfig });
+    expect(JSON.parse(prisma.subscriptionTemplate.create.mock.calls[0][0].data.validationConfigJson)).toMatchObject(validationConfig);
+    prisma.subscriptionTemplate.findUnique.mockResolvedValue(current);
+    await expect(service.update('policy', { ruleSets: [
+      { type: 'domain-suffix', rules: ['test'], target: 'DIRECT' },
+      { type: 'domain', rules: ['a.test'], target: 'REJECT' }
+    ] })).rejects.toThrow(BadRequestException);
+    expect(prisma.subscriptionTemplate.update).not.toHaveBeenCalled();
+    await service.duplicate('policy');
+    expect(prisma.subscriptionTemplate.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ validationConfigJson: current.validationConfigJson }) });
+  });
+
+  it('关闭可选检查仍拒绝非法结构和未知策略', async () => {
+    await expect(service.create({ name: 'bad', ruleSets: [null], validationConfig: { checks: { groups: 'off' } } })).rejects.toThrow(BadRequestException);
+    await expect(service.previewTemplate({ format: 'clash', template: { validationConfig: { unknown: true } } })).rejects.toThrow(BadRequestException);
+  });
 });

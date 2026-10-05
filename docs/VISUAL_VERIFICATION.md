@@ -2,6 +2,8 @@
 
 本文档定义 **RiriCloud** 前端（`apps/web`）的 UI 视觉验证标准、全量 UI 索引矩阵、变更感知映射规则与 Antigravity 环境下的标准操作规程 (SOP)。
 
+2026-10-05 模板诊断增量索引：`/admin/templates` 的 `template-validation-editor.tsx`、`template-analysis-result.tsx` 与预览抽屉新增逐项严重级别、保存门禁、修复开关、数值阈值及域名例外；验证结果按源/最终配置显示位置、覆盖证据和截断统计，安全修复展示前后差异并支持草稿应用/撤销。需在 Antigravity 按需检查明暗主题、窄屏滚动、中文回退、长规则差异及重复应用/撤销状态；本次 Codex 环境未执行视觉验证。
+
 ---
 
 ## 1. 核心原则与执行策略

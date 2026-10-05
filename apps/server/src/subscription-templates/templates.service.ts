@@ -12,6 +12,8 @@ import { buildClashYaml, buildSingboxJson, type SubLine, type SubUser, type Subs
 
 import { bindManagedConnection } from '../subscription/compilers/managed-connection';
 import { getProxyCapabilities } from '../common/proxy-capabilities';
+import { analyzeTemplate, assertDraft, parseValidationPolicy, repairTemplate, type AnalysisDraft } from './template-analysis';
+import { analyzeCompiled } from './compiled-analysis';
 type TemplateViewInput = {
   id: string;
   name: string;
@@ -44,6 +46,7 @@ export class TemplatesService {
   ) {}
 
   async create(dto: CreateTemplateDto) {
+    this.checkSave(dto);
     const data = { ...this.toData(dto), name: dto.name.trim() };
     const template = dto.isDefault
       ? await this.prisma.$transaction(async (tx) => {
@@ -85,6 +88,7 @@ export class TemplatesService {
   async update(id: string, dto: UpdateTemplateDto) {
     const current = await this.prisma.subscriptionTemplate.findUnique({ where: { id } });
     if (!current) throw new NotFoundException('订阅模板不存在');
+    this.checkSave({ ...this.toView(current), ...dto });
     const data = this.toData(dto);
     const shouldSyncDefault = dto.isDefault === true || (dto.isDefault === false && current.isDefault);
     const template = shouldSyncDefault
@@ -113,6 +117,7 @@ export class TemplatesService {
         proxyGroupsJson: source.proxyGroupsJson,
         ruleSetsJson: source.ruleSetsJson,
         dnsConfigJson: source.dnsConfigJson,
+        validationConfigJson: source.validationConfigJson,
         customInjectYaml: source.customInjectYaml,
         customInjectJson: source.customInjectJson
       }
@@ -121,6 +126,7 @@ export class TemplatesService {
   }
 
   async previewTemplate(dto: PreviewTemplateDto) {
+    assertDraft(dto.template);
     const sources = await this.getPreviewSources();
     const template = this.toTemplateConfig(dto.template);
     const user: SubUser = {
@@ -141,7 +147,18 @@ export class TemplatesService {
       : buildSingboxJson(user, compatible, template);
     const stats = { ...this.previewStats(dto.format, content, compatible.length), totalNodes: sources.length };
     const kernelCheck = await this.kernels.validate(dto.format === 'clash' ? 'MIHOMO' : 'SINGBOX', content);
-    return { format: dto.format, content, stats, warnings, kernelCheck };
+    const analysis = analyzeCompiled(dto.template, dto.format, content);
+    const repair = repairTemplate(dto.template);
+    return { format: dto.format, content, stats, warnings, kernelCheck, analysis, repair };
+  }
+
+  private checkSave(template: AnalysisDraft) {
+    assertDraft(template);
+    const policy = parseValidationPolicy(template.validationConfig);
+    const analysis = analyzeTemplate(template);
+    if (policy.saveGate !== 'off' && (analysis.counts.error || (policy.saveGate === 'warning' && analysis.counts.warning))) {
+      throw new BadRequestException({ message: 'Template validation gate rejected the draft', analysis });
+    }
   }
 
   async remove(id: string) {
@@ -166,6 +183,7 @@ export class TemplatesService {
       ...(dto.proxyGroups !== undefined ? { proxyGroupsJson: JSON.stringify(dto.proxyGroups) } : {}),
       ...(dto.ruleSets !== undefined ? { ruleSetsJson: JSON.stringify(dto.ruleSets) } : {}),
       ...(dto.dnsConfig !== undefined ? { dnsConfigJson: JSON.stringify(dto.dnsConfig) } : {}),
+      ...(dto.validationConfig !== undefined ? { validationConfigJson: JSON.stringify(parseValidationPolicy(dto.validationConfig)) } : {}),
       ...(dto.customInjectYaml !== undefined ? { customInjectYaml: dto.customInjectYaml?.trim() || null } : {}),
       ...(dto.customInjectJson !== undefined ? { customInjectJson: dto.customInjectJson?.trim() || null } : {}),
       ...(dto.isDefault !== undefined ? { isDefault: dto.isDefault } : {})
@@ -307,9 +325,11 @@ export class TemplatesService {
       proxyGroups: parseJson(template.proxyGroupsJson, []),
       ruleSets: parseJson(template.ruleSetsJson, []),
       dnsConfig: parseJson(template.dnsConfigJson, {}),
+      validationConfig: parseJson<Record<string, unknown>>(typeof template.validationConfigJson === 'string' ? template.validationConfigJson : '{}', {}),
       proxyGroupsJson: undefined,
       ruleSetsJson: undefined,
-      dnsConfigJson: undefined
+      dnsConfigJson: undefined,
+      validationConfigJson: undefined
     };
   }
 

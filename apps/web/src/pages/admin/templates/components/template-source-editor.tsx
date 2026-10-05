@@ -19,13 +19,12 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { TemplateCodeEditor } from './template-code-editor';
 import { type TemplatePayload } from '../use-templates';
-
+import { validationPolicySchema } from '../validation-policy';
 interface TemplateSourceEditorProps {
   template: TemplatePayload;
   onChange: (next: TemplatePayload) => void;
   onTestRender?: () => void;
 }
-
 export function TemplateSourceEditor({
   template,
   onChange,
@@ -35,7 +34,6 @@ export function TemplateSourceEditor({
   const [lang, setLang] = useState<'json' | 'yaml'>('yaml');
   const [source, setSource] = useState(() => YAML.stringify(template, { indent: 2 }));
   const [internalError, setInternalError] = useState('');
-
   // 外部 template 变化时，如果在无语法错误状态下则同步更新展示
   useEffect(() => {
     try {
@@ -53,7 +51,6 @@ export function TemplateSourceEditor({
     }
     setInternalError('');
   }, [template, lang]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // 本地语法与结构实时状态
   const status = useMemo(() => {
     if (!source.trim()) {
@@ -73,12 +70,14 @@ export function TemplateSourceEditor({
       if (parsed.dnsConfig && (typeof parsed.dnsConfig !== 'object' || Array.isArray(parsed.dnsConfig))) {
         return { valid: false, message: t('admin:templateSource.errorDnsConfigObject') };
       }
+      if (!validationPolicySchema.safeParse(parsed.validationConfig ?? {}).success) {
+        return { valid: false, message: t('admin:templateAnalysis.invalidPolicy') };
+      }
       return { valid: true, message: t('admin:templateSource.validMessage', { lang: lang.toUpperCase() }) };
     } catch (err) {
       return { valid: false, message: (err as Error).message || t('admin:templateSource.syntaxError', { lang: lang.toUpperCase() }) };
     }
   }, [source, lang, t]);
-
   const handleToggleLang = (targetLang: 'json' | 'yaml') => {
     if (targetLang === lang) return;
     try {
@@ -98,7 +97,6 @@ export function TemplateSourceEditor({
       toast.error(t('admin:templateSource.syntaxErrorCannotSwitch', { lang: lang.toUpperCase() }));
     }
   };
-
   const handleSourceChange = (nextSource: string) => {
     setSource(nextSource);
     try {
@@ -107,9 +105,9 @@ export function TemplateSourceEditor({
         throw new Error(t('admin:templateSource.errorRootMustBeObject'));
       }
       setInternalError('');
-
       // 组装合法的 TemplatePayload
       const nextPayload: TemplatePayload = {
+        validationConfig: validationPolicySchema.parse(parsed.validationConfig ?? {}),
         name: typeof parsed.name === 'string' ? parsed.name : template.name,
         description: typeof parsed.description === 'string' ? parsed.description : template.description,
         proxyGroups: Array.isArray(parsed.proxyGroups) ? parsed.proxyGroups : [],
@@ -121,14 +119,12 @@ export function TemplateSourceEditor({
         customInjectJson: typeof parsed.customInjectJson === 'string' ? parsed.customInjectJson : template.customInjectJson,
         isDefault: typeof parsed.isDefault === 'boolean' ? parsed.isDefault : template.isDefault
       };
-
       // 即时反向回填表单
       onChange(nextPayload);
     } catch (err) {
       setInternalError((err as Error).message || t('admin:templateSource.syntaxError', { lang: lang.toUpperCase() }));
     }
   };
-
   const handleFormat = () => {
     try {
       if (lang === 'json') {
@@ -146,7 +142,6 @@ export function TemplateSourceEditor({
       toast.error(t('admin:templateSource.formatError', { lang: lang.toUpperCase() }));
     }
   };
-
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(source);
@@ -155,7 +150,6 @@ export function TemplateSourceEditor({
       toast.error(t('admin:templateSource.copyFailed'));
     }
   };
-
   const handleReset = () => {
     if (lang === 'json') {
       setSource(JSON.stringify(template, null, 2));
@@ -165,7 +159,6 @@ export function TemplateSourceEditor({
     setInternalError('');
     toast.info(t('admin:templateSource.restoredDraft'));
   };
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
       {/* 统一沉浸式顶栏 */}

@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TemplateGroupsEditor } from './template-groups-editor';
+import { validationPolicySchema } from '../validation-policy';
+import { TemplateValidationEditor } from './template-validation-editor';
 import { TemplateRulesEditor } from './template-rules-editor';
 import { TemplateDnsEditor, SemanticDnsConfig } from './template-dns-editor';
 import { TemplateOverrideEditor } from './template-override-editor';
@@ -21,6 +23,7 @@ import { TemplatePreviewDrawer } from './template-preview-drawer';
 import { SubscriptionTemplate, TemplatePayload, useTemplateMutations } from '../use-templates';
 
 const schema = z.object({
+  validationConfig: validationPolicySchema,
   name: z.string().min(1, i18n.t('admin:templateForm.validation.nameRequired')),
   description: z.string().optional(),
   proxyGroups: z.string().refine((value) => isJsonArray(value), i18n.t('admin:templateForm.validation.jsonArrayRequired')),
@@ -67,7 +70,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
   const { t } = useTranslation(['admin', 'common']);
   const { create, update } = useTemplateMutations();
   const [previewDrawerOpen, setPreviewDrawerOpen] = useState(false);
-  const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: '', description: '', proxyGroups: '[]', ruleSets: '[]', dnsConfig: defaultDns, customInjectYaml: '', customInjectJson: '', isDefault: false } });
+  const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { validationConfig: {}, name: '', description: '', proxyGroups: '[]', ruleSets: '[]', dnsConfig: defaultDns, customInjectYaml: '', customInjectJson: '', isDefault: false } });
   const watchedGroups = form.watch('proxyGroups');
   const watchedRules = form.watch('ruleSets');
   const watchedDns = form.watch('dnsConfig');
@@ -77,6 +80,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
     open,
     resetKey: template?.id ?? 'create',
     reset: () => form.reset(template ? {
+      validationConfig: template.validationConfig ?? {},
       name: template.name,
       description: template.description ?? '',
       proxyGroups: JSON.stringify(template.proxyGroups, null, 2),
@@ -90,6 +94,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
 
   const targets = useMemo(() => parseArray(watchedGroups).map((item) => item && typeof item === 'object' && !Array.isArray(item) && typeof (item as Record<string, unknown>).name === 'string' ? (item as Record<string, unknown>).name as string : '').filter(Boolean), [watchedGroups]);
   const previewTemplate = useMemo<TemplatePayload>(() => ({
+    validationConfig: watchedValues.validationConfig,
     name: watchedValues.name,
     description: watchedValues.description,
     proxyGroups: parseArray(watchedValues.proxyGroups),
@@ -102,6 +107,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
 
   const submit = (values: FormValues) => {
     const payload: TemplatePayload = {
+      validationConfig: values.validationConfig,
       name: values.name,
       description: values.description,
       proxyGroups: JSON.parse(values.proxyGroups),
@@ -126,7 +132,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
             <DialogTitle>{template ? t('admin:templateForm.titleEdit') : t('admin:templateForm.titleCreate')}</DialogTitle>
             <DialogDescription>{t('admin:templateForm.desc')}</DialogDescription>
           </DialogHeader>
-          <form onSubmit={form.handleSubmit(submit)} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
+          <form noValidate onSubmit={form.handleSubmit(submit)} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
             <Tabs defaultValue="basic" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
               <div className="w-full shrink-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                 <TabsList className="inline-flex h-9 w-auto min-w-full flex-nowrap items-center justify-start gap-1 p-1">
@@ -136,6 +142,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
                   <TabsTrigger className="shrink-0 flex-none whitespace-nowrap px-3 py-1 text-xs sm:text-sm" value="dns">{t('admin:templateForm.tabDns')}</TabsTrigger>
                   <TabsTrigger className="shrink-0 flex-none whitespace-nowrap px-3 py-1 text-xs sm:text-sm" value="override">{t('admin:templateForm.tabOverride')}</TabsTrigger>
                   <TabsTrigger className="shrink-0 flex-none whitespace-nowrap px-3 py-1 text-xs sm:text-sm" value="source">{t('admin:templateForm.tabSource')}</TabsTrigger>
+                  <TabsTrigger className="shrink-0 flex-none whitespace-nowrap px-3 py-1 text-xs sm:text-sm" value="validation">{t('admin:templateAnalysis.title')}</TabsTrigger>
                 </TabsList>
               </div>
               <TabsContent value="basic" className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto">
@@ -170,10 +177,15 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
                   jsonError={form.formState.errors.customInjectJson?.message}
                 />
               </TabsContent>
+              <TabsContent value="validation" className="min-h-0 flex-1 overflow-y-auto">
+                <TemplateValidationEditor value={watchedValues.validationConfig} onChange={(value) => form.setValue('validationConfig', value, { shouldDirty: true, shouldValidate: true })} />
+                {form.formState.errors.validationConfig && <p className="text-xs text-destructive">{t('admin:templateAnalysis.invalidPolicy')}</p>}
+              </TabsContent>
               <TabsContent value="source" className="data-[state=active]:flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <TemplateSourceEditor
                   template={previewTemplate}
                   onChange={(nextPayload) => {
+                    form.setValue('validationConfig', nextPayload.validationConfig ?? {}, { shouldDirty: true, shouldValidate: true });
                     form.setValue('name', nextPayload.name, { shouldDirty: true });
                     if (nextPayload.description !== undefined) form.setValue('description', nextPayload.description ?? '', { shouldDirty: true });
                     form.setValue('proxyGroups', JSON.stringify(nextPayload.proxyGroups, null, 2), { shouldDirty: true, shouldValidate: true });
@@ -187,7 +199,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
                 />
               </TabsContent>
             </Tabs>
-            <DialogFooter className="shrink-0"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('admin:templateForm.cancel')}</Button><Button type="submit" disabled={busy}>{busy ? t('admin:templateForm.saving') : t('admin:templateForm.save')}</Button></DialogFooter>
+            <DialogFooter className="shrink-0"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('admin:templateForm.cancel')}</Button><Button type="button" variant="outline" onClick={() => setPreviewDrawerOpen(true)}>{t('admin:templateAnalysis.validate')}</Button><Button type="submit" disabled={busy}>{busy ? t('admin:templateForm.saving') : t('admin:templateForm.save')}</Button></DialogFooter>
           </form>
         </ResponsiveDialogContent>
       </ResponsiveDialog>
@@ -196,6 +208,7 @@ export function TemplateFormDialog({ open, onOpenChange, template }: { open: boo
         open={previewDrawerOpen}
         onOpenChange={setPreviewDrawerOpen}
         template={previewTemplate}
+        onApply={(next) => form.setValue('ruleSets', JSON.stringify(next.ruleSets, null, 2), { shouldDirty: true, shouldValidate: true })}
         title={t('admin:templateForm.quickTestRender')}
       />
     </>

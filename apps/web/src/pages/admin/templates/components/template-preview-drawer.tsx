@@ -11,20 +11,23 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTemplatePreview, type TemplatePayload, type TemplatePreviewResponse } from '../use-templates';
 import { TemplateCodeEditor } from './template-code-editor';
 import { KernelValidationResult } from './kernel-validation-result';
+import { TemplateAnalysisResult } from './template-analysis-result';
 
-export function TemplatePreviewPanel({ template }: { template: TemplatePayload }) {
+export function TemplatePreviewPanel({ template, onApply }: { template: TemplatePayload; onApply?: (template: TemplatePayload) => void }) {
   const { t } = useTranslation(['admin', 'common']);
   const [format, setFormat] = useState<'clash' | 'singbox'>('clash');
   const preview = useTemplatePreview();
+  const [undo, setUndo] = useState<{ before: TemplatePayload; after: string }>();
   const serializedTemplate = useMemo(() => JSON.stringify(template), [template]);
 
   useEffect(() => {
-    preview.mutate({ format, template });
+    const timer = setTimeout(() => preview.mutate({ format, template }), 350);
+    return () => clearTimeout(timer);
     // 仅以序列化草稿为依赖，字段变化时刷新预览。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format, serializedTemplate]);
 
-  const result = preview.isPending || preview.isError || preview.data?.format !== format ? undefined : preview.data;
+  const result = preview.isPending || preview.isError || preview.data?.requestKey !== JSON.stringify({ format, template }) ? undefined : preview.data;
   const check = result?.kernelCheck;
 
   return (
@@ -49,6 +52,10 @@ export function TemplatePreviewPanel({ template }: { template: TemplatePayload }
       )}
 
       {check && <KernelValidationResult check={check} />}
+      {result && <TemplateAnalysisResult result={result}
+        onApply={onApply ? (next) => { setUndo({ before: structuredClone(template), after: JSON.stringify(next.ruleSets) }); onApply(next); } : undefined}
+        onUndo={onApply && undo && undo.after === JSON.stringify(template.ruleSets) ? () => { onApply(undo.before); setUndo(undefined); } : undefined}
+      />}
 
       <div className="min-h-[340px] min-w-0 flex-1 overflow-hidden rounded-md border bg-background shadow-sm">
         {preview.isPending ? (
@@ -102,12 +109,14 @@ export function TemplatePreviewDrawer({
   open,
   onOpenChange,
   template,
-  title
+  title,
+  onApply
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   template: TemplatePayload | null;
   title?: string;
+  onApply?: (template: TemplatePayload) => void;
 }) {
   const { t } = useTranslation(['admin', 'common']);
   const drawerTitle = title || t('admin:templatePreview.drawerTitle');
@@ -124,7 +133,7 @@ export function TemplatePreviewDrawer({
         </SheetHeader>
         <div className="mt-6 flex min-h-0 flex-1 flex-col">
           {template ? (
-            <TemplatePreviewPanel template={template} />
+            <TemplatePreviewPanel template={template} onApply={onApply} />
           ) : (
             <p className="text-sm text-muted-foreground">{t('admin:templatePreview.selectTemplatePrompt')}</p>
           )}

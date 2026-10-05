@@ -2,6 +2,11 @@ import { IsArray, IsBoolean, IsObject, IsOptional, IsString, MinLength } from 'c
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateTemplateDto {
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true })
+  @IsObject()
+  @IsOptional()
+  validationConfig?: Record<string, unknown>;
+
   @ApiProperty({ example: '家庭分流模板' })
   @IsString()
   @MinLength(1)
