@@ -383,6 +383,11 @@ export function generateRealityKeypair(): { privateKey: string; publicKey: strin
   return { privateKey: b64(privDer), publicKey: b64(pubDer) };
 }
 
+// 显式生成只作用于表单草稿，不改变既有线路的缺省参数或保存行为。
+export function generateRealityParameters(): { privateKey: string; publicKey: string; shortIds: string[] } {
+  return { ...generateRealityKeypair(), shortIds: [randomBytes(8).toString('hex')] };
+}
+
 // 解析 "host:port" 形式的目标地址
 export function parseDest(dest: string): { host: string; port: number } {
   const idx = dest.lastIndexOf(':');

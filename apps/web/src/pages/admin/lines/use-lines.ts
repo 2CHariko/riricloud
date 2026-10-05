@@ -150,8 +150,10 @@ export function useLineMutations() {
   return { create, update, remove, duplicate, testResolve, batchStatus, reorder };
 }
 
-export function useRealityKeypair() {
+export function useRealityParameters() {
   return useMutation({
-    mutationFn: async () => (await api.post<{ privateKey: string; publicKey: string }>('/admin/nodes/reality-keypair')).data
+    gcTime: 0,
+    retry: false,
+    mutationFn: async (signal: AbortSignal) => (await api.post<{ privateKey: string; publicKey: string; shortIds: string[] }>('/admin/nodes/reality-keypair', undefined, { signal })).data
   });
 }

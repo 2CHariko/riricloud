@@ -11,12 +11,12 @@ import { PROTOCOL_LABELS, PROTOCOL_TYPES, type LineFormValues } from './line-for
 import type { ApiCertificate, ProtocolType } from '@/lib/api';
 import type { AdminNode } from '../../nodes/use-nodes';
 
-export function LineInboundFields({ form, nodes, certificates, onProtocolChange, onGenerateKeys, keyPending }: {
+export function LineInboundFields({ form, nodes, certificates, onProtocolChange, onGenerateParameters, parametersPending }: {
   form: UseFormReturn<LineFormValues>;
   nodes: AdminNode[];
   onProtocolChange: (protocol: ProtocolType) => void;
-  onGenerateKeys: () => void;
-  keyPending: boolean;
+  onGenerateParameters: () => void;
+  parametersPending: boolean;
   certificates: ApiCertificate[];
 }) {
   const { t } = useTranslation(['admin']);
@@ -64,7 +64,7 @@ export function LineInboundFields({ form, nodes, certificates, onProtocolChange,
         <section className="space-y-3">
           <h3 className="text-sm font-medium">{t('admin:lineForm.sectionSecurity')}</h3>
           <Separator />
-          <LineSecurityFields form={form} onGenerateKeys={onGenerateKeys} keyPending={keyPending} certificates={certificates} />
+          <LineSecurityFields form={form} onGenerateParameters={onGenerateParameters} parametersPending={parametersPending} certificates={certificates} />
         </section>
       </>}
 

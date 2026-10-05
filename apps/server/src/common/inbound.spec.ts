@@ -1,4 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
+import { createPrivateKey, createPublicKey } from 'node:crypto';
+import { bindManagedConnection } from '../subscription/compilers/managed-connection';
+import { compileMihomoProxy } from '../subscription/compilers/mihomo-proxy';
+import { compileSingboxClient } from '../subscription/compilers/singbox-client';
 import {
   buildClientTls,
   formatAuthUserName,
@@ -11,6 +15,7 @@ import {
   buildServerMultiplex,
   buildSharedListenFields,
   generateRealityKeypair,
+  generateRealityParameters,
   InboundMultiplexConfig,
   normalizeMultiplex,
   normalizeShadowsocksPassword,
@@ -35,6 +40,39 @@ describe('generateRealityKeypair', () => {
       expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(Buffer.from(key, 'base64url').length).toBe(32);
     }
+  });
+});
+
+describe('generateRealityParameters', () => {
+  it('每次生成新的单个 8 字节 Short ID 和匹配的 X25519 密钥对', () => {
+    const batches = Array.from({ length: 4 }, () => generateRealityParameters());
+    for (const parameters of batches) {
+      expect(parameters.shortIds).toHaveLength(1);
+      expect(parameters.shortIds[0]).toMatch(/^[0-9a-f]{16}$/);
+      for (const key of [parameters.privateKey, parameters.publicKey]) {
+        expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        expect(Buffer.from(key, 'base64url')).toHaveLength(32);
+      }
+      const privateKey = createPrivateKey({
+        key: Buffer.concat([Buffer.from('302e020100300506032b656e04220420', 'hex'), Buffer.from(parameters.privateKey, 'base64url')]),
+        format: 'der', type: 'pkcs8'
+      });
+      expect(createPublicKey(privateKey).export({ format: 'jwk' }).x).toBe(parameters.publicKey);
+    }
+    for (const field of ['privateKey', 'publicKey'] as const) expect(new Set(batches.map((batch) => batch[field])).size).toBe(batches.length);
+    expect(new Set(batches.map((batch) => batch.shortIds[0])).size).toBe(batches.length);
+  });
+
+  it('归一化及配置重建保留生成值，Agent 与两种客户端订阅使用相同 Short ID', () => {
+    const parameters = generateRealityParameters();
+    const params = normalizeInboundParams('VLESS', { tls: { mode: 'reality', reality: parameters } });
+    expect(normalizeInboundParams('VLESS', params)).toEqual(params);
+    const inbound = buildServerInbound({ type: 'VLESS', tag: 'reality', listen: '0.0.0.0', port: 443, params, users });
+    expect(inbound).toMatchObject({ tls: { reality: { private_key: parameters.privateKey, short_id: parameters.shortIds } } });
+    const connection = bindManagedConnection({ protocolType: 'VLESS', serverHost: 'example.com', serverPort: 443, params }, { uuid: '12345678-1234-4234-8234-123456789abc', credential: 'password' });
+    expect(compileMihomoProxy(connection, 'reality')).toMatchObject({ 'reality-opts': { 'public-key': parameters.publicKey, 'short-id': parameters.shortIds[0] } });
+    expect(compileSingboxClient(connection, 'reality')).toMatchObject({ tls: { reality: { public_key: parameters.publicKey, short_id: parameters.shortIds[0] } } });
+    expect(JSON.stringify(connection)).not.toContain(parameters.privateKey);
   });
 });
 

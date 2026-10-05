@@ -41,6 +41,18 @@ describe('NodesService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('参数生成接口兼容返回公私钥并增加随机 Short IDs，不落库或触发配置下发', () => {
+    const first = service.realityKeypair();
+    const second = service.realityKeypair();
+    expect(first).toEqual({ privateKey: expect.any(String), publicKey: expect.any(String), shortIds: [expect.stringMatching(/^[0-9a-f]{16}$/)] });
+    expect(second.shortIds).not.toEqual(first.shortIds);
+    expect(second.privateKey).not.toBe(first.privateKey);
+    expect(second.publicKey).not.toBe(first.publicKey);
+    expect(prisma.node.create).not.toHaveBeenCalled();
+    expect(prisma.node.update).not.toHaveBeenCalled();
+    expect(gateway.pushConfigToAll).not.toHaveBeenCalled();
+  });
+
   it('出站线路阻断节点高级覆盖，节点关联响应不返回出站密文', async () => {
     prisma.node.findUnique.mockResolvedValue(nodeWithLines);
     prisma.line.findFirst.mockResolvedValue({ id: 'egress-line' });

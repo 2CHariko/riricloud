@@ -5,7 +5,7 @@ import { AgentService, type UpgradeTaskOptions } from '../agent-gateway/agent.se
 import { BinariesService, normalizeOsArch } from '../binaries/binaries.service';
 import { BinaryResourcesService } from '../binaries/binary-resources.service';
 import type { QueryBinaryDeploymentDto } from '../binaries/dto/query-binary-resource.dto';
-import { generateRealityKeypair } from '../common/inbound';
+import { generateRealityParameters } from '../common/inbound';
 import { formatBinaryVersion } from '../common/binary-version';
 import { generateAgentToken } from '../common/utils';
 import { hashAgentToken } from '../common/agent-token';
@@ -382,7 +382,7 @@ export class NodesService {
   }
 
   realityKeypair() {
-    return generateRealityKeypair();
+    return generateRealityParameters();
   }
 
   private async requireNode(id: string) {

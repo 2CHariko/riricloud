@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentGatewayService } from '../agent-gateway/agent-gateway.service';
 import { LinesService } from './lines.service';
+import { generateRealityParameters, revealInboundSecrets } from '../common/inbound';
 
 describe('LinesService', () => {
   let service: LinesService;
@@ -375,6 +376,19 @@ describe('LinesService', () => {
         tls: { reality: { privateKey: string } }
       };
       expect(parsedUpdatedParams.tls.reality.privateKey).toBeDefined();
+    });
+
+    it('显式生成后保存同时替换三个参数，脱敏详情不回显私钥', async () => {
+      const parameters = generateRealityParameters();
+      prisma.line.findUnique.mockResolvedValue(rawLine);
+      prisma.line.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ ...rawLine, ...data }));
+      const result = await service.update(rawLine.id, { params: { tls: { mode: 'reality', reality: parameters } } });
+      const call = prisma.line.update.mock.calls[0][0] as { data: { paramsJson: string } };
+      const saved = revealInboundSecrets(JSON.parse(call.data.paramsJson));
+      expect(saved).toMatchObject({ tls: { reality: parameters } });
+      expect(result.line.params).toMatchObject({ tls: { reality: { publicKey: parameters.publicKey, shortIds: parameters.shortIds } } });
+      expect(JSON.stringify(result.line.params)).not.toContain(parameters.privateKey);
+      expect(gateway.pushConfigToAll).toHaveBeenCalledTimes(1);
     });
     });
 
