@@ -1,4 +1,32 @@
 const admin = {
+  templateAnalysis: {
+    title: '规则诊断与修复', validate: '验证与修复',
+    policyHelp: '检查策略随模板保存。可逐项关闭或设置严重级别；安全修复只去重和规范等价写法，不改变分流目标与顺序。',
+    scope: '静态诊断不代表网络连通、DNS 无污染或业务解锁。IP、进程与外部规则集只做有限检查；请结合下方内核验证。',
+    levels: { off: '关闭', info: '提示', warning: '警告', error: '错误' },
+    checks: { duplicate: '重复规则', shadow: '域名规则覆盖', catchAll: '兜底后置规则', groups: '策略组与引用', dnsOverride: 'DNS 覆写追踪', dnsRouting: 'DNS 解析路径', broadKeyword: '宽泛关键词', healthCheck: '测速配置', coverage: '检查范围提示' },
+    fixes: { deduplicate: '允许块内完全重复条目去重', aliases: '允许规范等价规则类型' },
+    saveGate: '保存门禁', gates: { off: '仅提示，不阻止保存', error: '存在错误时阻止保存', warning: '存在错误或警告时阻止保存' },
+    gateHelp: '保存门禁检查模板源规则与策略组；高级覆写、动态节点引用和内核结果请在预览中核对。基础结构错误始终拒绝保存。',
+    maxDiagnostics: '最多展示诊断条数', keywordMinLength: '关键词长度警告阈值', maxTestInterval: '测速间隔提示阈值（秒）',
+    ignoredDomains: '覆盖诊断域名例外', ignoredHelp: '每行一个完整域名，仅精确忽略该域名的覆盖提示，不影响实际分流和其他检查。',
+    invalidPolicy: '检查策略格式或数值范围不正确，请核对配置。',
+    details: '查看诊断与规则位置', enabled: '已启用 {{count}} 项检查', empty: '启用的检查中未发现可报告问题。',
+    related: '相关前置规则：{{location}}', targets: '配置目标：{{target}}；前置目标：{{previous}}',
+    truncated: '另有 {{count}} 条诊断未展示，统计仍包含这些条目。',
+    changes: '查看 {{count}} 项安全修复差异', before: '修复前', after: '修复后', apply: '应用安全修复到草稿', undo: '撤销本次修复',
+    reasons: {
+      duplicate: '存在完全相同的规则条目。', shadow: '域名规则被更早的不同目标规则覆盖；请在规则编辑器确认目标或调整优先级。',
+      unreachable: '前面已有兜底规则，本条通常无法命中；请确认是否保留此顺序。', duplicateGroup: '策略组名称重复，请改名并同步引用。',
+      missingTarget: '引用目标在本次预览中不存在，或原始引用会被生成器过滤；请核对节点与策略组。', cycle: '策略组存在循环引用，请移除循环关系。',
+      shortKeyword: '关键词较短，可能匹配无关域名；建议改用明确域名或后缀。', longInterval: '测速间隔超过配置阈值，节点状态更新可能不及时。',
+      httpTest: '测速使用 HTTP；测速成功不代表目标业务可用。', conditional: '此规则涉及运行环境或外部内容，未完成覆盖关系分析。',
+      budget: '已达到静态比较预算，剩余关键词覆盖未检查。', rulesReplaced: '高级覆写替换了生成规则，已另行检查最终规则。',
+      overridden: '该 DNS 字段由高级覆写提供，请查看最终配置确认效果。', emptyObject: '空对象不会清空默认嵌套配置，原字段仍然保留。',
+      emptyFallback: '备用 DNS 列表为空；这不必然错误，请确认解析策略。', bootstrap: 'DNS 遵守路由规则，但未显式配置节点域名解析器，可能出现循环依赖。',
+      sharedResolvers: '未显式区分按域名或直连出口的解析器；请确认是否符合分流需求。'
+    }
+  },
   latencyTest: {
     title: '延迟测试', batchTitle: '全量延迟测试',
     description: '测试当前线路到指定目标的访问延迟，结果供参考，不代表带宽或丢包率。',

@@ -6,6 +6,7 @@ import { api, extractErrorMessage } from '@/lib/api';
 import i18n from '@/i18n/config';
 
 export interface SubscriptionTemplate {
+  validationConfig?: Record<string, unknown>;
   id: string;
   name: string;
   description: string | null;
@@ -19,6 +20,7 @@ export interface SubscriptionTemplate {
 }
 
 export interface TemplatePayload {
+  validationConfig?: Record<string, unknown>;
   name: string;
   description?: string | null;
   proxyGroups: unknown[];
@@ -31,6 +33,14 @@ export interface TemplatePayload {
 
 
 export interface TemplatePreviewResponse {
+  analysis: {
+    diagnostics: Array<{ code: string; reason: string; severity: 'error' | 'warning' | 'info'; location: string; related?: string; value?: string; target?: string; previousTarget?: string }>;
+    counts: { error: number; warning: number; info: number };
+    truncated: number;
+    enabledChecks: string[];
+    scope: 'STATIC';
+  };
+  repair: { template: TemplatePayload; changes: Array<{ location: string; before: unknown; after: unknown }> };
   format: 'clash' | 'singbox';
   content: string;
   stats: { totalNodes: number; matchedNodes: number; proxyGroupsCount: number; rulesCount: number };
@@ -67,8 +77,10 @@ export function useTemplateMutations() {
 
 export function useTemplatePreview() {
   return useMutation({
-    mutationFn: async ({ format, template }: { format: 'clash' | 'singbox'; template: TemplatePayload }) =>
-      (await api.post<TemplatePreviewResponse>('/admin/subscription-templates/preview', { format, template })).data,
+    mutationFn: async ({ format, template }: { format: 'clash' | 'singbox'; template: TemplatePayload }) => ({
+      ...(await api.post<TemplatePreviewResponse>('/admin/subscription-templates/preview', { format, template })).data,
+      requestKey: JSON.stringify({ format, template })
+    }),
     onError: (error: unknown) => toast.error(extractErrorMessage(error, i18n.t('admin:templates.previewFailed')))
   });
 }

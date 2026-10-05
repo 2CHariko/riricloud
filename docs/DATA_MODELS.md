@@ -436,6 +436,7 @@ model SubscriptionTemplate {
   proxyGroupsJson  String   @default("[]")
   ruleSetsJson     String   @default("[]")
   dnsConfigJson    String   @default("{}")
+  validationConfigJson String @default("{}")
   customInjectYaml String?
   customInjectJson String?
   createdAt        DateTime @default(now())
@@ -890,6 +891,8 @@ model HelpArticle {
 `UserLineGrant` 是管理员维护的用户级线路授权关系。绑定/更新订阅接口接收完整 `extraLineIds` 列表，空数组表示清空；授权跨续费、升配、过期和重新购买保留，删除用户订阅时也不清除。订阅线路是套餐匹配线路与额外授权线路的并集；额外线路仍要求 `status=ACTIVE` 且入口、出口节点在线，全局 `publicLinesEnabled=false` 仍会关闭全部线路输出。
 
 ### 3.5 `SubscriptionTemplate` 模板数据
+
+新增 `validationConfigJson String @default("{}")` 保存模板机械诊断策略（迁移 `20261005070000_template_validation_policy`）。API 字段为 `validationConfig` 对象，包含检查严重级别、修复开关、阈值、域名例外与源规则保存门禁；复制模板一并复制，旧记录通过空对象使用默认策略。该字段不参与客户端订阅编译，不改变套餐或节点权限。
 
 `proxyGroupsJson` 与 `ruleSetsJson` 分别保存策略组和分流规则数组；`dnsConfigJson` 使用平台无关的语义结构：`{ enable?, fakeIp?, directDns?: string[], proxyDns?: string[], ipv6? }`。启动 bootstrap/seed 会扫描存量记录，将旧的 Clash `enhanced-mode`、`nameserver`、`fallback` 等字段转换为该结构；不改变 SQLite 表结构。`customInjectYaml` 与 `customInjectJson` 是客户端配置顶层对象覆写。
 

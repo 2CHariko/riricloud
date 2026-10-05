@@ -366,6 +366,7 @@ model SubscriptionTemplate {
   proxyGroupsJson  String   @default("[]")
   ruleSetsJson     String   @default("[]")
   dnsConfigJson    String   @default("{}")
+  validationConfigJson String @default("{}")
   customInjectYaml String?
   customInjectJson String?
   createdAt        DateTime @default(now())

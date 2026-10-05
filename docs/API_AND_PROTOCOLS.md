@@ -225,11 +225,17 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 - `GET /admin/subscription-templates/:id`：查询模板详情。⭐
 - `POST /admin/subscription-templates`：创建模板。⭐ 请求含 `proxyGroups?`（支持 `all` 动态节点展开、`DIRECT`/`REJECT` 与策略组引用）、`ruleSets?`、`dnsConfig?`、`customInjectYaml?`、`customInjectJson?`、`isDefault?`。
 - `PATCH /admin/subscription-templates/:id`：部分更新模板；YAML/JSON 覆写在服务端校验语法。⭐
+  - 创建、更新、读取、复制和预览均支持 `validationConfig` 对象，独立持久化且不注入客户端配置。`checks` 中 `duplicate/shadow/catchAll/groups/dnsOverride/dnsRouting/broadKeyword/healthCheck/coverage` 可分别设 `off|info|warning|error`；默认 duplicate/healthCheck/coverage 为 info、groups 为 error，其余 warning。
+  - `fixes:{deduplicate?:boolean,aliases?:boolean}` 默认均 true，仅允许生成修复候选。`ignoredDomains` 为最多 500 个完整域名的精确覆盖诊断例外；`maxDiagnostics` 1–1000 默认 200；`keywordMinLength` 1–32 默认 5；`maxTestInterval` 30–86400 秒默认 600。
+  - `saveGate:off|error|warning` 默认 off；开启时按**模板源**诊断计数拒绝保存（warning 包括 error），HTTP 400 返回 analysis。PATCH 先合并存量模板与策略；基础结构错误和未知策略/规则类型始终拒绝。最终覆写、动态节点引用和内核结果不属于源规则保存门禁，须查看预览。
 - `POST /admin/subscription-templates/preview`：请求 `{ format:'clash'|'singbox',template:{proxyGroups?,ruleSets?,dnsConfig?,customInjectYaml?,customInjectJson?} }`；Clash 默认只执行 Mihomo 验证，Sing-box JSON 执行明确兼容验证，不再无条件同时生成和校验两种格式。响应 `{format,content,stats,warnings,kernelCheck}`；kernelCheck 含 engine/engineVersion、status=PASSED/FAILED/UNAVAILABLE/UNSUPPORTED/EXTERNAL_RESOURCES_REQUIRED、executed、scope=FULL/PARTIAL、diagnostics。内核缺失不能 passed，缺 GeoIP/provider/本地证书等依赖明确报资源要求，不通过替换规则假装完整配置已验证。旧 singboxCheck/mihomoCheck 字段删除。
   - 兼容新增 `resourceRequirements?: [{kind,location,state,reasonCode,actionCode,references}]`、`resourceRequirementsTruncated?: number`。kind 为 `GEOIP/GEOSITE/RULE_PROVIDER/PROXY_PROVIDER/RULE_SET/CERTIFICATE/EXTERNAL_FILE/REMOTE_RESOURCE`；state 为 `AVAILABLE/MISSING/UNREADABLE/INVALID/UNSUPPORTED/REMOTE_DISABLED`；actionCode 为 `NONE/PREPARE_RESOURCE/FIX_RESOURCE/CHECK_CLIENT`。location 仅包含结构位置（如 `rules[0]`、`rule-providers[0]`），不返回动态资源名、URL、凭据或宿主路径；同一文件依赖去重并记录引用次数，最多返回 50 项，截断不影响全量阻断判断。
   - `diagnostics: string[]` 保持兼容：解析错误 `INVALID_CONFIG`；内核不可用 `KERNEL_UNAVAILABLE`；原生拒绝 `NATIVE_CONFIG_CHECK_FAILED`；启动/执行环境故障 `KERNEL_EXECUTION_UNAVAILABLE`；超时 `KERNEL_TIMEOUT`；取消 `KERNEL_CANCELED`；暂存失败 `RESOURCE_PREPARATION_FAILED`。不返回原始内核输出。只有实际启动的配置检查才设置 executed=true；PASSED + executed=true + FULL 只表示原生配置检查成功，不是节点连通性实测。
   - 资源分析按所选内核识别规则、DNS 等依赖；Mihomo 支持固定地理资源、inline provider 和受控 domain/ipcidr YAML/text 本地 provider；Sing-box 支持 inline rule-set。缺失/损坏资源、远程 provider、自定义地理下载源及不支持的本地文件保持 EXTERNAL_RESOURCES_REQUIRED，且 executed=false；预览阶段不下载资源、不改写业务规则、不因另一内核能力而回退。旧响应缺少新增字段时前端仍以现有字段展示。
 - `POST /admin/subscription-templates/:id/duplicate`：复制模板并命名为 `${name} (副本)`；副本重置 `isDefault=false` 与 `isBuiltin=false`。⭐
+  - 预览响应兼容新增 `analysis:{scope:'STATIC',diagnostics:[{code,reason,severity,location,related?,value?,target?,previousTarget?}],counts:{error,warning,info},truncated,enabledChecks,analyzedRules}` 和 `repair:{template,changes:[{location,before,after}]}`。统计包含截断条目，位置区分模板源与 effective 最终配置；诊断与原生内核验证分别展示，不代表连通性、DNS 无污染或业务解锁。
+  - 修复只规范已有编译器支持的等价类型别名、删除同一规则块内完全相同条目，不改顺序/目标/DNS。预览无落库副作用且 content 仍为原草稿输出，应用候选到编辑器后重新验证，正常保存才写库，可撤销。
+  - 资源边界：最多 500 个策略组、10000 个规则块、50000 个规则值，关键词覆盖最多 200 万次比较，超限明确提示范围。精确域名/后缀/关键词按顺序分析；进程、IP、GeoIP/Geosite、远程规则集不静态断言完全覆盖。Clash 覆写 rules 另行分析；复杂逻辑与 Sing-box 覆写 route 只做有限分析并保留内核验证。预览使用当前可用线路，空时使用示例节点，引用诊断属于本次上下文。
 - `DELETE /admin/subscription-templates/:id`：删除非默认、非内嵌且未被套餐使用的模板；内嵌默认模板只能通过 `PATCH` 修改，删除返回 `409`。⭐
 
 #### 订阅管控
