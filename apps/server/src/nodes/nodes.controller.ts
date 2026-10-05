@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -27,6 +27,7 @@ export class NodesController {
 
   // 注意：/:id 之前注册，避免 reality-keypair 被当作节点 id
   @Post('reality-keypair')
+  @Header('Cache-Control', 'no-store')
   generateRealityKeypair() {
     return this.nodesService.realityKeypair();
   }

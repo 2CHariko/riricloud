@@ -107,7 +107,9 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 - `POST /admin/nodes/:id/restart-agent`：请求 Agent 自身平滑重启。⭐ 返回 `{ taskId, requested }`，Agent 在回执后使用原始命令行参数重新启动。
 - `GET /admin/nodes/:id/tasks`：分页查询该节点的升级分发任务（`page`/`pageSize`/`status`），行内含资源版本摘要与 `previousAssetId`；配合任务重试/回滚接口使用。⭐ 自定义 URL 升级（`POST /admin/nodes/:id/upgrade` 传 `url`+`sha256`）同样落库为任务行（`assetId`/`releaseId` 为空，版本摘要回退任务 payload 中的 `version`），获得部署历史、重试与回滚能力。
 - `GET /admin/nodes/:id/tasks/:taskId`：查询探针/升级任务状态。⭐ 返回 `{ taskId, status: "PENDING"|"QUEUED"|"COMPLETED", success?, message? }`；任务结果由 Master 进程内短期保存，不引入外部队列。持久化的升级分发任务另见 §2.4 的重试 `POST /admin/nodes/:id/tasks/:taskId/retry`（FAILED/COMPLETED 可重试）与回滚 `POST /admin/nodes/:id/tasks/:taskId/rollback`（存在 `previousAssetId` 时按上一版本资源重新下发，`operation=ROLLBACK`）。
-- `POST /admin/nodes/reality-keypair`：生成 X25519 Reality密钥对（32 字节裸密钥 base64url，等价 `sing-box generate reality-keypair`；不落库，供线路向导「生成密钥对」按钮使用）。⭐ 响应 `{ privateKey, publicKey }`。
+- `POST /admin/nodes/reality-keypair`：管理员生成一套新的 Reality 参数：X25519 密钥对（32 字节裸密钥 base64url，等价 `sing-box generate reality-keypair`）与单个密码学随机 Short ID（8 字节，16 位小写十六进制）。⭐ 响应 `{ privateKey, publicKey, shortIds: string[] }`，保留接口地址与原公私钥字段，新增 `shortIds` 向后兼容；响应 `Cache-Control: no-store`。本接口不落库、不下发 Agent 配置，供线路向导「生成参数」按钮使用；前端同时替换三个草稿字段，保存线路后才持久化并推送。已有线路保存新参数后，客户端需更新订阅；取消或生成失败保留原草稿。不隐式轮换未点击生成按钮的已有线路参数。
+
+  E2E 联动评估（2026-10-05）：已检索 `scripts/dev-e2e*` 与现有测试/fixture；联调创建线路直接提交 Reality 参数，不调用此生成接口，原固定 Short ID 夹具和缺省密钥生成语义保持，启动与 Agent 协议无需调整。新增回归覆盖生成参数不落库/不推送、显式保存替换且详情隐藏私钥，以及生成值在 Agent、Mihomo/Sing-box 客户端编译中的一致性。
 
 #### 二进制分发中心
 - `GET /downloads/agent`：公开返回 Agent 二进制流。⭐ 安装器通过 `User-Agent: riri-agent-installer/<os>-<arch>` 声明目标平台，并通过 `X-Agent-Token: <AGENT_TOKEN>` 鉴权；缺省目标为 `linux-amd64`。该端点无需 JWT，但必须提供 Header 凭据，不接受 query token；响应设置 `Cache-Control: no-store` 与 `Referrer-Policy: no-referrer`。

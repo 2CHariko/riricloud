@@ -13,10 +13,10 @@ import { getAlpnOptions, MANUAL_CERTIFICATE_ID, type LineFormValues } from './li
 
 const LOCAL_PROXY_PROTOCOLS = ['MIXED', 'SOCKS', 'HTTP'];
 
-export function LineSecurityFields({ form, onGenerateKeys, keyPending, certificates }: {
+export function LineSecurityFields({ form, onGenerateParameters, parametersPending, certificates }: {
   form: UseFormReturn<LineFormValues>;
-  onGenerateKeys: () => void;
-  keyPending: boolean;
+  onGenerateParameters: () => void;
+  parametersPending: boolean;
   certificates: ApiCertificate[];
 }) {
   const { t } = useTranslation(['admin']);
@@ -115,8 +115,9 @@ export function LineSecurityFields({ form, onGenerateKeys, keyPending, certifica
       {mode === 'reality' && <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div><p className="text-sm font-medium">{t('admin:lineForm.realityParamsTitle')}</p><p className="text-xs text-muted-foreground">{t('admin:lineForm.realityParamsDesc')}</p></div>
-          {protocolType === 'VLESS' && <Button type="button" variant="outline" size="sm" onClick={onGenerateKeys} disabled={keyPending}><KeyRound />{t('admin:lineForm.generateKeypair')}</Button>}
+          {protocolType === 'VLESS' && <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={onGenerateParameters} disabled={parametersPending}><KeyRound />{t('admin:lineForm.generateParameters')}</Button>}
         </div>
+        {protocolType === 'VLESS' && <p className="text-xs text-muted-foreground">{t('admin:lineForm.generateParametersHint')}</p>}
         <FieldGrid>
           <TextField form={form} name="realityDest" label={t('admin:lineForm.realityDest')} placeholder={t('admin:lineForm.realityDestPlaceholder')} />
           <TextField form={form} name="realityServerNames" label={t('admin:lineForm.realityServerNames')} placeholder={t('admin:lineForm.realityServerNamesPlaceholder')} />

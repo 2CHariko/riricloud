@@ -16,7 +16,8 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { AdminNode } from '../../nodes/use-nodes';
 import type { AdminLine, LinePayload } from '../use-lines';
-import { useRealityKeypair, useLineOptions } from '../use-lines';
+import { useLineOptions } from '../use-lines';
+import { useGenerateRealityParameters } from './use-reality-parameters';
 import { LineAdvancedFields } from './line-advanced-fields';
 import { LineInboundFields } from './line-inbound-fields';
 import { defaultLineFormValues, lineFormSchema, lineToFormValues, newLineFormValues, toLinePayload, type LineFormValues } from './line-form-schema';
@@ -48,7 +49,11 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
     resolver: zodResolver(lineFormSchema),
     defaultValues: defaultLineFormValues()
   });
-  const realityKeypair = useRealityKeypair();
+  const realityParameters = useGenerateRealityParameters(form, open, line?.id ?? `create-${initialUpstreamNode?.id ?? ''}-${createExternal}`);
+  const changeOpen = (nextOpen: boolean) => {
+    if (!nextOpen) realityParameters.cancel();
+    onOpenChange(nextOpen);
+  };
   const options = useLineOptions(open);
 
   useFormResetOnKey({
@@ -76,6 +81,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
   });
 
   const changeProtocol = (protocolType: ProtocolType) => {
+    realityParameters.cancel();
     const current = form.getValues();
     const next = defaultLineFormValues(protocolType);
     form.reset({
@@ -140,17 +146,8 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
   };
   const changeType = (type: LineFormValues['type']) => requestTopologyChange({ type, relayMode: form.getValues('relayMode') }, () => applyType(type));
 
-  const generateKeys = () => {
-    realityKeypair.mutate(undefined, {
-      onSuccess: (keys) => {
-        form.setValue('realityPrivateKey', keys.privateKey, { shouldDirty: true });
-        form.setValue('realityPublicKey', keys.publicKey, { shouldDirty: true });
-        form.setValue('tlsMode', 'reality', { shouldDirty: true });
-      }
-    });
-  };
-
   const submit = (values: LineFormValues) => {
+    if (realityParameters.isPending) return;
     if (values.type === 'EXTERNAL') { setConfirmPayload(toLinePayload(values)); return; }
     if (values.tlsMode === 'reality' && !values.realityPrivateKey.trim() && !line && values.realityPublicKey.trim()) {
       form.setError('realityPrivateKey', { message: t('admin:lineForm.realityKeyRequired') });
@@ -161,7 +158,7 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
   };
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+    <ResponsiveDialog open={open} onOpenChange={changeOpen}>
       <ResponsiveDialogContent size="wide">
         <DialogHeader>
           <DialogTitle>{line ? t('admin:lines.editLine') : t('admin:lines.createLine')}</DialogTitle>
@@ -182,13 +179,13 @@ export function LineFormDialog({ open, onOpenChange, line, nodes, lines, certifi
                 <TabsTrigger value="inbound">{t('admin:lineForm.tabInbound')}</TabsTrigger>
                 <TabsTrigger value="advanced">{t('admin:lineForm.tabAdvanced')}</TabsTrigger>
               </TabsList>
-              <TabsContent value="inbound" className="mt-4"><LineInboundFields form={form} nodes={nodes} certificates={certificates} onProtocolChange={changeProtocol} onGenerateKeys={generateKeys} keyPending={realityKeypair.isPending} /></TabsContent>
+              <TabsContent value="inbound" className="mt-4"><LineInboundFields form={form} nodes={nodes} certificates={certificates} onProtocolChange={changeProtocol} onGenerateParameters={realityParameters.generate} parametersPending={realityParameters.isPending || pending} /></TabsContent>
               <TabsContent value="advanced" className="mt-4"><LineAdvancedFields form={form} nodes={nodes} lines={options.data?.data ?? []} currentLineId={line?.id} onTypeChange={changeType} onRelayModeChange={changeRelayMode} /></TabsContent>
             </Tabs>}
             </>}
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common:actions.cancel')}</Button>
-              <Button type="submit" disabled={pending || !ready}>{pending ? t('common:actions.saving') : t('admin:lineForm.saveLine')}</Button>
+              <Button type="button" variant="outline" onClick={() => changeOpen(false)}>{t('common:actions.cancel')}</Button>
+              <Button type="submit" disabled={pending || !ready || realityParameters.isPending}>{pending ? t('common:actions.saving') : t('admin:lineForm.saveLine')}</Button>
             </DialogFooter>
           </form>
         </Form>
