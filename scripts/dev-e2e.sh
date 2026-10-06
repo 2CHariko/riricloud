@@ -8,7 +8,7 @@
 #   NODE_PORT=9443 USE_MASTER_LOCAL=0 bash scripts/dev-e2e.sh # 自定义独立节点端口
 #   AGENT_TOKEN=xxx bash scripts/dev-e2e.sh  # 复用既有节点 Token（跳过自动建节点）
 #
-# 环境变量：SERVER_URL / SERVER_PORT / STATS_API_LISTEN / CLASH_API_LISTEN / WEB_URL / ADMIN_EMAIL / ADMIN_PASSWORD / SERVER_ENV_FILE / E2E_DATABASE_URL / NODE_NAME / NODE_HOST / NODE_PORT / USE_MASTER_LOCAL / E2E_SYNC_RESOURCES
+# 环境变量：SERVER_URL / SERVER_PORT / STATS_API_LISTEN / CLASH_API_LISTEN / WEB_URL / ADMIN_EMAIL / ADMIN_PASSWORD / SERVER_ENV_FILE / E2E_DATABASE_URL / NODE_NAME / NODE_HOST / NODE_PORT / USE_MASTER_LOCAL / E2E_SYNC_RESOURCES / E2E_SERVICE_PORT_START / E2E_SERVICE_PORT_SCAN_LIMIT / E2E_KERNEL_START_ATTEMPTS
 # 联调端口：主控端默认 30800（避开 Windows 保留/动态端口区间），实际使用端口写入 .cache/dev-e2e-server-port 供后续运行复用
 # 联调数据库：默认使用 apps/server/prisma/dev-e2e.db，避免与手动启动的 3000 端口主控共享 SQLite 写锁；可通过 E2E_DATABASE_URL 显式改回其他 SQLite URL
 # Agent 版本默认取 apps/agent/VERSION；E2E_AGENT_VERSION 或 E2E_RESOURCE_VERSION 覆盖该版本，两者同时指定须相同
@@ -47,6 +47,13 @@ SERVER_URL_OVERRIDE="${SERVER_URL:-}"
 SERVER_URL="${SERVER_URL:-http://localhost:30800}"
 WEB_URL="${WEB_URL:-http://localhost:5173}"
 SERVER_ENV_FILE="${SERVER_ENV_FILE:-$ROOT/apps/server/.env}"
+# 只有脚本默认专用库允许调整演示线路；外部 Master、指定凭据/数据库保持原契约。
+E2E_MANAGED_PORTS=0
+if [ -z "${E2E_DATABASE_URL:-}" ] && [ -z "${DATABASE_URL:-}" ] \
+  && [ -z "$SERVER_URL_OVERRIDE" ] && [ -z "${AGENT_TOKEN:-}" ] \
+  && { [ -z "${NODE_HOST:-}" ] || [ "${NODE_HOST:-}" = "127.0.0.1" ]; }; then
+  E2E_MANAGED_PORTS=1
+fi
 # 不读取 apps/server/.env 中的 DATABASE_URL 作为默认值：该文件通常指向 dev.db，
 # 而手动启动的开发主控可能正持有该文件的 WAL 写锁。显式 DATABASE_URL/E2E_DATABASE_URL
 E2E_DATABASE_URL="$(node apps/server/prisma/sqlite-url.js "${E2E_DATABASE_URL:-${DATABASE_URL:-file:./dev-e2e.db}}" "$ROOT/apps/server/prisma")" || { printf '%s\n' '[dev-e2e] 主库 SQLite URL 无效' >&2; exit 1; }
@@ -61,6 +68,7 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-${SEED_ADMIN_PASSWORD:-$(read_dotenv_value "$S
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-RiriCloud-Admin-2026!}"
 NODE_NAME="${NODE_NAME:-local-e2e}"
 NODE_HOST="${NODE_HOST:-127.0.0.1}"
+NODE_PORT_OVERRIDE="${NODE_PORT:-}"
 NODE_PORT="${NODE_PORT:-8443}"
 USE_MASTER_LOCAL="${USE_MASTER_LOCAL:-1}"
 E2E_SYNC_RESOURCES="${E2E_SYNC_RESOURCES:-1}"
@@ -252,6 +260,15 @@ pick_server_port() {
     port=$((port + 1))
   done
   return 1
+}
+
+prepare_line_ports() {
+  local args=(--url "$SERVER_URL" --node "$NODE_ID" --line "$LINE_ID"
+    --start "${E2E_SERVICE_PORT_START:-30000}" --limit "${E2E_SERVICE_PORT_SCAN_LIMIT:-1000}")
+  [ -n "$NODE_PORT_OVERRIDE" ] && args+=(--fixed "$NODE_PORT_OVERRIDE")
+  [ -n "${1:-}" ] && args+=(--rejected "$1")
+  NODE_PORT="$(RIRICLOUD_ADMIN_COOKIE_FILE="$COOKIE_JAR" node scripts/dev-e2e-ports.mjs prepare "${args[@]}")" \
+    || die "联调线路端口检查失败（未修改非联调线路），请查看上方诊断"
 }
 
 singbox_binary_works() {
@@ -620,6 +637,11 @@ else
     fi
     say "复用 VLESS Reality 线路（端口 $NODE_PORT）"
   else
+    if [ "$E2E_MANAGED_PORTS" = "1" ]; then
+      PORT_ARGS=(--port "$NODE_PORT" --start "${E2E_SERVICE_PORT_START:-30000}" --limit "${E2E_SERVICE_PORT_SCAN_LIMIT:-1000}")
+      [ -n "$NODE_PORT_OVERRIDE" ] && PORT_ARGS+=(--fixed "$NODE_PORT_OVERRIDE")
+      NODE_PORT="$(node scripts/dev-e2e-ports.mjs pick "${PORT_ARGS[@]}")" || die "联调线路端口不可用"
+    fi
     say "创建 VLESS Reality 线路（端口 $NODE_PORT）…"
     LINE_PARAMS='{"flow":"xtls-rprx-vision","transport":{"type":"tcp"},"tls":{"enabled":true,"mode":"reality","serverName":"www.apple.com","reality":{"dest":"www.apple.com:443","serverNames":["www.apple.com"],"shortIds":["0123456789abcdef"]}}}'
     LINE_NAME="$(jsonquote "$NODE_NAME")"
@@ -655,34 +677,55 @@ if [ "$E2E_SYNC_RESOURCES" = "1" ]; then
 fi
 
 MASTER_WS_URL="$(node -e 'const url = new URL("/ws/agent", process.argv[1]); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; console.log(url.toString())' "$SERVER_URL")"
-say "启动 Agent（内核：$(basename "$SINGBOX_BIN")，日志：$LOG_DIR/agent.log）…"
-(
-  RIRICLOUD_NON_INTERACTIVE=1 \
-  AGENT_TOKEN="$AGENT_TOKEN" \
-    MASTER_WS_URL="$MASTER_WS_URL" \
-    SINGBOX_BINARY_PATH="$SINGBOX_BIN" \
-    SINGBOX_CONFIG_PATH="$SINGBOX_CONF_DIR/config.json" \
-    "$AGENT_BIN" >"$LOG_DIR/agent.log" 2>&1
-) &
-AGENT_PID=$!
-
-# 等待 Agent 鉴权与内核拉起（Windows 下首次运行内核可能被杀软拦截，已由退避重试兜底）
+if [ "$E2E_MANAGED_PORTS" = "1" ]; then
+  say "检查本机 E2E 直连与盲转 TCP/UDP 监听端口…"
+  prepare_line_ports
+fi
 KERNEL_UP=0
-for _ in $(seq 1 40); do
-  if grep -q "sing-box started" "$LOG_DIR/agent.log" 2>/dev/null; then KERNEL_UP=1; break; fi
-  kill -0 "$AGENT_PID" 2>/dev/null || break
-  sleep 1
+KERNEL_ATTEMPTS="${E2E_KERNEL_START_ATTEMPTS:-3}"
+case "$KERNEL_ATTEMPTS" in ''|*[!0-9]*) die "E2E_KERNEL_START_ATTEMPTS 必须为 1–10 的整数" ;; esac
+[ "$KERNEL_ATTEMPTS" -ge 1 ] && [ "$KERNEL_ATTEMPTS" -le 10 ] || die "E2E_KERNEL_START_ATTEMPTS 必须为 1–10 的整数"
+for attempt in $(seq 1 "$KERNEL_ATTEMPTS"); do
+  say "启动 Agent（内核：$(basename "$SINGBOX_BIN")，日志：$LOG_DIR/agent.log）…"
+  (
+    RIRICLOUD_NON_INTERACTIVE=1 \
+      AGENT_TOKEN="$AGENT_TOKEN" MASTER_WS_URL="$MASTER_WS_URL" \
+      SINGBOX_BINARY_PATH="$SINGBOX_BIN" SINGBOX_CONFIG_PATH="$SINGBOX_CONF_DIR/config.json" \
+      "$AGENT_BIN" >"$LOG_DIR/agent.log" 2>&1
+  ) &
+  AGENT_PID=$!
+  KERNEL_STATE="WAIT"
+  FAILED_PORT=""
+  for _ in $(seq 1 40); do
+    kill -0 "$AGENT_PID" 2>/dev/null || { KERNEL_STATE="EXITED"; break; }
+    read -r KERNEL_STATE FAILED_PORT <<<"$(node scripts/dev-e2e-kernel.mjs "$LOG_DIR/agent.log" "$SINGBOX_CONF_DIR/config.json")"
+    case "$KERNEL_STATE" in
+      READY) KERNEL_UP=1; break ;;
+      BIND_CONFLICT|FAILED) break ;;
+    esac
+    sleep 1
+  done
+  [ "$KERNEL_UP" = "1" ] && break
+  if [ "$KERNEL_STATE" = "BIND_CONFLICT" ] && [ "$E2E_MANAGED_PORTS" = "1" ] && [ "$attempt" -lt "$KERNEL_ATTEMPTS" ]; then
+    # 预检与真实绑定之间仍有竞态：只停止本次 Agent，再校正明确失败的联调端口。
+    say "内核端口 $FAILED_PORT 绑定失败，重新分配后重试（$attempt/$KERNEL_ATTEMPTS）"
+    kill_process_tree "$AGENT_PID"
+    wait "$AGENT_PID" 2>/dev/null || true
+    AGENT_PID=""
+    # 与首次启动共用离线等待：由 Master 正常扫描收敛，不写库伪造 OFFLINE。
+    prepare_line_ports "$FAILED_PORT"
+    continue
+  fi
+  tail -n 30 "$LOG_DIR/agent.log" >&2 || true
+  die "内核未就绪（$KERNEL_STATE）：请检查 $LOG_DIR/agent.log"
 done
+[ "$KERNEL_UP" = "1" ] || die "内核启动重试耗尽"
 
 say "---------------- 就绪 ----------------"
 say "Web 面板     ：$WEB_URL（admin@riricloud.local / RiriCloud-Admin-2026!）"
 say "节点状态     ：面板「节点管理」页观察在线状态与遥测"
 say "内核监听     ：$NODE_HOST:$NODE_PORT（config：$SINGBOX_CONF_DIR/config.json）"
-if [ "$KERNEL_UP" = "1" ]; then
-  say "内核状态     ：已拉起 ✔"
-else
-  say "内核状态     ：暂未拉起（继续重试中，详见 $LOG_DIR/agent.log）"
-fi
+say "内核状态     ：本次内核稳定存活，管理 API 与 TCP 入站可达 ✔"
 say "跟踪 Agent 日志中，Ctrl+C 退出并回收 Agent 进程…"
 say "--------------------------------------"
 
