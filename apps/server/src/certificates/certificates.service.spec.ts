@@ -162,7 +162,7 @@ describe('手动证书生命周期与轻量 E2E', () => {
     const { certificate } = await create();
     const target = await bind(certificate.id, { name: '目标线路', entryNodeId: 'landing' });
     const bridge = await bind(certificate.id, { name: '桥接线路', certificateId: null, type: 'RELAY', relayMode: 'TARGET_LINE', targetLineId: target.id, status: 'DISABLED' });
-    await bind(certificate.id, { name: '双重关联', type: 'RELAY', relayMode: 'TARGET_LINE', targetLineId: target.id });
+    const both = await bind(certificate.id, { name: '双重关联', type: 'RELAY', relayMode: 'TARGET_LINE', targetLineId: target.id });
     const list = (await service.list({ association: 'linked' })).data[0];
     expect(list).toMatchObject({ lineCount: 2, directLineCount: 2, inheritedLineCount: 1, associatedLineCount: 3 });
     const detail = await request('/' + certificate.id + '/lines?search=桥接&lineStatus=DISABLED&relation=inherited&pageSize=1');
@@ -171,6 +171,7 @@ describe('手动证书生命周期与轻量 E2E', () => {
     expect(body.total).toBe(1);
     expect(body.data[0]).toMatchObject({ id: bridge.id, inherited: true, type: 'RELAY', targetLine: { id: target.id, name: '目标线路' }, hostingNodes: [{ id: 'landing', name: '落地' }] });
     expect(JSON.stringify(body)).not.toMatch(/PRIVATE KEY|agentToken|paramsJson/);
+    expect((await service.associatedLines(certificate.id, {})).data.find(row => row.id === both.id)?.hostingNodes).toEqual([{ id: 'entry', name: '入口' }, { id: 'landing', name: '落地' }]);
     expect((await request('/' + certificate.id + '/lines?lineStatus=bad')).status).toBe(400);
     expect((await service.associatedLines(certificate.id, { page: 2, pageSize: 2 })).data).toHaveLength(1);
   });

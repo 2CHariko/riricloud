@@ -108,7 +108,7 @@ export class CertificateBindingsService {
         serverNames.push(protocolRelayServerName(line));
       if (own && line.targetLine?.certificateId === id)
         serverNames.push(bridgeServerName(line.targetLine, line));
-      const hostingNodeIds = certificateHostingNodes(source);
+      const hostingNodeIds = [...new Set([...certificateHostingNodes(source), ...(own && line.targetLine?.certificateId === id ? certificateHostingNodes(line.targetLine) : [])])];
       let validationError: string | null = null;
       try {
         serverNames.forEach(name => assertCertificateUsable(pem, name));
@@ -116,7 +116,7 @@ export class CertificateBindingsService {
       catch (error) {
         validationError = error instanceof Error ? error.message : '证书不可用于此线路';
       }
-      const candidates = own ? [line.entryNode, line.landingNode] : [line.targetLine?.entryNode];
+      const candidates = own ? [line.entryNode, line.landingNode, line.targetLine?.entryNode] : [line.targetLine?.entryNode];
       const hostingNodes = hostingNodeIds.map(id => candidates.find(node => node?.id === id)).filter((node): node is NonNullable<typeof node> => Boolean(node)).map(node => ({ id: node.id, name: node.name }));
       return { id: line.id, name: line.name, type: line.type, relayMode: line.relayMode, targetLine: line.targetLine ? { id: line.targetLine.id, name: line.targetLine.name } : null, protocolType: line.protocolType, status: line.status, inherited: !own, serverName, serverNames, matched: serverNames.every(name => certificateMatchesHost(pem, name)), validationError, entryNode: line.entryNode ? { id: line.entryNode.id, name: line.entryNode.name } : null, landingNode: line.landingNode ? { id: line.landingNode.id, name: line.landingNode.name } : null, hostingNodeId: hostingNodeIds[0] ?? null, hostingNodeIds, hostingNodes, nodeIds: [line.entryNodeId, line.landingNodeId].filter((id): id is string => Boolean(id)) };
     });

@@ -39,3 +39,5 @@ archived_at: "2026-10-07"
 本环境不执行 Antigravity 专属视觉走查。联调启动和 Agent 契约不变，无需修改 scripts/dev-e2e* 夹具，PR 自查明确记录。
 
 最终验证：Windows Git Bash + 原生 Node/Go，pnpm gate 全绿；Server 974项通过、55项原生客户端条件跳过；Web类型/lint/build及Agent vet/gofmt/test/build通过。前端/E2E脚本43项通过、1项缺少显式原生二进制环境变量而跳过；证书关联真实SQLite/Nest HTTP回归通过。详情关联入口及SNI展示最终增补后复跑Web门禁及轻量回归通过。保留Master 0.9.16/Agent现行版本，不改数据库或新增依赖。
+
+合并自查补充：同一桥接线路直接绑定与目标证书相同，影响数去重归直接绑定，但实际承载节点取入口与目标节点并集；回归验证两端名称均完整返回。

@@ -55,7 +55,7 @@ export function CertificateDetailDialog({ open, onOpenChange, certificateId }: {
             <span>{t('admin:certificateManagement.chainLength')}: {detail.data.chainLength}</span>
             <span className="break-all sm:col-span-2">{t('admin:certificateManagement.fingerprint')}: {detail.data.fingerprint256}</span>
             <span>{t('admin:certificates.labelStatus')}{statusLabels[detail.data.status]}</span>
-            <span><Button variant="link" className="h-auto p-0" onClick={() => setTab('lines')}>{t('admin:certificateManagement.totalLines', { count: detail.data.associatedLineCount ?? detail.data.lineCount })}</Button><p className="text-xs text-muted-foreground">{t('admin:certificateManagement.associationCounts', { direct: detail.data.directLineCount ?? detail.data.lineCount, inherited: detail.data.inheritedLineCount ?? 0 })}</p></span>
+            <div><Button variant="link" className="h-auto p-0" onClick={() => setTab('lines')}>{t('admin:certificateManagement.totalLines', { count: detail.data.associatedLineCount ?? detail.data.lineCount })}</Button><p className="text-xs text-muted-foreground">{t('admin:certificateManagement.associationCounts', { direct: detail.data.directLineCount ?? detail.data.lineCount, inherited: detail.data.inheritedLineCount ?? 0 })}</p></div>
             <span>{t('admin:certificates.labelIssuer')}{detail.data.issuer}</span>
             <span>{t('admin:certificates.labelSerial')}{detail.data.serialNumber}</span>
             <span>{t('admin:certificates.labelValidFrom')}{formatDate(detail.data.validFrom)}</span>
