@@ -1,3 +1,5 @@
+import { useCertificateSummary } from '@/pages/admin/certificates/use-certificates';
+import { Badge } from '@/components/ui/badge';
 import { Link, NavLink } from 'react-router-dom';
 import { useCurrentUser } from '@/lib/current-user';
 import { Activity, BookOpen, Cloud, FileText, GitBranch, Headphones, KeyRound, LayoutTemplate, Megaphone, Network, Package, Server, Settings, ShoppingBag, Users, WalletCards, Wallet, Ticket, Binary, ScrollText, Waypoints, Share2 } from 'lucide-react';
@@ -27,6 +29,7 @@ export function AppSidebar() {
   const user = useAuthStore((s) => s.user);
   const sessionQuery = useCurrentUser();
   const isAdmin = (sessionQuery.data ?? user)?.role === 'ADMIN';
+  const certificateSummary = useCertificateSummary(isAdmin);
   const { setOpenMobile } = useSidebar();
   const publicSettings = usePublicSettings();
   const siteName = publicSettings.data?.siteName || 'RiriCloud';
@@ -109,7 +112,7 @@ export function AppSidebar() {
                   <NavLink to={item.to} end={item.end} className="block" onClick={() => setOpenMobile(false)}>
                     {({ isActive }) => (
                       <SidebarMenuButton asChild active={isActive} className="rounded-lg px-3 py-2 text-sm">
-                        <span><item.icon className="size-4" /><span>{item.label}</span></span>
+                        <span><item.icon className="size-4" /><span>{item.label}</span>{item.to === '/admin/certificates' && Boolean(certificateSummary.data?.needsAttention) && <Badge variant="destructive" className="ml-auto">{certificateSummary.data?.needsAttention}</Badge>}</span>
                       </SidebarMenuButton>
                     )}
                   </NavLink>

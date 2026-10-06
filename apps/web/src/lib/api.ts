@@ -200,6 +200,13 @@ export interface ApiLine {
 export type CertificateStatus = 'VALID' | 'EXPIRING' | 'EXPIRED' | 'NOT_YET_VALID';
 
 export interface ApiCertificate {
+  currentRevision: number;
+  fingerprint256: string | null;
+  keyType: string | null;
+  chainLength: number;
+  chainValidation: 'PASSED' | 'INVALID';
+  trustValidation: 'NOT_CHECKED';
+  chain: Array<{ subject: string; issuer: string; fingerprint256: string; validFrom: string; validTo: string; ca: boolean }>;
   id: string;
   name: string;
   subject: string;

@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
+import * as nodemailer from 'nodemailer';
 import { decryptSecret, encryptSecret } from '../common/secret-crypto';
 import { DEFAULT_SPEED_TIERS, type SpeedTier } from '../common/speed-format';
 
@@ -106,6 +107,9 @@ export const SETTING_KEYS = {
   LINE_SPEEDTEST_TIMEOUT_MS: 'lineSpeedtestTimeoutMs',
   PROBE_SINGBOX_FALLBACK_ENABLED: 'probeSingboxFallbackEnabled',
   SYSTEM_TIMEZONE: 'systemTimezone',
+  CERTIFICATE_EXPIRY_WARNING_DAYS: 'certificateExpiryWarningDays',
+  CERTIFICATE_MAIL_ENABLED: 'certificateMailEnabled',
+  CERTIFICATE_MAIL_RECIPIENTS: 'certificateMailRecipients',
   SMTP_ENABLED: 'smtpEnabled',
   SMTP_HOST: 'smtpHost',
   SMTP_PORT: 'smtpPort',
@@ -187,6 +191,9 @@ export interface SystemSettings {
   lineSpeedtestTimeoutMs: number;
   probeSingboxFallbackEnabled: boolean;
   systemTimezone: string;
+  certificateExpiryWarningDays: number;
+  certificateMailEnabled: boolean;
+  certificateMailRecipients: string[];
   smtpEnabled: boolean;
   smtpHost: string;
   smtpPort: number;
@@ -320,6 +327,9 @@ export const DEFAULTS: SystemSettings = {
   lineSpeedtestTimeoutMs: 10000,
   probeSingboxFallbackEnabled: true,
   systemTimezone: 'Asia/Shanghai',
+  certificateExpiryWarningDays: 30,
+  certificateMailEnabled: false,
+  certificateMailRecipients: [],
   smtpEnabled: false,
   smtpHost: '',
   smtpPort: 587,
@@ -401,6 +411,9 @@ const DESCRIPTIONS: Record<keyof SystemSettings, string> = {
   lineSpeedtestTimeoutMs: '延迟测试单次超时阈值（毫秒）',
   probeSingboxFallbackEnabled: '仅内部严格诊断的兼容策略；不影响日常延迟测试',
   systemTimezone: '系统统一时区',
+  certificateExpiryWarningDays: '证书到期提醒天数',
+  certificateMailEnabled: '证书邮件提醒开关',
+  certificateMailRecipients: '证书提醒收件人',
   smtpEnabled: '是否启用 SMTP 发信服务',
   smtpHost: 'SMTP 服务器地址',
   smtpPort: 'SMTP 服务器端口',
@@ -581,6 +594,9 @@ export class SettingsService implements OnModuleInit {
       lineSpeedtestTimeoutMs: this.readInteger(map, 'lineSpeedtestTimeoutMs', 500, 30000),
       probeSingboxFallbackEnabled: this.readBoolean(map, 'probeSingboxFallbackEnabled'),
       systemTimezone: this.readTimezone(map, 'systemTimezone'),
+      certificateExpiryWarningDays: this.readInteger(map, 'certificateExpiryWarningDays', 1, 90),
+      certificateMailEnabled: this.readBoolean(map, 'certificateMailEnabled'),
+      certificateMailRecipients: [...new Set(this.readStringArray(map, 'certificateMailRecipients').map(email => email.trim().toLowerCase()).filter(Boolean))],
       smtpEnabled: this.readBoolean(map, 'smtpEnabled'),
       smtpHost: this.readString(map, 'smtpHost'),
       smtpPort: this.readInteger(map, 'smtpPort', 1, 65535),
@@ -675,6 +691,15 @@ export class SettingsService implements OnModuleInit {
     if (!entries.length) throw new BadRequestException('未提供任何有效设置字段');
     const cleanPatch = Object.fromEntries(entries) as SystemSettingsPatch;
     await this.validateReferences(cleanPatch);
+    if (['certificateMailEnabled', 'certificateMailRecipients', 'smtpEnabled', 'smtpHost', 'smtpFrom', 'smtpUser'].some(key => key in cleanPatch)) {
+      const next = { ...await this.getSettings(), ...cleanPatch };
+      if (next.certificateMailEnabled && (!next.smtpEnabled || !next.smtpHost || !(next.smtpFrom || next.smtpUser) || !next.certificateMailRecipients?.length)) throw new BadRequestException('开启证书邮件提醒需要有效 SMTP 配置及至少一位收件人');
+      if (next.certificateMailEnabled && cleanPatch.certificateMailEnabled === true) {
+        const original = await this.getSettings();
+        const transporter = nodemailer.createTransport({ host: next.smtpHost ?? '', port: next.smtpPort ?? 587, secure: next.smtpSecure ?? false, auth: next.smtpUser ? { user: next.smtpUser, pass: next.smtpPass === '********' ? original.smtpPass : next.smtpPass ?? '' } : undefined, connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000 });
+        try { await transporter.verify(); } catch { throw new BadRequestException('SMTP 无法连接或鉴权，请先修复 SMTP 配置'); } finally { transporter.close(); }
+      }
+    }
 
     await this.prisma.$transaction(async (tx) => {
       for (const [key, value] of entries) {

@@ -11,6 +11,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ResponsiveDialog, ResponsiveDialogContent } from '@/components/shared/responsive-dialog';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
 import { extractErrorMessage } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { useCertificateDetail, useCertificateMutations, type CertificatePayload, type ApiCertificate } from './use-certificates';
@@ -82,7 +83,9 @@ function CertificateFormSession({ onOpenChange, certificateId, pending, onSubmit
       privateKeyPem: detail.data?.privateKeyPem ?? ''
     }
   });
-  const { parse } = useCertificateMutations();
+  const { parse, preview } = useCertificateMutations();
+  const baseline = React.useRef(detail.data);
+  const [preparedPayload, setPreparedPayload] = React.useState<CertificatePayload | null>(null);
   const { mutate: parseCertificate, reset: resetParse } = parse;
   const certificatePem = form.watch('certificatePem');
   const privateKeyPem = form.watch('privateKeyPem');
@@ -124,15 +127,20 @@ function CertificateFormSession({ onOpenChange, certificateId, pending, onSubmit
       form.setError('privateKeyPem', { message: t('admin:certificates.valKeyRequired') });
       return;
     }
-    onSubmit({
+    const payload: CertificatePayload = {
       name: values.name.trim(),
       certificatePem: values.certificatePem.trim(),
+      ...(certificateId ? { expectedRevision: baseline.current?.currentRevision } : {}),
       ...(values.privateKeyPem?.trim() ? { privateKeyPem: values.privateKeyPem.trim() } : {})
-    });
+    };
+    if (!certificateId) { onSubmit(payload); return; }
+    const changed = payload.certificatePem !== baseline.current?.certificatePem.trim() || Boolean(payload.privateKeyPem && payload.privateKeyPem !== baseline.current?.privateKeyPem.trim());
+    if (!changed) { onSubmit({ name: payload.name, expectedRevision: payload.expectedRevision }); return; }
+    preview.mutate({ id: certificateId, ...payload }, { onSuccess: result => result.contentChanged ? setPreparedPayload(payload) : onSubmit(payload) });
   };
 
   return (
-    <Form {...form}>
+    <><Form {...form}>
       <form noValidate onSubmit={form.handleSubmit(submit)} className="min-w-0 space-y-4">
         <FormField control={form.control} name="name" render={({ field }) => (
           <FormItem className="min-w-0">
@@ -171,6 +179,9 @@ function CertificateFormSession({ onOpenChange, certificateId, pending, onSubmit
         {parse.isPending && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{t('admin:certificates.parsing')}</div>}
         {parse.isError && <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{extractErrorMessage(parse.error, t('admin:certificates.parseFailed'))}</p>}
         {parse.data && <div className="min-w-0 space-y-2 rounded-md border bg-muted/20 p-3 text-sm">
+          <p className="text-xs text-muted-foreground">{t('admin:certificateManagement.trust')}</p>
+          <p className="break-all text-xs">{t('admin:certificateManagement.fingerprint')}: {parse.data.fingerprint256} · {parse.data.keyType} · {t('admin:certificateManagement.chainLength')}: {parse.data.chainLength}</p>
+          {Boolean(parse.data.duplicates?.length) && <p className="text-sm">{t('admin:certificateManagement.duplicate', { names: parse.data.duplicates.map(row => row.name).join(', ') })}</p>}
           <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{t('admin:certificates.parseResult')}</span><span className="text-muted-foreground">{statusLabels[parse.data.status]}</span></div>
           <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
             <span>{t('admin:certificates.labelIssuer')}{parse.data.issuer}</span>
@@ -182,9 +193,17 @@ function CertificateFormSession({ onOpenChange, certificateId, pending, onSubmit
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common:actions.cancel')}</Button>
-          <Button type="submit" disabled={pending}>{pending ? t('admin:certificates.saving') : t('admin:certificates.saveCert')}</Button>
+          <Button type="submit" disabled={pending || preview.isPending}>{pending ? t('admin:certificates.saving') : t('admin:certificates.saveCert')}</Button>
         </DialogFooter>
       </form>
     </Form>
+    <AlertDialog open={preparedPayload !== null} onOpenChange={open => !open && setPreparedPayload(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('admin:certificateManagement.preview')}</AlertDialogTitle><AlertDialogDescription>{t('admin:certificateManagement.previewDesc')}</AlertDialogDescription></AlertDialogHeader>
+      {preview.data && <div className="space-y-2 text-sm">
+        <p>{t('admin:certificateManagement.before')}: {preview.data.before.validFrom && formatDate(preview.data.before.validFrom)} — {preview.data.before.validTo && formatDate(preview.data.before.validTo)} · {preview.data.before.sans?.join(', ')}</p>
+        <p>{t('admin:certificateManagement.after')}: {preview.data.after.validFrom && formatDate(preview.data.after.validFrom)} — {preview.data.after.validTo && formatDate(preview.data.after.validTo)} · {preview.data.after.sans?.join(', ')}</p>
+        <p>{t('admin:certificateManagement.affected')}: {preview.data.lines.length}</p><div className="max-h-48 overflow-auto">{preview.data.lines.map(row => <p key={row.id} className={row.validationError ? 'text-destructive' : ''}>{row.name} · {row.serverNames.join(' / ')} · {row.validationError ?? t('admin:certificateManagement.matched')}</p>)}</div>
+      </div>}
+      <AlertDialogFooter><AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel><AlertDialogAction disabled={pending || Boolean(preview.data?.lines.some(row => row.validationError))} onClick={() => preparedPayload && onSubmit(preparedPayload)}>{t('admin:certificates.saveCert')}</AlertDialogAction></AlertDialogFooter>
+    </AlertDialogContent></AlertDialog></>
   );
 }

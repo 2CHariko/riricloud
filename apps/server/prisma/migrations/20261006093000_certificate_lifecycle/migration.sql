@@ -1,0 +1,14 @@
+ALTER TABLE "Certificate" ADD COLUMN "currentRevision" INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE "Certificate" ADD COLUMN "contentHash" TEXT;
+ALTER TABLE "Certificate" ADD COLUMN "fingerprint256" TEXT;
+ALTER TABLE "Certificate" ADD COLUMN "validationJson" TEXT;
+CREATE TABLE "CertificateRevision" ("id" TEXT NOT NULL PRIMARY KEY, "certificateId" TEXT NOT NULL, "revision" INTEGER NOT NULL, "certificatePem" TEXT NOT NULL, "privateKeyPem" TEXT NOT NULL, "metadataJson" TEXT NOT NULL, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "operatorId" TEXT, FOREIGN KEY ("certificateId") REFERENCES "Certificate"("id") ON DELETE CASCADE ON UPDATE CASCADE);
+CREATE UNIQUE INDEX "CertificateRevision_certificateId_revision_key" ON "CertificateRevision"("certificateId", "revision");
+CREATE TABLE "CertificateDeployment" ("id" TEXT NOT NULL PRIMARY KEY, "certificateId" TEXT NOT NULL, "revision" INTEGER NOT NULL, "nodeId" TEXT NOT NULL, "configVersion" REAL, "state" TEXT NOT NULL DEFAULT 'WAITING', "error" TEXT, "sentAt" DATETIME, "confirmedAt" DATETIME, "updatedAt" DATETIME NOT NULL, FOREIGN KEY ("certificateId") REFERENCES "Certificate"("id") ON DELETE CASCADE ON UPDATE CASCADE);
+CREATE UNIQUE INDEX "CertificateDeployment_certificateId_revision_nodeId_key" ON "CertificateDeployment"("certificateId", "revision", "nodeId");
+CREATE INDEX "CertificateDeployment_nodeId_configVersion_idx" ON "CertificateDeployment"("nodeId", "configVersion");
+CREATE TABLE "CertificateConfigSnapshot" ("id" TEXT NOT NULL PRIMARY KEY, "nodeId" TEXT NOT NULL, "configVersion" REAL NOT NULL, "dependenciesJson" TEXT NOT NULL, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE UNIQUE INDEX "CertificateConfigSnapshot_nodeId_configVersion_key" ON "CertificateConfigSnapshot"("nodeId", "configVersion");
+CREATE TABLE "CertificateReminder" ("id" TEXT NOT NULL PRIMARY KEY, "certificateId" TEXT NOT NULL, "revision" INTEGER NOT NULL, "stage" TEXT NOT NULL, "recipient" TEXT NOT NULL, "state" TEXT NOT NULL DEFAULT 'PENDING', "attemptedAt" DATETIME, "sentAt" DATETIME, "sentDay" TEXT, FOREIGN KEY ("certificateId") REFERENCES "Certificate"("id") ON DELETE CASCADE ON UPDATE CASCADE);
+CREATE UNIQUE INDEX "CertificateReminder_certificateId_revision_stage_recipient_key" ON "CertificateReminder"("certificateId", "revision", "stage", "recipient");
+CREATE INDEX "CertificateReminder_recipient_sentDay_idx" ON "CertificateReminder"("recipient", "sentDay");

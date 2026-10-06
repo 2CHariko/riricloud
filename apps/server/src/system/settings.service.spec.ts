@@ -5,6 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { encryptSecret } from '../common/secret-crypto';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { DEFAULTS, SETTING_KEYS, SettingsService } from './settings.service';
+import * as nodemailer from 'nodemailer';
+jest.mock('nodemailer', () => ({ createTransport: jest.fn() }));
 
 describe('SettingsService', () => {
   let service: SettingsService;
@@ -33,6 +35,23 @@ describe('SettingsService', () => {
   it('空表时返回全量安全默认值', async () => {
     prisma.systemSetting.findMany.mockResolvedValue([]);
     await expect(service.getSettings()).resolves.toEqual(DEFAULTS);
+  });
+  it('证书提醒默认关闭，阈值与邮箱受 DTO 校验，启用需 SMTP 可用', async () => {
+    expect(DEFAULTS.certificateExpiryWarningDays).toBe(30);
+    expect(DEFAULTS.certificateMailEnabled).toBe(false);
+    expect(DEFAULTS.certificateMailRecipients).toEqual([]);
+    for (const patch of [{ certificateExpiryWarningDays: 0 }, { certificateExpiryWarningDays: 91 }, { certificateMailRecipients: ['invalid'] }]) expect((await validate(plainToInstance(UpdateSettingsDto, patch))).length).toBeGreaterThan(0);
+    expect(await validate(plainToInstance(UpdateSettingsDto, { certificateExpiryWarningDays: 90, certificateMailRecipients: ['admin@example.com'] }))).toHaveLength(0);
+    prisma.systemSetting.findMany.mockResolvedValue([]);
+    await expect(service.updateSettings({ certificateMailEnabled: true })).rejects.toThrow('SMTP');
+    const transporter = { verify: jest.fn().mockRejectedValue(new Error('failure')), close: jest.fn() };
+    jest.mocked(nodemailer.createTransport).mockReturnValue(transporter as unknown as nodemailer.Transporter);
+    const patch = { certificateMailEnabled: true, certificateMailRecipients: ['admin@example.com'], smtpEnabled: true, smtpHost: 'smtp.example.com', smtpFrom: 'admin@example.com' };
+    await expect(service.updateSettings(patch)).rejects.toThrow('SMTP');
+    expect(transporter.close).toHaveBeenCalled();
+    transporter.verify.mockResolvedValue(undefined as never);
+    await expect(service.updateSettings(patch)).resolves.toBeDefined();
+    expect(prisma.systemSetting.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { key: 'certificateMailEnabled' } }));
   });
 
   it('普通延迟默认十秒但不覆盖已有显式超时', async () => {

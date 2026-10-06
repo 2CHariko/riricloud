@@ -8,13 +8,16 @@ import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CertificatePager } from './certificate-pager';
+import { CertificateLines } from './certificate-records';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { ApiCertificate, CertificateStatus } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { CertificateDetailDialog } from './certificate-detail-dialog';
 import { CertificateFormDialog } from './certificate-form-dialog';
-import { useAdminCertificates, useCertificateMutations } from './use-certificates';
+import { useAdminCertificates, useCertificateMutations, useCertificateSummary } from './use-certificates';
 
 function statusVariant(status: CertificateStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'EXPIRED') return 'destructive';
@@ -26,12 +29,17 @@ function statusVariant(status: CertificateStatus): 'default' | 'secondary' | 'de
 export default function AdminCertificatesPage() {
   const { t } = useTranslation(['admin', 'common']);
   const [search, setSearch] = React.useState('');
+  const [page, setPage] = React.useState(1);
+  const [status, setStatus] = React.useState('all');
+  const [association, setAssociation] = React.useState('all');
+  const [sort, setSort] = React.useState('expiry-asc');
+  const summary = useCertificateSummary();
   const [formOpen, setFormOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [detailId, setDetailId] = React.useState<string | null>(null);
   const [deleting, setDeleting] = React.useState<ApiCertificate | null>(null);
-  const { data, isPending, isError } = useAdminCertificates(search);
+  const { data, isPending, isError, refetch } = useAdminCertificates(search, page, { status: status === 'all' ? undefined : status, association: association === 'all' ? undefined : association, sort });
   const { create, update, remove } = useCertificateMutations();
   const certificates = data?.data ?? [];
   const busy = create.isPending || update.isPending;
@@ -58,18 +66,23 @@ export default function AdminCertificatesPage() {
     setDetailOpen(true);
   };
 
-  if (isPending) return <PageContainer><PageHeader title={t('admin:certificates.title')} description={t('admin:certificates.subtitle')} /><p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p></PageContainer>;
-  if (isError) return <PageContainer><PageHeader title={t('admin:certificates.title')} /><EmptyState title={t('admin:certificates.emptyCerts')} description={t('admin:certificates.subtitle')} /></PageContainer>;
-
   return (
     <PageContainer>
       <PageHeader title={t('admin:certificates.title')} description={t('admin:certificates.subtitle')} />
+      {summary.data && <p className="rounded-md border p-3 text-sm">{t('admin:certificateManagement.summary', { ...summary.data })}</p>}
+      {isError && <div className="flex items-center gap-2"><p className="text-sm text-destructive">{t('admin:certificates.loadFailed')}</p><Button variant="outline" onClick={() => void refetch()}>{t('common:actions.retry')}</Button></div>}
+      {isPending && <p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p>}
       <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative w-full min-w-0 flex-1 sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('admin:certificates.searchPlaceholder')} className="pl-9" />
+          <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={t('admin:certificates.searchPlaceholder')} className="pl-9" />
         </div>
         <Button className="w-full lg:w-auto" onClick={openCreate}><Plus />{t('admin:certificates.uploadCert')}</Button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <Select value={status} onValueChange={value => { setStatus(value); setPage(1); }}><SelectTrigger aria-label={t('admin:certificateManagement.allStatuses')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allStatuses')}</SelectItem>{Object.entries(statusLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
+        <Select value={association} onValueChange={value => { setAssociation(value); setPage(1); }}><SelectTrigger aria-label={t('admin:certificateManagement.allAssociations')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allAssociations')}</SelectItem><SelectItem value="linked">{t('admin:certificateManagement.linked')}</SelectItem><SelectItem value="unlinked">{t('admin:certificateManagement.unlinked')}</SelectItem></SelectContent></Select>
+        <Select value={sort} onValueChange={value => { setSort(value); setPage(1); }}><SelectTrigger aria-label={t('admin:certificateManagement.expiryAsc')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="expiry-asc">{t('admin:certificateManagement.expiryAsc')}</SelectItem><SelectItem value="expiry-desc">{t('admin:certificateManagement.expiryDesc')}</SelectItem><SelectItem value="updated-desc">{t('admin:certificateManagement.updatedDesc')}</SelectItem></SelectContent></Select>
       </div>
       <Card>
         <CardContent className="p-0">
@@ -92,7 +105,7 @@ export default function AdminCertificatesPage() {
                       <Button type="button" variant="ghost" className="h-auto min-w-0 justify-start p-0 text-left hover:bg-transparent" onClick={() => openDetail(certificate)}>
                         <div className="font-medium hover:underline">{certificate.name}</div>
                         <div className="max-w-56 truncate text-xs text-muted-foreground">{certificate.subject}</div>
-                      </Button>
+                      </Button>{certificate.chainValidation === 'INVALID' && <Badge variant="destructive">{t('admin:certificateManagement.INVALID')}</Badge>}
                     </TableCell>
                     <TableCell><div className="flex max-w-64 flex-wrap gap-1">{certificate.sans.slice(0, 4).map((san) => <Badge key={san} variant="secondary">{san}</Badge>)}{certificate.sans.length > 4 && <Badge variant="outline">+{certificate.sans.length - 4}</Badge>}</div></TableCell>
                     <TableCell className="max-w-56 truncate text-sm text-muted-foreground">{certificate.issuer}</TableCell>
@@ -108,6 +121,7 @@ export default function AdminCertificatesPage() {
           )}
         </CardContent>
       </Card>
+      <CertificatePager page={page} total={data?.total ?? 0} onChange={setPage} />
       {formOpen && <CertificateFormDialog
         key={editingId ?? 'create'}
         open={formOpen}
@@ -125,9 +139,10 @@ export default function AdminCertificatesPage() {
             <AlertDialogTitle>{t('admin:certificates.deleteDialogTitle', { name: deleting?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>{t('admin:certificates.deleteDialogDesc')}</AlertDialogDescription>
           </AlertDialogHeader>
+          {deleting && deleting.lineCount > 0 && <div className="max-h-72 overflow-auto"><p className="text-sm text-destructive">{t('admin:certificateManagement.deleteLinked')}</p><CertificateLines id={deleting.id} /></div>}
           <AlertDialogFooter>
             <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}>
+            <AlertDialogAction variant="destructive" disabled={remove.isPending || Boolean(deleting?.lineCount)} onClick={() => deleting && remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}>
               {t('common:actions.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>

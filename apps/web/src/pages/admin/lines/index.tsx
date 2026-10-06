@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useLocation } from 'react-router-dom';
 import type { ApiUpstreamNode } from '@/lib/api';
+import { api } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
 import { ServerPagination } from '@/components/shared/server-pagination';
 import { LineTopology } from './components/line-topology';
 import {
@@ -89,6 +91,12 @@ export default function AdminLinesPage() {
   const [batchProbeOpen, setBatchProbeOpen] = React.useState(false);
   const [initialUpstreamNode, setInitialUpstreamNode] = React.useState<ApiUpstreamNode | null>(null);
   const location = useLocation();
+  const [linkedLineId, setLinkedLineId] = React.useState<string | null>(new URLSearchParams(location.search).get('lineId'));
+  const linkedLine = useQuery({ queryKey: ['admin', 'lines', 'linked', linkedLineId], enabled: Boolean(linkedLineId), queryFn: async () => (await api.get<{ line: AdminLine }>('/admin/lines/' + linkedLineId)).data.line });
+  React.useEffect(() => {
+    if (linkedLine.data && linkedLineId) { setEditing(linkedLine.data); setFormOpen(true); setLinkedLineId(null); }
+    // eslint-disable-next-line no-restricted-syntax -- 详情只打开一次会话，不初始化或覆盖表单草稿
+  }, [linkedLine.data, linkedLineId]); // 服务端详情仅用于一次性打开业务会话
 
   React.useEffect(() => {
     const state = location.state as

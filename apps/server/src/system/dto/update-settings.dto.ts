@@ -68,6 +68,12 @@ const HTTP_URL_OPTIONS = {
 };
 
 export class UpdateSettingsDto {
+  @IsOptional() @IsInt() @Min(1) @Max(90)
+  certificateExpiryWarningDays?: number;
+  @IsOptional() @IsBoolean()
+  certificateMailEnabled?: boolean;
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @IsEmail({}, { each: true })
+  certificateMailRecipients?: string[];
   @ApiPropertyOptional({ example: '我的面板' })
   @IsString()
   @MinLength(1)

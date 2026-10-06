@@ -6,9 +6,10 @@ import { AgentPollController } from './agent-poll.controller';
 import { SystemModule } from '../system/system.module';
 import { SystemLogsModule } from '../system-logs/system-logs.module';
 import { ProxyPoolAccessModule } from '../proxy-pool-access/proxy-pool-access.module';
+import { CertificateTrackingModule } from '../certificates/certificate-tracking.module';
 
 @Module({
-  imports: [SystemModule, SystemLogsModule, ProxyPoolAccessModule],
+  imports: [SystemModule, SystemLogsModule, ProxyPoolAccessModule, CertificateTrackingModule],
   controllers: [AgentPollController],
   providers: [AgentGateway, AgentService, AgentSweepService],
   exports: [AgentService]

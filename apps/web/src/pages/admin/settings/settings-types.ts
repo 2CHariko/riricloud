@@ -51,6 +51,9 @@ export interface SystemSettings {
   lineSpeedtestTargetUrl: string;
   lineSpeedtestTimeoutMs: number;
   probeSingboxFallbackEnabled: boolean;
+  certificateExpiryWarningDays: number;
+  certificateMailEnabled: boolean;
+  certificateMailRecipients: string[];
   smtpEnabled: boolean;
   smtpHost: string;
   smtpPort: number;

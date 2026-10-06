@@ -55,6 +55,14 @@ describe('MailService', () => {
     await expect(service.sendVerificationCode('user@example.com', '123456', 'REGISTER')).rejects.toThrow(BadRequestException);
     expect(transporter.sendMail).not.toHaveBeenCalled();
   });
+  it('证书汇总仅含名称、到期时间与线路数，使用站点时区且不带秘密', async () => {
+    settingsService.getSettings.mockResolvedValue(enabledSettings);
+    transporter.sendMail.mockResolvedValue({});
+    await service.sendCertificateSummary('admin@example.com', [{ name: 'certificate', validTo: new Date('2026-10-06T23:00:00Z'), days: 1, lineCount: 2 }], 'Asia/Shanghai');
+    expect(transporter.sendMail).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('2026年10月7日'), to: 'admin@example.com' }));
+    expect(JSON.stringify(transporter.sendMail.mock.calls)).not.toContain('PRIVATE KEY');
+    expect(jest.mocked(nodemailer.createTransport)).toHaveBeenCalledWith(expect.objectContaining({ socketTimeout: 30000 }));
+  });
 
   it('测试 SMTP 连接后发送测试邮件', async () => {
     settingsService.getSettings.mockResolvedValue(enabledSettings);

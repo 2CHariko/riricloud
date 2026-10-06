@@ -31,6 +31,7 @@ import { lineProbeVersion } from '../probe/probe-resource.service';
 import type { ProbeResult } from '../probe/probe.types';
 import { buildUpstreamOutbound } from '../common/upstream-connection';
 import { readUpstreamRelayConnection } from '../common/upstream-relay-connection';
+import { certificateBindingChanged, CertificateBindingsService, type BindingLine } from '../certificates/certificate-bindings.service';
 
 const nodeSummary = { select: { id: true, name: true, serverHost: true, status: true, isLocal: true, reachability: true, configOverride: true } } as const;
 const certificateSummary = {
@@ -140,7 +141,8 @@ export class LinesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly agentGateway: AgentService,
-    @Optional() private readonly settingsService?: SettingsService
+    @Optional() private readonly settingsService?: SettingsService,
+    @Optional() private readonly certificateBindings?: CertificateBindingsService
   ) {}
 
   async list(query: QueryLineDto) {
@@ -168,7 +170,10 @@ export class LinesService {
 
   async create(dto: CreateLineDto) {
     const prepared = await this.prepare(dto);
-    const line = await this.prisma.line.create({ data: prepared as Prisma.LineUncheckedCreateInput, include: lineInclude });
+    const line = this.certificateBindings ? await this.prisma.$transaction(async tx => {
+      await this.certificateBindings!.assertLine(prepared as BindingLine, tx);
+      return tx.line.create({ data: prepared as Prisma.LineUncheckedCreateInput, include: lineInclude });
+    }) : await this.prisma.line.create({ data: prepared as Prisma.LineUncheckedCreateInput, include: lineInclude });
     void this.agentGateway.pushConfigToAll();
     return { line: this.toView(line) };
   }
@@ -176,7 +181,12 @@ export class LinesService {
   async update(id: string, dto: UpdateLineDto) {
     const current = await this.findRaw(id);
     const prepared = await this.prepare(dto, current);
-    const line = await this.prisma.line.update({ where: { id }, data: { ...prepared as Prisma.LineUncheckedUpdateInput, lastProbeJson: null, lastLatencyMs: null, lastTestedAt: null, lastTestStatus: null, lastTestMessage: null }, include: lineInclude });
+    const changed = certificateBindingChanged(current, prepared as BindingLine);
+    const data = { ...prepared as Prisma.LineUncheckedUpdateInput, lastProbeJson: null, lastLatencyMs: null, lastTestedAt: null, lastTestStatus: null, lastTestMessage: null };
+    const line = this.certificateBindings ? await this.prisma.$transaction(async tx => {
+      if (prepared.certificateId !== current.certificateId || prepared.status === 'ACTIVE' && (current.status !== 'ACTIVE' || changed)) await this.certificateBindings!.assertLine(prepared as BindingLine, tx);
+      return tx.line.update({ where: { id }, data, include: lineInclude });
+    }) : await this.prisma.line.update({ where: { id }, data, include: lineInclude });
     void this.agentGateway.pushConfigToAll();
     return { line: this.toView(line) };
   }
@@ -222,7 +232,10 @@ export class LinesService {
       proxyPoolEnabled: current.proxyPoolEnabled,
       status: 'DISABLED'
     });
-    const line = await this.prisma.line.create({ data: prepared as Prisma.LineUncheckedCreateInput, include: lineInclude });
+    const line = this.certificateBindings ? await this.prisma.$transaction(async tx => {
+      await this.certificateBindings!.assertLine(prepared as BindingLine, tx);
+      return tx.line.create({ data: prepared as Prisma.LineUncheckedCreateInput, include: lineInclude });
+    }) : await this.prisma.line.create({ data: prepared as Prisma.LineUncheckedCreateInput, include: lineInclude });
     void this.agentGateway.pushConfigToAll();
     return { line: this.toView(line) };
   }
@@ -231,6 +244,7 @@ export class LinesService {
     if (dto.status === 'ACTIVE') {
       for (const id of dto.ids) {
         const line = await this.findRaw(id);
+        await this.certificateBindings?.assertLine(line);
         await this.validateEgress(line.egressProxyJson, line);
         if (line.type === 'EXTERNAL') await this.assertUpstreamAvailable(line.upstreamNodeId);
         if (line.relayMode === 'UPSTREAM_NODE') {
@@ -241,7 +255,11 @@ export class LinesService {
         if (line.proxyPoolEnabled) this.assertProxyPoolConfiguration(line.type, line.protocolType, line.relayMode, this.parseObject(line.paramsJson));
       }
     }
-    const result = await this.prisma.line.updateMany({ where: { id: { in: dto.ids } }, data: { status: dto.status, lastProbeJson: null, lastLatencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null } });
+    const data = { status: dto.status, lastProbeJson: null, lastLatencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null };
+    const result = this.certificateBindings ? await this.prisma.$transaction(async tx => {
+      if (dto.status === 'ACTIVE') for (const line of await tx.line.findMany({ where: { id: { in: dto.ids } } })) await this.certificateBindings!.assertLine(line, tx);
+      return tx.line.updateMany({ where: { id: { in: dto.ids } }, data });
+    }) : await this.prisma.line.updateMany({ where: { id: { in: dto.ids } }, data });
     void this.agentGateway.pushConfigToAll();
     return { updated: result.count, status: dto.status };
   }
@@ -548,7 +566,7 @@ export class LinesService {
     const egressProxyJson = saveEgressProxy(input.egressProxy, current?.egressProxyJson);
     await this.validateEgress(egressProxyJson, { id: current?.id, type, relayMode, entryNodeId, entryPort, landingNodeId, landingPort });
 
-    return {
+    const prepared = {
       name,
       tag: customTag,
       listen,
@@ -597,6 +615,10 @@ export class LinesService {
       proxyPoolEnabled,
       status: input.status ?? current?.status ?? 'ACTIVE'
     };
+    const changingBinding = !current || current.certificateId !== certificateId;
+    const changingEndpoint = !current || certificateBindingChanged(current, prepared as BindingLine);
+    if ((certificateId || targetLineId) && (changingBinding || prepared.status === 'ACTIVE' && (current?.status !== 'ACTIVE' || changingEndpoint))) await this.certificateBindings?.assertLine(prepared as BindingLine);
+    return prepared;
   }
 
   private assertProxyPoolConfiguration(type: string, protocol: string, relayMode: string | null, params: Record<string, unknown>) {

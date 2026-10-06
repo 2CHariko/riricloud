@@ -339,22 +339,86 @@ model Line {
 }
 
 model Certificate {
-  id             String   @id @default(uuid())
-  name           String
-  certificatePem String
-  privateKeyPem  String
-  subject        String
-  issuer         String
-  serialNumber   String
-  sansJson       String   @default("[]")
-  validFrom      DateTime
-  validTo        DateTime
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id              String                  @id @default(uuid())
+  name            String
+  certificatePem  String
+  privateKeyPem   String
+  subject         String
+  issuer          String
+  serialNumber    String
+  sansJson        String                  @default("[]")
+  validFrom       DateTime
+  validTo         DateTime
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  currentRevision Int                     @default(1)
+  contentHash     String?
+  fingerprint256  String?
+  validationJson  String?
+  revisions       CertificateRevision[]
+  deployments     CertificateDeployment[]
+  reminders       CertificateReminder[]
 
   lines Line[]
 
   @@index([validTo])
+}
+
+model CertificateRevision {
+  id             String      @id @default(uuid())
+  certificateId  String
+  revision       Int
+  certificatePem String
+  privateKeyPem  String
+  metadataJson   String
+  createdAt      DateTime    @default(now())
+  operatorId     String?
+  certificate    Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+
+  @@unique([certificateId, revision])
+}
+
+model CertificateDeployment {
+  id            String      @id @default(uuid())
+  certificateId String
+  revision      Int
+  nodeId        String
+  configVersion Float?
+  state         String      @default("WAITING")
+  error         String?
+  sentAt        DateTime?
+  confirmedAt   DateTime?
+  updatedAt     DateTime    @updatedAt
+  certificate   Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+
+  @@unique([certificateId, revision, nodeId])
+  @@index([nodeId, configVersion])
+}
+
+model CertificateConfigSnapshot {
+  id               String   @id @default(uuid())
+  nodeId           String
+  configVersion    Float
+  dependenciesJson String
+  createdAt        DateTime @default(now())
+
+  @@unique([nodeId, configVersion])
+}
+
+model CertificateReminder {
+  id            String      @id @default(uuid())
+  certificateId String
+  revision      Int
+  stage         String
+  recipient     String
+  state         String      @default("PENDING")
+  attemptedAt   DateTime?
+  sentAt        DateTime?
+  sentDay       String?
+  certificate   Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+
+  @@unique([certificateId, revision, stage, recipient])
+  @@index([recipient, sentDay])
 }
 
 model SubscriptionTemplate {
