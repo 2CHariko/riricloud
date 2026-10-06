@@ -86,7 +86,7 @@ export function ProxyEndpointSelection({
                   key={endpoint.lineId}
                   onClick={() => isAvailable && state.toggleLine(endpoint.lineId, !isSelected)}
                   className={cn(
-                    'flex min-w-0 items-start gap-2.5 rounded-lg border p-3 transition-all select-none',
+                    'flex min-w-0 items-start gap-2.5 rounded-lg border p-3 transition-colors select-none',
                     isAvailable
                       ? 'cursor-pointer hover:border-foreground/30 hover:bg-muted/30'
                       : 'opacity-55 cursor-not-allowed bg-muted/10',

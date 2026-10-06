@@ -86,7 +86,7 @@ export function ProxyExportWorkbench({ state }: { state: ProxyExportState }) {
   const isShell = snippetMeta.language === 'shell';
 
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-xl transition-all">
+    <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-100 shadow-xl">
       {/* 终端一体化顶栏（macOS 拟物微点 + 分段视图切换 + 动态文件名 + 统一右上操作群） */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-zinc-900/80 px-3.5 py-2.5 select-none">
         <div className="flex items-center gap-3 flex-wrap">
@@ -103,7 +103,7 @@ export function ProxyExportWorkbench({ state }: { state: ProxyExportState }) {
               type="button"
               onClick={() => state.setViewMode('export')}
               className={cn(
-                'flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-all',
+                'flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-colors',
                 state.viewMode === 'export'
                   ? 'bg-zinc-800 text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-200'
@@ -116,7 +116,7 @@ export function ProxyExportWorkbench({ state }: { state: ProxyExportState }) {
               type="button"
               onClick={() => state.setViewMode('code')}
               className={cn(
-                'flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-all',
+                'flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-colors',
                 state.viewMode === 'code'
                   ? 'bg-zinc-800 text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-200'
@@ -164,7 +164,7 @@ export function ProxyExportWorkbench({ state }: { state: ProxyExportState }) {
             type="button"
             size="sm"
             className={cn(
-              'h-7 gap-1.5 px-3 text-xs transition-all',
+              'h-7 gap-1.5 px-3 text-xs transition-colors',
               copied
                 ? 'bg-emerald-600 hover:bg-emerald-600 text-white'
                 : 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 font-medium'
@@ -201,7 +201,7 @@ export function ProxyExportWorkbench({ state }: { state: ProxyExportState }) {
                   type="button"
                   onClick={() => state.setSnippetTab(snippet.id)}
                   className={cn(
-                    'rounded-md px-2.5 py-1 text-xs font-mono transition-all',
+                    'rounded-md px-2.5 py-1 text-xs font-mono transition-colors',
                     active
                       ? 'bg-zinc-800 text-zinc-100 font-medium shadow-sm'
                       : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'

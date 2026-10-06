@@ -61,6 +61,7 @@ RiriCloud 采用 shadcn/ui 的 **New York** 风格预设，以更紧凑的内边
 3. **页面与卡片进场动效规范 (Page & Card Transition)**
    - 全站子页面容器（`PageContainer`）与独立全屏卡片（`LoginPage` / `RegisterPage`）统一配置 `300ms ease-out` 的微景深淡入动效（`animate-in fade-in-0 zoom-in-[0.985] duration-300 ease-out`）。
    - 严禁生硬无动效的瞬切，同时杜绝产生 `translateY` 纵向位移以防止触发浏览器滚动条瞬时闪烁与页面抖动。
+   - 业务页面与共享组件中的交互动效必须使用定向过渡属性（`transition-colors`、`transition-opacity`、`transition-transform` 或 `transition-[属性1,属性2]` 组合），严禁在业务代码中使用 `transition-all` 监听全部可过渡属性；`components/ui/` 下 shadcn/ui 官方生成的原子组件保持官方默认声明，不做收敛改动。
 
 ---
 

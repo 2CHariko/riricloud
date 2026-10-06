@@ -374,7 +374,7 @@ export default function AdminUpstreamPage() {
                           {percent !== null ? (
                             <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
                               <div
-                                className={`h-full rounded-full transition-all ${
+                                className={`h-full rounded-full transition-[width,background-color] ${
                                   percent >= 95
                                     ? 'bg-destructive'
                                     : percent >= 80

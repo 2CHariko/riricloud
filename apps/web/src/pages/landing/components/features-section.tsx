@@ -62,7 +62,7 @@ export function FeaturesSection({ features }: FeaturesSectionProps) {
             return (
               <Card
                 key={feature.id}
-                className="group relative overflow-hidden border-border/60 bg-card/50 backdrop-blur-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-xs"
+                className="group relative overflow-hidden border-border/60 bg-card/50 backdrop-blur-xs transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-xs"
               >
                 <CardContent className="p-6">
                   <div className="flex size-11 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20 transition-colors group-hover:bg-primary group-hover:text-primary-foreground">

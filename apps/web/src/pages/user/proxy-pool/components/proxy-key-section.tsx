@@ -103,7 +103,7 @@ export function ProxyKeySection({ keys, limit, isPending, onCreate, onEdit }: Pr
           {keys.map((item) => (
             <Card
               key={item.id}
-              className="relative flex flex-col justify-between overflow-hidden border-border/80 bg-card/60 transition-all hover:bg-card hover:shadow-sm"
+              className="relative flex flex-col justify-between overflow-hidden border-border/80 bg-card/60 transition-[background-color,box-shadow] hover:bg-card hover:shadow-sm"
             >
               <CardHeader className="p-4 pb-3">
                 <div className="flex items-start justify-between gap-3">

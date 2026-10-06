@@ -60,7 +60,7 @@ export function PricingSection({ registrationEnabled = false }: PricingSectionPr
             return (
               <Card
                 key={plan.id}
-                className={`relative flex flex-col justify-between overflow-hidden border-border/70 bg-card transition-all duration-200 hover:shadow-md ${
+                className={`relative flex flex-col justify-between overflow-hidden border-border/70 bg-card transition-[box-shadow,border-color] duration-200 hover:shadow-md ${
                   isFeatured ? 'border-primary/60 shadow-xs ring-1 ring-primary/20' : ''
                 }`}
               >
