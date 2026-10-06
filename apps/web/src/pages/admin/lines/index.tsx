@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import type { ApiUpstreamNode } from '@/lib/api';
-import { api } from '@/lib/api';
-import { useQuery } from '@tanstack/react-query';
+import { certificateReturnPath } from '@/lib/certificate-navigation';
+import { CertificateReturnLink } from '@/components/shared/certificate-return-link';
+import { LinkedLineDialog } from './components/linked-line-dialog';
 import { ServerPagination } from '@/components/shared/server-pagination';
 import { LineTopology } from './components/line-topology';
 import {
@@ -91,12 +92,9 @@ export default function AdminLinesPage() {
   const [batchProbeOpen, setBatchProbeOpen] = React.useState(false);
   const [initialUpstreamNode, setInitialUpstreamNode] = React.useState<ApiUpstreamNode | null>(null);
   const location = useLocation();
-  const [linkedLineId, setLinkedLineId] = React.useState<string | null>(new URLSearchParams(location.search).get('lineId'));
-  const linkedLine = useQuery({ queryKey: ['admin', 'lines', 'linked', linkedLineId], enabled: Boolean(linkedLineId), queryFn: async () => (await api.get<{ line: AdminLine }>('/admin/lines/' + linkedLineId)).data.line });
-  React.useEffect(() => {
-    if (linkedLine.data && linkedLineId) { setEditing(linkedLine.data); setFormOpen(true); setLinkedLineId(null); }
-    // eslint-disable-next-line no-restricted-syntax -- 详情只打开一次会话，不初始化或覆盖表单草稿
-  }, [linkedLine.data, linkedLineId]); // 服务端详情仅用于一次性打开业务会话
+  const [linkParams, setLinkParams] = useSearchParams();
+  const linkedLineId = linkParams.get('lineId');
+  const closeLinkedLine = () => setLinkParams(current => { const next = new URLSearchParams(current); next.delete('lineId'); next.delete('edit'); return next; }, { replace: true, state: location.state });
 
   React.useEffect(() => {
     const state = location.state as
@@ -171,27 +169,13 @@ export default function AdminLinesPage() {
     setFormOpen(true);
   };
 
-  if (isPending)
-    return (
-      <PageContainer>
-        <PageHeader title={t('admin:lines.title')} description={t('admin:lines.subtitle')} />
-        <p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p>
-      </PageContainer>
-    );
-  if (isError)
-    return (
-      <PageContainer>
-        <PageHeader title={t('admin:lines.title')} />
-        <EmptyState
-          title={t('admin:lines.emptyLines')}
-          description={t('admin:lines.subtitle')}
-        />
-      </PageContainer>
-    );
-
   return (
     <PageContainer>
+      <CertificateReturnLink />
       <PageHeader title={t('admin:lines.title')} description={t('admin:lines.subtitle')} />
+      {isPending && <p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p>}
+      {isError && <p className="text-sm text-destructive">{t('admin:certificateManagement.lineUnavailable')}</p>}
+      {linkedLineId && <LinkedLineDialog key={linkedLineId + location.key} id={linkedLineId} edit={linkParams.get('edit') === '1'} returnTo={certificateReturnPath(location.state)} onClose={closeLinkedLine} onEdit={line => { closeLinkedLine(); openEdit(line); }} />}
 
       {/* 搜索与多维度筛选工具栏 */}
       <div className="flex min-w-0 flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">

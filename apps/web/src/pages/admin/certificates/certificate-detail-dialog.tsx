@@ -17,6 +17,7 @@ export function CertificateDetailDialog({ open, onOpenChange, certificateId }: {
   const { t } = useTranslation(['admin', 'common']);
   const detail = useCertificateDetail(certificateId, open);
   const [showKey, setShowKey] = React.useState(false);
+  const [tab, setTab] = React.useState('metadata');
   const [secretExport, setSecretExport] = React.useState<'private-key' | 'bundle' | null>(null);
   const { download } = useCertificateMutations();
 
@@ -40,7 +41,7 @@ export function CertificateDetailDialog({ open, onOpenChange, certificateId }: {
         </DialogHeader>
         {detail.isPending && <p className="text-sm text-muted-foreground">{t('common:actions.loading')}</p>}
         {detail.isError && <div className="flex items-center gap-2"><p className="text-sm text-destructive">{t('admin:certificates.loadFailed')}</p><Button variant="outline" onClick={() => void detail.refetch()}>{t('common:actions.retry')}</Button></div>}
-        {detail.data && <Tabs defaultValue="metadata">
+        {detail.data && <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="grid h-auto grid-cols-2 sm:grid-cols-4">{(['metadata', 'lines', 'revisions', 'deployments'] as const).map(tab => <TabsTrigger value={tab} key={tab}>{t(`admin:certificateManagement.${tab}`)}</TabsTrigger>)}</TabsList>
           <TabsContent value="lines"><CertificateLines id={detail.data.id} /></TabsContent>
           <TabsContent value="revisions"><CertificateHistory id={detail.data.id} currentRevision={detail.data.currentRevision} /></TabsContent>
@@ -54,7 +55,7 @@ export function CertificateDetailDialog({ open, onOpenChange, certificateId }: {
             <span>{t('admin:certificateManagement.chainLength')}: {detail.data.chainLength}</span>
             <span className="break-all sm:col-span-2">{t('admin:certificateManagement.fingerprint')}: {detail.data.fingerprint256}</span>
             <span>{t('admin:certificates.labelStatus')}{statusLabels[detail.data.status]}</span>
-            <span>{t('admin:certificates.labelLines')}{detail.data.lineCount}</span>
+            <div><Button variant="link" className="h-auto p-0" onClick={() => setTab('lines')}>{t('admin:certificateManagement.totalLines', { count: detail.data.associatedLineCount ?? detail.data.lineCount })}</Button><p className="text-xs text-muted-foreground">{t('admin:certificateManagement.associationCounts', { direct: detail.data.directLineCount ?? detail.data.lineCount, inherited: detail.data.inheritedLineCount ?? 0 })}</p></div>
             <span>{t('admin:certificates.labelIssuer')}{detail.data.issuer}</span>
             <span>{t('admin:certificates.labelSerial')}{detail.data.serialNumber}</span>
             <span>{t('admin:certificates.labelValidFrom')}{formatDate(detail.data.validFrom)}</span>

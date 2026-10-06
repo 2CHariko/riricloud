@@ -1,5 +1,10 @@
 const admin = {
   certificateManagement: {
+  associationCounts: '直接绑定 {{direct}} · 桥接使用 {{inherited}}', viewLines: '查看关联线路', totalLines: '{{count}} 条影响线路',
+  directBinding: '直接绑定', relation: '关联来源', allRelations: '全部关联来源', lineSearch: '搜索线路名称', allLineStatuses: '全部线路状态',
+  lineActive: '已启用', lineDisabled: '已停用', targetLine: '目标线路', viewLine: '查看线路', editLine: '编辑线路', backToCertificate: '返回证书',
+  lineDetail: '线路详情', lineLoadFailed: '线路加载失败或已被删除，请重试或返回证书。', lineLoading: '正在加载关联线路…',
+  lineUnavailable: '线路加载失败，请重试。', lineType: '线路类型', lineProtocol: '协议', lineEndpoint: '客户端端点', lineSni: '客户端 SNI',
   saved: '证书已保存，节点运行状态请查看分发详情。配置变化可能触发 Sing-box 重启。',
   trust: '仅校验证书链内部关系，不验证公信任；自签名及私有 CA 需由客户端自行信任。',
   chain: '证书链校验', fingerprint: 'SHA-256 指纹', keyType: '密钥类型', chainLength: '链长度', revision: '当前修订', configVersion: '目标配置版本：{{version}}',
