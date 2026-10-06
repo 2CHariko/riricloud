@@ -1,10 +1,12 @@
 ---
-title: "手动证书管理完善"
+title: 手动证书管理完善
 type: plan
-status: active
+status: completed
 target_version: Unreleased
 created_at: "2026-10-06"
 author: Codex
+pr: "#253"
+archived_at: "2026-10-06"
 ---
 # 手动证书管理完善
 
@@ -15,7 +17,7 @@ author: Codex
 - [x] 到期提醒：管理员入口、可选邮件、持久去重/续期失效
 - [x] 导出与审计：叶子/fullchain/私钥/包、鉴权/no-store/操作日志
 - [x] 前端中文词条、文档/视觉索引与 E2E 消费者同步
-- [ ] 回归测试、完整门禁、PR/CI 与归档
+- [x] 回归测试、完整门禁、PR/CI 与归档
 
 验收覆盖错误链顺序/签名/私钥、SAN通配符/IP/桥接、过期/未来、并发/历史保留/回滚、WS/HTTP/离线/重启/超时/旧Agent/高级覆盖、邮件去重与失败、权限/日志无秘密、超过100条选择、草稿回归。历史异常不自动停线。视觉走查仅 Antigravity 按需执行。
 
@@ -62,6 +64,8 @@ author: Codex
 
 证书验证覆盖叶子/fullchain、自签名/私有 CA、链顺序/签名/重复/错误私钥/过期/未来。绑定覆盖精确域名、单层通配符/IP SAN、显式 SNI、端点回退、桥接/中继与历史停用/解除关联。版本覆盖改名/重复不推送、并发、历史上限、整体回滚及拒绝异常历史。分发覆盖 WS/HTTP、离线、接受后启动失败、旧回执、配置推进、迟到确认、重启、旧 Agent、高级覆盖。提醒与安全覆盖阈值、时区、去重/失败重试/续期、权限、缓存和无秘密日志；前端保留草稿/私钥回填，超过 100 条搜索分页，轻量 E2E 核对 scripts/dev-e2e*。
 
-Windows 原生 `pnpm gate` 全绿（服务端 104 套件/971 测试通过，沿用现有条件跳过 8 套件/55 测试）；前端草稿与 E2E 脚本 25 项通过。PR：[#253](https://github.com/2CHariko/riricloud/pull/253)。CI 通过后执行 `pnpm plan:archive`，归档提交再经 CI 后 squash 合并。
+Windows 原生最终 `pnpm gate` 全绿（服务端 104 套件/973 测试通过，沿用现有条件跳过 8 套件/55 原生客户端测试）；证书专项 17 项，前端草稿与 E2E 脚本 25 项通过。PR：[#253](https://github.com/2CHariko/riricloud/pull/253)。功能提交 CI 全绿后执行 `pnpm plan:archive`，最终日限额修复与归档提交再经 CI 后 squash 合并。
 
 首次 CI 暴露隔离测试迁移的连接池差异：历史迁移的 PRAGMA/DROP/RENAME 必须共用连接，测试 URL 固定 `connection_limit=1` 后 Windows 专项 15 项通过。另有既有依赖 `proxy-addr` 与 `source-map-js` 新披露高危漏洞，按依赖升级独立 PR 规则先修复安全补丁，再同步证书分支；不豁免安全门禁。
+
+交付修复：测试随机 JWT 密钥独立于本地环境；历史异常在首次列表立即显示，汇总批量读取关联线路；单独持久化收件人当日限额，防止删除已提醒证书及重启后同日再次发送。安全补丁 [#254](https://github.com/2CHariko/riricloud/pull/254) 全绿 CI 后已合入并同步，Windows `pnpm audit --audit-level high` 通过，沿用既有 2 个 High 忽略项，仍有 2 个 Moderate。

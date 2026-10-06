@@ -159,7 +159,7 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 - `GET /admin/certificates/:id/lines?page&pageSize`：分页关联（含桥接引用）名称/协议/状态/关联节点/实际承载节点/SNI/匹配结果/异常原因；`hostingNodeIds` 区分盲转发落地与协议代理两端。⭐
 - `GET /admin/certificates/:id/revisions?page&pageSize`：只返回修订、时间、操作者及元信息，保留当前及最近10个历史版本，绝不返回历史私钥。⭐
 - `POST /admin/certificates/:id/preview-update`：与更新同参数，返回新旧有效期/SAN、当前修订、受影响线路及匹配结果，no-store；保存时再次校验。⭐
-- `POST /admin/certificates/:id/rollback`：`{revision,expectedRevision}`，重新校验历史内容与当前关联线路，创建新的递增修订并全体分发；不支持单节点长期固定旧版，过期/域名不覆盖则拒绝。⭐
+- `POST /admin/certificates/:id/rollback`：`{revision,expectedRevision?}`（新版 UI 必传 expectedRevision），重新校验历史内容与当前关联线路，创建新的递增修订并全体分发；不支持单节点长期固定旧版，过期/域名不覆盖则拒绝。⭐
 - `GET /admin/certificates/:id/deployments?page&pageSize`：修订/节点/目标配置版本/结果（包括历史替代记录）；状态 `WAITING/SENT/ACCEPTED/CONFIRMED/FAILED/TIMEOUT/SUPERSEDED/UNCONFIRMED/UNMANAGED`。WS 真实发送、HTTP 返回配置才记 SENT；接受回执不等于运行，心跳需对应包含该修订的持久快照且内核存活。相同修订的新配置可继续确认，旧回执不得覆盖新目标；旧 Agent 缺字段无法确认，高级覆盖更换证书/私钥或移除入站为未控制。在线发送后120秒超时，HTTP取120秒和三倍轮询周期最大值；离线等待，迟到有效心跳可确认，重启后对账继续。⭐
 - `POST /admin/certificates/:id/deployments/retry`：`{nodeIds?:UUID[]}`，限当前实际承载节点，重新请求配置同步；记录审计。⭐
 - `POST /admin/certificates/:id/export`：`{format:leaf|fullchain|private-key|bundle}`，响应附件、no-store；bundle为含叶子/fullchain/私钥的 ZIP，秘密下载需 UI 确认。不把秘密放 URL、日志或服务端临时文件。⭐

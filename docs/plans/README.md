@@ -19,7 +19,6 @@
 
 | 规划名称 | 目标版本 | 创建日期 | 任务进度 |
 | :--- | :--- | :--- | :--- |
-| [手动证书管理完善](./certificate-management.md) | `Unreleased` | 2026-10-06 | 5/6 (83%) |
 | [双内核职责解耦与统一端到端拨测](./mihomo-client-probe-separation.md) | `下一次 MINOR 发布` | 2026-10-01 | 11/12 (92%) |
 | [无公网 IP 主机（NAT/家宽）作为落地节点与反向穿透隧道全链路实现](./nat-landing-node-reverse-tunnel.md) | `v0.10.0` | 2026-09-13 | 34/36 (94%) |
 | [实时节点镜像站与 Agent 流式代理](./node-mirror-site-proxy.md) | `v0.7.2+` | 2026-09-09 | 93/123 (76%) |
@@ -32,6 +31,7 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
+| [手动证书管理完善](./archive/2026-10-06-certificate-management.md) | `Unreleased` | 2026-10-06 | #253 |
 | [订阅模板可配置机械诊断与安全修复](./archive/2026-10-05-template-validation.md) | `Unreleased` | 2026-10-05 | — |
 | [日志可信度与无重启诊断全链路优化](./archive/2026-10-04-logs-diagnostics-overhaul.md) | `Unreleased` | 2026-10-04 | — |
 | [系统日志页紧凑布局恢复](./archive/2026-10-04-logs-compact-ui.md) | `Unreleased` | 2026-10-04 | — |

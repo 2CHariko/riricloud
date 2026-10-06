@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../system/settings.service';
 import { MailService } from '../mail/mail.service';
 import { CertificatesService } from './certificates.service';
+import { createHash } from 'node:crypto';
 export function reminderStage(days: number, threshold: number): string | null {
   if (days <= 0)
     return 'EXPIRED';
@@ -51,7 +52,10 @@ export class CertificateRemindersService implements OnModuleInit, OnModuleDestro
     for (const recipient of settings.certificateMailRecipients) {
       if (this.stopped)
         return;
-      if (await this.prisma.certificateReminder.findFirst({ where: { recipient, sentDay: day, state: 'SENT' } }))
+      // 独立的日限额保留在设置表，删除证书不能清掉收件人当日已发送记录。
+      const dailyKey = 'certificateReminderDaily:' + createHash('sha256').update(recipient).digest('hex');
+      const daily = await this.prisma.systemSetting.findUnique({ where: { key: dailyKey } });
+      if (daily?.value === day || await this.prisma.certificateReminder.findFirst({ where: { recipient, sentDay: day, state: 'SENT' } }))
         continue;
       const pending = [] as Array<{
         id: string;
@@ -81,7 +85,10 @@ export class CertificateRemindersService implements OnModuleInit, OnModuleDestro
       await this.prisma.certificateReminder.updateMany({ where: { id: { in: ids } }, data: { attemptedAt: now, state: 'PENDING' } });
       try {
         await this.mail.sendCertificateSummary(recipient, current, settings.systemTimezone);
-        await this.prisma.certificateReminder.updateMany({ where: { id: { in: ids } }, data: { sentAt: new Date(), sentDay: day, state: 'SENT' } });
+        await this.prisma.$transaction(async tx => {
+          await tx.certificateReminder.updateMany({ where: { id: { in: ids } }, data: { sentAt: new Date(), sentDay: day, state: 'SENT' } });
+          await tx.systemSetting.upsert({ where: { key: dailyKey }, create: { key: dailyKey, value: day }, update: { value: day } });
+        });
       }
       catch {
         await this.prisma.certificateReminder.updateMany({ where: { id: { in: ids } }, data: { state: 'FAILED' } });

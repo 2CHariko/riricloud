@@ -396,6 +396,7 @@ model Certificate {
 }
 
 // 手动证书生命周期追加模型（迁移不重建业务数据）
+// 证书邮件每日限额单独存 SystemSetting（certificateReminderDaily:<收件人 SHA-256> → 站点日期），证书删除不会清掉当日限额；不包含证书或私钥。
 // CertificateRevision：id、certificateId、revision、certificatePem、privateKeyPem、metadataJson、createdAt、operatorId
 //   unique(certificateId,revision)，私钥始终 AES-GCM，当前及最近10个历史版本；回滚创建递增新修订。
 // CertificateDeployment：id、certificateId、revision、nodeId、configVersion(Float?)、state、error、sentAt、confirmedAt、updatedAt

@@ -77,6 +77,7 @@ describe('手动证书生命周期与轻量 E2E', () => {
   beforeEach(async () => {
     await prisma.line.updateMany({ data: { targetLineId: null } });
     await prisma.line.deleteMany(); await prisma.certificate.deleteMany(); await prisma.certificateConfigSnapshot.deleteMany();
+    await prisma.systemSetting.deleteMany({ where: { key: { startsWith: 'certificateReminderDaily:' } } });
     await prisma.node.updateMany({ data: { configOverride: null, status: 'OFFLINE' } });
     logs.enqueue.mockClear(); mail.sendCertificateSummary.mockReset();
     settings.certificateMailEnabled = false;
@@ -290,6 +291,21 @@ describe('手动证书生命周期与轻量 E2E', () => {
     expect((await request('/' + certificate.id + '?publicOnly=true')).status).toBe(200);
     const text = JSON.stringify(logs.enqueue.mock.calls); expect(text).not.toContain('PRIVATE KEY'); expect(text).not.toContain('BEGIN CERTIFICATE');
     expect(decryptSecret((await prisma.certificate.findUniqueOrThrow({ where: { id: certificate.id } })).privateKeyPem)).toBe(first.privateKeyPem.trim());
+  });
+  it('删除已提醒证书及重建巡检服务后，收件人同一天不会再次收到汇总', async () => {
+    settings.certificateMailEnabled = true;
+    const short = certificateFixture({ to: new Date(Date.now() + 6 * 86400_000) });
+    const { certificate } = await create(short);
+    const reminders = new CertificateRemindersService(prisma as never, settingsService as never, mail as never, service);
+    await reminders.check();
+    expect(mail.sendCertificateSummary).toHaveBeenCalledTimes(1);
+    await service.remove(certificate.id);
+    await create(short);
+    await reminders.onModuleDestroy();
+    const restarted = new CertificateRemindersService(prisma as never, settingsService as never, mail as never, service);
+    await restarted.check();
+    expect(mail.sendCertificateSummary).toHaveBeenCalledTimes(1);
+    await restarted.onModuleDestroy();
   });
   it('损坏密钥的读取和导出记录失败，公开证书导出仍可用且审计不含秘密', async () => {
     const { certificate } = await create();
