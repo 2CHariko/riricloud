@@ -548,7 +548,7 @@ export function PlanFormDialog({
                       form.setValue('enableAurora', undefined, { shouldDirty: true });
                     }}
                     className={cn(
-                      'flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all',
+                      'flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-colors',
                       form.watch('cardStyle') === 'fusion'
                         ? 'border-primary ring-2 ring-primary/40 bg-accent/40 font-semibold'
                         : 'border-border/60 hover:border-border hover:bg-muted/40'
@@ -568,7 +568,7 @@ export function PlanFormDialog({
                       form.setValue('enableAurora', undefined, { shouldDirty: true });
                     }}
                     className={cn(
-                      'flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all',
+                      'flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-colors',
                       form.watch('cardStyle') === 'holographic'
                         ? 'border-primary ring-2 ring-primary/40 bg-accent/40 font-semibold'
                         : 'border-border/60 hover:border-border hover:bg-muted/40'
@@ -588,7 +588,7 @@ export function PlanFormDialog({
                       form.setValue('enableAurora', undefined, { shouldDirty: true });
                     }}
                     className={cn(
-                      'flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all',
+                      'flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-colors',
                       form.watch('cardStyle') === 'neon'
                         ? 'border-primary ring-2 ring-primary/40 bg-accent/40 font-semibold'
                         : 'border-border/60 hover:border-border hover:bg-muted/40'
@@ -721,7 +721,7 @@ export function PlanFormDialog({
                         type="button"
                         onClick={() => form.setValue('themeColor', theme.key, { shouldDirty: true })}
                         className={cn(
-                          'flex flex-col items-center gap-1.5 p-2 rounded-lg border text-center transition-all',
+                          'flex flex-col items-center gap-1.5 p-2 rounded-lg border text-center transition-colors',
                           isSelected
                             ? 'border-primary ring-2 ring-primary/40 bg-accent/40 font-semibold'
                             : 'border-border/60 hover:border-border hover:bg-muted/40'
@@ -751,7 +751,7 @@ export function PlanFormDialog({
                         type="button"
                         onClick={() => form.setValue('icon', key, { shouldDirty: true })}
                         className={cn(
-                          'flex flex-col items-center gap-1 p-2 rounded-lg border text-center transition-all',
+                          'flex flex-col items-center gap-1 p-2 rounded-lg border text-center transition-colors',
                           isSelected
                             ? 'border-primary ring-2 ring-primary/40 bg-accent/50 text-foreground font-semibold'
                             : 'border-border/60 hover:border-border hover:bg-muted/40 text-muted-foreground'

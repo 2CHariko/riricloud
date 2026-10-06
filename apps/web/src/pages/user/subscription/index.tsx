@@ -358,7 +358,7 @@ function ActiveSubscriptionContent({
       {/* 订阅卡片（支持根据设置动态开启/关闭特效同步） */}
       <div
         className={cn(
-          'group relative flex flex-col justify-between transition-all duration-300',
+          'group relative flex flex-col justify-between transition-[padding,border-radius] duration-300',
           isEffectsEnabled && 'rounded-2xl p-0'
         )}
         onMouseMove={isEffectsEnabled ? handleMouseMove : undefined}
@@ -366,7 +366,7 @@ function ActiveSubscriptionContent({
       >
         <Card
           className={cn(
-            'relative flex flex-col overflow-hidden transition-all duration-300',
+            'relative flex flex-col overflow-hidden transition-[background-color,border-color,box-shadow] duration-300',
             isEffectsEnabled
               ? cn('backdrop-blur-xl rounded-2xl border', theme.cardBgClass, theme.cardShadowClass, theme.borderClass)
               : ''

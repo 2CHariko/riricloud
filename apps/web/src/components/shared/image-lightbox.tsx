@@ -15,7 +15,7 @@ export function ImageLightbox({ src, alt, className }: ImageLightboxProps) {
       <img
         src={src}
         alt={alt || '教程配图'}
-        className={`cursor-zoom-in rounded-lg border border-border/60 transition-all hover:opacity-90 ${className || ''}`}
+        className={`cursor-zoom-in rounded-lg border border-border/60 transition-opacity hover:opacity-90 ${className || ''}`}
         onClick={() => setOpen(true)}
         loading="lazy"
       />

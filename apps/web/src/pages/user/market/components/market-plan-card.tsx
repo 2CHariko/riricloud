@@ -215,7 +215,7 @@ export function MarketPlanCard({
       {hasAmbientGlow && (
         <div
           className={cn(
-            'pointer-events-none absolute -inset-3 rounded-3xl blur-3xl z-0 transition-all duration-500',
+            'pointer-events-none absolute -inset-3 rounded-3xl blur-3xl z-0 transition-[opacity,transform] duration-500',
             'bg-gradient-to-br',
             isRainbow ? 'from-purple-500/35 via-sky-500/30 to-amber-500/25' : theme.ambientNeonGlow,
             cardStyle === 'neon'
@@ -228,7 +228,7 @@ export function MarketPlanCard({
       {/* 2. 1.5px 极细微导光流动微边框容器 (Shine Border Fiber) */}
       <div
         className={cn(
-          'relative w-full h-full rounded-2xl transition-all duration-300 z-10',
+          'relative w-full h-full rounded-2xl transition-[padding,background-color,box-shadow] duration-300 z-10',
           hasShineBorder
             ? 'p-[1.5px] overflow-hidden bg-black/[0.04] dark:bg-white/[0.08] shadow-[0_0_15px_-3px_rgba(0,0,0,0.1)] dark:shadow-[0_0_20px_-3px_rgba(0,0,0,0.5)]'
             : 'p-0'
@@ -247,7 +247,7 @@ export function MarketPlanCard({
         {/* 3. 卡片主体 (黑曜石深色微晶玻璃 / 浅色珠光白玉微晶) */}
         <Card
           className={cn(
-            'relative flex flex-col justify-between h-full w-full overflow-hidden transition-all duration-300',
+            'relative flex flex-col justify-between h-full w-full overflow-hidden transition-[background-color,border-color,box-shadow] duration-300',
             'backdrop-blur-2xl',
             hasShineBorder
               ? 'rounded-[calc(1rem-1.5px)] border border-black/[0.04] dark:border-white/[0.1]'
@@ -367,7 +367,7 @@ export function MarketPlanCard({
                 {/* 专业 Lucide 矢量图标微光底座 */}
                 <div
                   className={cn(
-                    'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all duration-300 group-hover:scale-105',
+                    'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-[transform,background-color,border-color] duration-300 group-hover:scale-105',
                     theme.iconBgClass
                   )}
                 >
@@ -427,7 +427,7 @@ export function MarketPlanCard({
             {/* 价格与折扣对比（纯净晶体面板） */}
             <div
               className={cn(
-                'flex items-baseline justify-between rounded-xl px-3.5 py-2.5 transition-all duration-300 border',
+                'flex items-baseline justify-between rounded-xl px-3.5 py-2.5 transition-[background-color,border-color,box-shadow] duration-300 border',
                 theme.priceBoxClass,
                 cardStyle === 'neon' && 'shadow-[0_0_12px_-2px_rgba(56,189,248,0.15)] dark:shadow-[0_0_14px_-2px_rgba(255,255,255,0.08)]'
               )}
@@ -489,7 +489,7 @@ export function MarketPlanCard({
           ) : (
             <Button
               className={cn(
-                'relative w-full overflow-hidden transition-all duration-300 font-medium group/btn h-10',
+                'relative w-full overflow-hidden transition-colors duration-300 font-medium group/btn h-10',
                 isCurrent
                   ? 'border border-primary/30 bg-primary/10 text-primary font-semibold cursor-default hover:bg-primary/10'
                   : isLowerPriced || isPurchaseExhausted

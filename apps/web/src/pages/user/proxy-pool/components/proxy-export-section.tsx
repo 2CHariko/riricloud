@@ -86,7 +86,7 @@ export function ProxyExportSection({ keys, keyId, onKeyChange, onOpenCreateKey }
                       type="button"
                       disabled={disabled}
                       onClick={() => state.setProtocol(protocol)}
-                      className={`flex-1 rounded-sm py-1.5 text-xs font-medium transition-all ${
+                      className={`flex-1 rounded-sm py-1.5 text-xs font-medium transition-colors ${
                         active
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
@@ -111,7 +111,7 @@ export function ProxyExportSection({ keys, keyId, onKeyChange, onOpenCreateKey }
                       type="button"
                       disabled={disabled}
                       onClick={() => state.setFormat(format)}
-                      className={`flex-1 rounded-sm py-1.5 text-xs font-medium transition-all ${
+                      className={`flex-1 rounded-sm py-1.5 text-xs font-medium transition-colors ${
                         active
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'

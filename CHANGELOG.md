@@ -23,6 +23,7 @@
 ### Changed
 
 - 证书修改区分已保存、配置接受与运行确认；改名和相同内容不推送，历史版本私钥加密保留。线路证书选择改为服务端搜索分页，通配符不再自动填入 SNI；不改 ACME、Agent 消息格式或面板 HTTPS/WSS 证书。
+- 前端交互过渡动效由 `transition-all` 收敛为定向过渡属性（`transition-colors`/`transition-opacity`/`transition-[width,background-color]` 等），减少布局级过渡监听开销，视觉表现保持一致；shadcn/ui 基础组件（accordion/progress/tabs）维持官方默认声明。
 
 ### Fixed
 
