@@ -33,6 +33,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog';
 import { extractErrorMessage } from '@/lib/api';
+import { SmoothCollapse } from '@/components/ui/smooth-collapse';
 import { cn, formatDate } from '@/lib/utils';
 import {
   useCertificateDetail,
@@ -304,7 +305,8 @@ function CertificateFormSession({
             </div>
           )}
 
-          <div className={certificateId && !showPemEditor ? 'hidden' : 'space-y-4'}>
+          <SmoothCollapse open={!certificateId || showPemEditor}>
+            <div className="space-y-4 pt-1">
             {certificateId && showPemEditor && (
               <div className="flex items-center justify-between border-b pb-1">
                 <span className="text-xs font-medium text-muted-foreground">
@@ -399,7 +401,8 @@ function CertificateFormSession({
                 </FormItem>
               )}
             />
-          </div>
+            </div>
+          </SmoothCollapse>
 
           {parse.isPending && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

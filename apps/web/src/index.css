@@ -86,6 +86,10 @@
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
   }
+  [role='dialog'],
+  .dialog-scrollable {
+    scrollbar-gutter: stable;
+  }
   body {
     @apply bg-background text-foreground;
   }

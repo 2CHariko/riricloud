@@ -28,6 +28,7 @@ import { CertificateLines, CertificateHistory, CertificateDeployments } from './
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { CopyButton } from '@/components/shared/copy-button';
+import { SmoothCollapse } from '@/components/ui/smooth-collapse';
 import { ResponsiveDialog, ResponsiveDialogContent } from '@/components/shared/responsive-dialog';
 import { cn, formatDate } from '@/lib/utils';
 import { useCertificateDetail, useCertificateMutations, type ApiCertificate } from './use-certificates';
@@ -374,14 +375,14 @@ export function CertificateDetailDialog({
                         </Button>
                       </div>
                     </div>
-                    {showCertPem && (
+                    <SmoothCollapse open={showCertPem}>
                       <Textarea
                         readOnly
                         value={detail.data.certificatePem}
                         className="mt-2 min-h-36 font-mono text-xs"
                         spellCheck={false}
                       />
-                    )}
+                    </SmoothCollapse>
                   </div>
 
                   <div className="rounded-lg border bg-card p-3 shadow-xs">
@@ -403,14 +404,14 @@ export function CertificateDetailDialog({
                         </Button>
                       </div>
                     </div>
-                    {showKey && (
+                    <SmoothCollapse open={showKey}>
                       <Textarea
                         readOnly
                         value={detail.data.privateKeyPem}
                         className="mt-2 min-h-28 font-mono text-xs"
                         spellCheck={false}
                       />
-                    )}
+                    </SmoothCollapse>
                   </div>
                 </div>
               </div>
