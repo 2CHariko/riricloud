@@ -38,7 +38,9 @@ describe('手动证书生命周期与轻量 E2E', () => {
 
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'riricloud-certificates-'));
-    prisma = new PrismaClient({ datasources: { db: { url: 'file:' + join(dir, 'test.db').replaceAll('\\', '/') } } });
+    // 单连接让历史迁移的 PRAGMA/DROP/RENAME 共用连接，避免不同平台池大小影响。
+    const databaseUrl = 'file:' + join(dir, 'test.db').replaceAll('\\', '/') + '?connection_limit=1';
+    prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
     await prisma.$connect();
     const migrations = join(__dirname, '../../prisma/migrations');
     for (const name of (await readdir(migrations)).sort()) {
