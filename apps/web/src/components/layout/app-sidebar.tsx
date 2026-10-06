@@ -112,7 +112,18 @@ export function AppSidebar() {
                   <NavLink to={item.to} end={item.end} className="block" onClick={() => setOpenMobile(false)}>
                     {({ isActive }) => (
                       <SidebarMenuButton asChild active={isActive} className="rounded-lg px-3 py-2 text-sm">
-                        <span><item.icon className="size-4" /><span>{item.label}</span>{item.to === '/admin/certificates' && Boolean(certificateSummary.data?.needsAttention) && <Badge variant="destructive" className="ml-auto">{certificateSummary.data?.needsAttention}</Badge>}</span>
+                        <span>
+                          <item.icon className="size-4" />
+                          <span>{item.label}</span>
+                          {item.to === '/admin/certificates' && Boolean(certificateSummary.data?.needsAttention) && (
+                            <Badge
+                              variant="outline"
+                              className="ml-auto h-5 min-w-5 justify-center rounded-full border-destructive/30 bg-destructive/15 px-1.5 font-mono text-[10px] font-semibold text-destructive shadow-none"
+                            >
+                              {certificateSummary.data!.needsAttention > 99 ? '99+' : certificateSummary.data!.needsAttention}
+                            </Badge>
+                          )}
+                        </span>
                       </SidebarMenuButton>
                     )}
                   </NavLink>
