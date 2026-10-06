@@ -5,6 +5,8 @@ import { decryptSecret } from '../common/secret-crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveManagedTlsName, resolveRelayTlsName } from '../subscription/compilers/managed-connection';
 import { assertCertificateUsable, certificateMatchesHost, parseCertificateChain } from './certificate-validation';
+const bindingLineInclude = { entryNode: true, landingNode: true, targetLine: { include: { entryNode: true } } } as const;
+type AssociatedLine = Prisma.LineGetPayload<{ include: typeof bindingLineInclude }>;
 export type BindingLine = {
   id?: string;
   name?: string;
@@ -78,8 +80,11 @@ export function bindingServerName(line: BindingLine): string {
 @Injectable()
 export class CertificateBindingsService {
   constructor(private readonly prisma: PrismaService) { }
-  async lines(id: string, pem: string, client: Prisma.TransactionClient = this.prisma) {
-    const rows = await client.line.findMany({ where: { OR: [{ certificateId: id }, { targetLine: { certificateId: id } }] }, include: { entryNode: true, landingNode: true, targetLine: { include: { entryNode: true } } }, orderBy: { createdAt: 'asc' } });
+  async associations(ids: string[]) {
+    return this.prisma.line.findMany({ where: { OR: [{ certificateId: { in: ids } }, { targetLine: { certificateId: { in: ids } } }] }, include: bindingLineInclude, orderBy: { createdAt: 'asc' } });
+  }
+  async lines(id: string, pem: string, client: Prisma.TransactionClient = this.prisma, associations?: AssociatedLine[]) {
+    const rows = associations?.filter(line => line.certificateId === id || line.targetLine?.certificateId === id) ?? await client.line.findMany({ where: { OR: [{ certificateId: id }, { targetLine: { certificateId: id } }] }, include: bindingLineInclude, orderBy: { createdAt: 'asc' } });
     return rows.map(line => {
       const own = line.certificateId === id;
       const source = own ? line : line.targetLine!;

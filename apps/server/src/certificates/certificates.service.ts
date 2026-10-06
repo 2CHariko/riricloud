@@ -79,6 +79,9 @@ export class CertificatesService {
       await tx.certificateRevision.upsert({ where: { certificateId_revision: { certificateId: row.id, revision: row.currentRevision } }, create: { certificateId: row.id, revision: row.currentRevision, certificatePem: row.certificatePem, privateKeyPem: key === null ? row.privateKeyPem : encryptSecret(key), metadataJson: JSON.stringify(metadata) }, update: {} });
       await tx.certificate.updateMany({ where: { id: row.id, validationJson: null, currentRevision: row.currentRevision }, data: { contentHash: hash, fingerprint256: metadata.fingerprint256, validationJson: JSON.stringify(metadata), updatedAt: row.updatedAt } });
     });
+    row.validationJson = JSON.stringify(metadata);
+    row.contentHash = hash;
+    row.fingerprint256 = metadata.fingerprint256;
   }
   private async raw(id: string) {
     const row = await this.prisma.certificate.findUnique({ where: { id }, include: includeCount });
@@ -103,18 +106,20 @@ export class CertificatesService {
   async summary() {
     const days = (await this.settings?.getSettings())?.certificateExpiryWarningDays ?? 30;
     const rows = await this.prisma.certificate.findMany();
+    const associations = await this.bindings?.associations(rows.map(row => row.id));
     const result = { total: rows.length, expired: 0, expiring: 0, notYetValid: 0, invalid: 0, needsAttention: 0 };
     for (const row of rows) {
+      await this.ensure(row);
       let invalid = false;
       try {
         const parsed = parseCertificateChain(row.certificatePem, decryptSecret(row.privateKeyPem));
-        invalid = parsed.chain.some(cert => cert.validFrom > new Date() || cert.validTo <= new Date()) && getCertificateStatus(row.validFrom, row.validTo, new Date(), days) === 'VALID';
+        invalid = parsed.chain.slice(1).some(cert => cert.validFrom > new Date() || cert.validTo <= new Date());
       }
       catch {
         invalid = true;
       }
       if (!invalid && this.bindings)
-        invalid = (await this.bindings.lines(row.id, row.certificatePem)).some(line => Boolean(line.validationError));
+        invalid = (await this.bindings.lines(row.id, row.certificatePem, this.prisma, associations)).some(line => Boolean(line.validationError));
       const status = getCertificateStatus(row.validFrom, row.validTo, new Date(), days);
       if (status === 'EXPIRED')
         result.expired++;

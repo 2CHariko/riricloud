@@ -165,6 +165,14 @@ describe('手动证书生命周期与轻量 E2E', () => {
     expect((await service.revisions(legacy.id, {})).total).toBe(1);
     expect((await prisma.certificate.findUniqueOrThrow({ where: { id: legacy.id } })).certificatePem).toBe('invalid');
   });
+  it('历史私钥不匹配时首次列表立即显示异常，并保持初始修订幂等', async () => {
+    const { certificate } = await create();
+    await prisma.certificateRevision.deleteMany({ where: { certificateId: certificate.id } });
+    await prisma.certificate.update({ where: { id: certificate.id }, data: { validationJson: null, contentHash: null, privateKeyPem: second.privateKeyPem } });
+    expect((await service.list({})).data[0].chainValidation).toBe('INVALID');
+    expect((await service.revisions(certificate.id, {})).total).toBe(1);
+    expect((await service.summary()).invalid).toBe(1);
+  });
   it('历史异常线路可改名/停用/解除关联，但启用和复制必须重新校验', async () => {
     const { certificate } = await create(expired); const line = await bind(certificate.id);
     const gateway = { pushConfigToAll: jest.fn().mockResolvedValue(0) };
@@ -184,6 +192,10 @@ describe('手动证书生命周期与轻量 E2E', () => {
     expect((await service.list({ search: 'certificate-104' })).data[0].name).toBe('certificate-104');
     await bind(certificate.id);
     expect((await service.list({ association: 'linked', status: 'VALID' })).total).toBe(1);
+    const query = jest.spyOn(prisma.line, 'findMany');
+    expect((await service.summary()).total).toBe(106);
+    expect(query).toHaveBeenCalledTimes(1);
+    query.mockRestore();
   });
   it('追踪配置接受与运行确认，旧回执隔离，超时后迟到确认，重建服务继续对账', async () => {
     const { certificate } = await create(); const line = await bind(certificate.id);
