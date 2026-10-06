@@ -1,4 +1,24 @@
 const admin = {
+  certificateManagement: {
+  saved: '证书已保存，节点运行状态请查看分发详情。配置变化可能触发 Sing-box 重启。',
+  trust: '仅校验证书链内部关系，不验证公信任；自签名及私有 CA 需由客户端自行信任。',
+  chain: '证书链校验', fingerprint: 'SHA-256 指纹', keyType: '密钥类型', chainLength: '链长度', revision: '当前修订', configVersion: '目标配置版本：{{version}}',
+  PASSED: '链内部校验通过', INVALID: '校验异常', metadata: '证书信息', lines: '关联线路', revisions: '历史版本', deployments: '分发生效',
+  previous: '上一页', next: '下一页', page: '第 {{page}} / {{pages}} 页 · 共 {{total}} 条',
+  allStatuses: '全部有效期状态', allAssociations: '全部关联情况', linked: '已关联', unlinked: '未关联',
+  expiryAsc: '最先到期', expiryDesc: '最后到期', updatedDesc: '最近更新',
+  summary: '需处理 {{needsAttention}} 张：过期 {{expired}} · 临近到期 {{expiring}} · 尚未生效 {{notYetValid}} · 校验异常 {{invalid}}',
+  duplicate: '相同叶子证书已存在：{{names}}。仍可继续保存。',
+  preview: '确认证书更新', before: '更新前', after: '更新后', affected: '受影响线路',
+  previewDesc: '保存时将再次校验全部关联线路；保存成功后还需等待节点运行确认。',
+  matched: '匹配', mismatched: '不匹配', sni: '实际 SNI / 校验名称', hosting: '实际承载节点', associated: '关联节点', inherited: '桥接引用',
+  rollback: '整体回滚', rollbackConfirm: '确认回滚至修订 {{revision}}？回滚会生成新修订并同步所有当前关联节点，可能触发 Sing-box 重启。',
+  retry: '重新分发', logs: '查看证书操作日志', leaf: '下载叶子证书', fullchain: '下载 fullchain', 'private-key': '下载私钥', bundle: '下载证书包',
+  secretTitle: '确认下载秘密内容', secretDesc: '下载文件包含私钥，请妥善保管。', export: '下载',
+  WAITING: '等待同步', SENT: '已发送', ACCEPTED: '配置已接受', CONFIRMED: '运行已确认', FAILED: '失败', TIMEOUT: '超时', SUPERSEDED: '已被新版本替代', UNCONFIRMED: '无法确认（Agent 未提供运行字段）', UNMANAGED: '未由证书中心控制',
+  runtimeNote: '运行确认依赖配置快照、Agent 运行版本和内核存活，不执行真实 TLS 握手。超时不会自动回滚，离线节点等待重连。',
+  noRecords: '暂无记录', deleteLinked: '证书仍被引用，请先解除关联。', threshold: '证书临近到期阈值（天）', mailEnabled: '证书邮件提醒', recipients: '提醒收件邮箱（每行一个）', mailDesc: '需要可用 SMTP 和至少一个收件人。每天按站点时区最多发送一次汇总，发送失败 6 小时后重试。', invalidEmail: '请填写合法邮箱，每行一个，最多 20 个。'
+},
   templateAnalysis: {
     title: '规则诊断与修复', validate: '验证与修复',
     policyHelp: '检查策略随模板保存。可逐项关闭或设置严重级别；安全修复只去重和规范等价写法，不改变分流目标与顺序。',

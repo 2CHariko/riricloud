@@ -22,6 +22,7 @@ function harness() {
   const react = {
     createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useMemo: (fn) => fn(),
+    useState: initial => { const index = cursor++; refs[index] ??= { current: initial }; return [refs[index].current, value => { refs[index].current = value; }]; },
     useRef: (initial) => refs[cursor++] ??= { current: initial },
     useEffect: (fn, deps) => {
       const index = cursor++;
@@ -44,7 +45,7 @@ function harness() {
     '@hookform/resolvers/zod': { zodResolver: () => {} }, zod: { z },
     'react-hook-form': { useForm: ({ defaultValues }) => { values ??= { ...defaultValues }; return form; } },
     'react-i18next': { useTranslation: () => ({ t: (key) => key }) },
-    './use-certificates': { useCertificateDetail: () => detail, useCertificateMutations: () => ({ parse: { mutate: () => {}, reset: () => {} } }) }
+    './use-certificates': { useCertificateDetail: () => detail, useCertificateMutations: () => ({ parse: { mutate: () => {}, reset: () => {} }, preview: { mutate: (payload, options) => options.onSuccess({ contentChanged: false }) } }) }
   };
   const { CertificateFormDialog } = load('../pages/admin/certificates/certificate-form-dialog.tsx', new Proxy(modules, {
     get: (items, name) => items[name] ?? components
@@ -73,7 +74,7 @@ function harness() {
   return { detail, form, render, submissions, get values() { return values; }, submit: () => nodes(tree).find((node) => node.type === 'form')?.props.onSubmit() };
 }
 
-const certificate = { name: 'Certificate A', certificatePem: 'certificate-a-pem', privateKeyPem: 'private-a-pem' };
+const certificate = { currentRevision: 1, name: 'Certificate A', certificatePem: 'certificate-a-pem', privateKeyPem: 'private-a-pem' };
 
 test('editing initializes the complete saved private key and submits its replacement; clearing it preserves the server key', () => {
   const h = harness();

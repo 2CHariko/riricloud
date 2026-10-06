@@ -371,7 +371,7 @@ model Line {
 model Certificate {
   id             String   @id @default(uuid())
   name           String
-  certificatePem String   // X.509 叶子证书 PEM
+  certificatePem String   // X.509 叶子或 fullchain PEM
   privateKeyPem  String   // AES-GCM 应用层密文；仅管理员详情与 Agent 配置组装时解密
   subject        String
   issuer         String
@@ -384,8 +384,27 @@ model Certificate {
 
   lines Line[]
 
+  currentRevision Int @default(1)
+  contentHash String?
+  fingerprint256 String?
+  validationJson String? // 链及密钥校验元信息，不含私钥
+  revisions CertificateRevision[]
+  deployments CertificateDeployment[]
+  reminders CertificateReminder[]
+
   @@index([validTo])
 }
+
+// 手动证书生命周期追加模型（迁移不重建业务数据）
+// CertificateRevision：id、certificateId、revision、certificatePem、privateKeyPem、metadataJson、createdAt、operatorId
+//   unique(certificateId,revision)，私钥始终 AES-GCM，当前及最近10个历史版本；回滚创建递增新修订。
+// CertificateDeployment：id、certificateId、revision、nodeId、configVersion(Float?)、state、error、sentAt、confirmedAt、updatedAt
+//   unique(certificateId,revision,nodeId)，index(nodeId,configVersion)；持久分发状态，节点ID留存支持删除节点后的审计。
+// CertificateConfigSnapshot：id、nodeId、configVersion(Float)、dependenciesJson、createdAt
+//   unique(nodeId,configVersion)；dependencies=[{id,revision,controlled}] 无秘密，每节点保留最近100个及未完成目标快照。
+// CertificateReminder：id、certificateId、revision、stage、recipient、state、attemptedAt、sentAt、sentDay
+//   unique(certificateId,revision,stage,recipient)，index(recipient,sentDay)；成功后记录发送阶段及站点日，失败6小时重试。
+// 修订/分发/提醒随证书删除级联；配置快照无 PEM/私钥。历史记录首次访问/巡检幂等初始化，解析失败保留原内容且标异常，不推送/停线。
 
 // 2.3 套餐实体 (Plan，v0.4.0)
 // ==============================

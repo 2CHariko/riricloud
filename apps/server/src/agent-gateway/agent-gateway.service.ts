@@ -26,6 +26,8 @@ import {
 import { parseProxyLineUsername } from '../proxy-pool/proxy-key.util';
 import { ProxyPoolAccessService, type ProxyPoolBinding } from '../proxy-pool-access/proxy-pool-access.service';
 import { resolveLineTags } from '../common/line-tags';
+import { CertificateTrackingService } from '../certificates/certificate-tracking.service';
+import { resolveRelayTlsName } from '../subscription/compilers/managed-connection';
 import { DEFAULT_INBOUND_LISTEN, getClashApiListen, getStatsApiListen } from '../common/ports';
 import {
   INTERNAL_RELAY_TRANSIT_EMAIL,
@@ -285,6 +287,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   private nextDeviceEnforcementCleanupAt = 0;
   private readonly taskResults = new Map<string, TaskResult>();
   private readonly configCache = new Map<string, ConfigSyncData>();
+  private readonly configBuilds = new Map<string, Promise<ConfigSyncData>>();
   private configRevision = 0;
   private readonly mirrorSessions = new Map<string, MirrorSession>();
   private readonly pendingHeartbeats = new Map<string, PendingHeartbeat>();
@@ -308,7 +311,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     @Optional() private readonly settingsService?: SettingsService,
     @Optional() private readonly systemLogsService?: SystemLogsService,
     @Optional() private readonly telemetryPrisma?: TelemetryPrismaService,
-    @Optional() private readonly proxyPoolAccess?: ProxyPoolAccessService
+    @Optional() private readonly proxyPoolAccess?: ProxyPoolAccessService,
+    @Optional() private readonly certificateTracking?: CertificateTrackingService
   ) {
     if (this.settingsService) {
       this.settingsService.onSettingsChange((patch) => {
@@ -729,6 +733,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       }
     });
     const trafficSnapshots = data.trafficSnapshots ?? [];
+    await this.certificateTracking?.heartbeat(nodeId, data);
     if (trafficSnapshots.length) {
       const resolvedLine = await this.resolveActiveLineForNode(nodeId);
       const outcome = await this.persistTrafficSnapshots(nodeId, trafficSnapshots, resolvedLine, heartbeatAt);
@@ -1487,6 +1492,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     });
     const nextPollSecs = Math.max(5, Math.min(300, node?.pollIntervalSecs ?? settings?.defaultPollIntervalSecs ?? 15));
     const needUpdate = data.appliedConfigVersion !== desired.version;
+    if (needUpdate) await this.certificateTracking?.sent(auth.nodeId, desired.version);
     return {
       protocolVersion: AGENT_PROTOCOL_VERSION,
       needUpdate,
@@ -1503,6 +1509,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
 
   // config_apply_result 回执处理：失败原因落 configError（成功清空），供管理端展示
   async handleConfigApplyResult(nodeId: string, data: ConfigApplyResultData): Promise<void> {
+    await this.certificateTracking?.accepted(nodeId, data);
     const message = data.success ? null : (data.message?.slice(0, 8192) ?? 'unknown error');
     await this.enqueueAgentWrite('config-result', () => this.prisma.node
       .update({ where: { id: nodeId }, data: { configError: message } }))
@@ -1936,7 +1943,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       proxyProtocolAcceptNoHeader?: boolean;
       entryNode?: { serverHost: string; status?: string; reachability?: string } | null;
       landingNode?: { serverHost: string; status?: string; reachability?: string } | null;
-      certificate: { certificatePem: string; privateKeyPem: string } | null;
+      certificate: { id?: string; currentRevision?: number; certificatePem: string; privateKeyPem: string } | null;
       targetLine?: {
         id: string;
         type: string;
@@ -2357,7 +2364,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         : {};
       singboxConfig.log = { ...logConfig, level: logMode.toLowerCase() };
     }
-    return {
+    const payload: ConfigSyncData = {
       version: ++this.configVersion,
       singboxConfig,
       singboxLogCaptureLevel: this.captureLevelForMode(logMode),
@@ -2366,6 +2373,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       ...(Object.keys(portSpeedLimits).length > 0 ? { portSpeedLimits } : {}),
       userDeviceLimits
     };
+    this.certificateTracking?.remember(payload, [...lines.values()]);
+    return payload;
   }
 
   private buildLineParams(line: {
@@ -2393,6 +2402,16 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
   }
 
   private async getDesiredConfigSync(nodeId: string): Promise<ConfigSyncData> {
+    const cached = this.configCache.get(nodeId);
+    if (cached) return cached;
+    const pending = this.configBuilds.get(nodeId);
+    if (pending) return pending;
+    const build = this.buildDesiredConfig(nodeId).finally(() => { if (this.configBuilds.get(nodeId) === build) this.configBuilds.delete(nodeId); });
+    this.configBuilds.set(nodeId, build);
+    return build;
+  }
+
+  private async buildDesiredConfig(nodeId: string): Promise<ConfigSyncData> {
     // 配置变更期间的旧构建不能重新污染缓存，WS 与 HTTP 共用此屏障。
     while (true) {
       const cached = this.configCache.get(nodeId);
@@ -2402,6 +2421,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       if (revision !== this.configRevision) continue;
       const latest = this.configCache.get(nodeId);
       if (latest) return latest;
+      await this.certificateTracking?.capture(nodeId, payload);
+      if (revision !== this.configRevision) continue;
       this.configCache.set(nodeId, payload);
       return payload;
     }
@@ -2425,19 +2446,6 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     const protocolType = line.protocolType as ProtocolType;
     const params = revealInboundSecrets(JSON.parse(line.paramsJson) as Record<string, unknown>);
     const tls = (params.tls ?? {}) as Record<string, unknown>;
-    const reality = tls.reality as Record<string, unknown> | undefined;
-    const fallbackServerName = typeof tls.serverName === 'string' && tls.serverName.trim()
-      ? tls.serverName.trim()
-      : reality && Array.isArray(reality.serverNames) && typeof reality.serverNames[0] === 'string'
-        ? reality.serverNames[0]
-        : undefined;
-
-    // 当连接目标被覆盖为纯 IP 时，若未提供显式 SNI，尝试使用落地节点的域名（若其不为 IP）
-    const nodeDomainServerName = (line.landingNode && isIP(line.landingNode.serverHost.trim()) === 0)
-      ? line.landingNode.serverHost.trim()
-      : undefined;
-
-    const tlsServerName = line.serverNameOverride?.trim() || fallbackServerName || nodeDomainServerName;
     const isNatLanding = line.landingNode.reachability === 'NAT';
     const hasLandingOverride = !isNatLanding && Boolean(line.landingEndpointOverrideEnabled && line.landingServerHost);
     const targetHost = isNatLanding
@@ -2446,6 +2454,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
     const targetPort = isNatLanding
       ? line.landingPort
       : (hasLandingOverride && line.landingServerPort ? line.landingServerPort : line.landingPort);
+    const tlsServerName = resolveRelayTlsName(params, line.landingNode.serverHost, line.serverNameOverride, targetHost) || undefined;
     const outbound: Record<string, unknown> = {
       type: protocolType.toLowerCase(),
       tag: `relay-out-${line.id}`,
@@ -2555,6 +2564,7 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
         return node?.status === 'ONLINE' && node.communicationMode === 'HTTP';
       }
       socket.send(JSON.stringify({ type: 'config_sync', data: payload }));
+      await this.certificateTracking?.sent(nodeId, payload.version);
       return true;
     } catch (err) {
       this.logger.error(`pushConfig failed for node=${nodeId}: ${err}`);

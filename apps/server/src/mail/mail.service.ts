@@ -6,6 +6,14 @@ import { SettingsService } from '../system/settings.service';
 export class MailService {
   constructor(private readonly settingsService: SettingsService) {}
 
+  async sendCertificateSummary(email: string, rows: Array<{ name: string; validTo: Date; days: number; lineCount: number }>, timezone: string) {
+    const settings = await this.settingsService.getSettings();
+    const transporter = this.createTransporter(settings);
+    const date = new Intl.DateTimeFormat('zh-CN', { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' });
+    const lines = rows.map(row => row.name + '：' + date.format(row.validTo) + '，剩余 ' + row.days + ' 天，关联 ' + row.lineCount + ' 条线路');
+    return transporter.sendMail({ from: settings.smtpFrom || settings.smtpUser, to: email, subject: '【' + settings.siteName + '】证书到期提醒', text: lines.join('\n') });
+  }
+
   async sendVerificationCode(email: string, code: string, action: 'REGISTER' | 'CHANGE_EMAIL' | 'VERIFY_CURRENT_EMAIL' | 'RESET_PASSWORD') {
     const settings = await this.settingsService.getSettings();
     const transporter = this.createTransporter(settings);
@@ -60,6 +68,9 @@ export class MailService {
       host: settings.smtpHost,
       port: settings.smtpPort,
       secure: settings.smtpSecure,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
       auth: settings.smtpUser ? { user: settings.smtpUser, pass: settings.smtpPass } : undefined
     });
   }

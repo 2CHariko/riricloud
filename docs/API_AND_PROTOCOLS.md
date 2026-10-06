@@ -148,12 +148,23 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 执行节点有指定出站时，节点高级覆盖不得接管 inbounds/outbounds/route/dns，线路保存/启用与节点覆盖更新均校验冲突。来源白名单/原私网拒绝优先于出站路由，不支持的 UDP 拒绝；代理断开、认证错误和出站配置损坏没有 DIRECT 兜底。保存仅代表提交配置，在线 WS 防抖下发、HTTP 下一轮拉取，Agent 预检及应用回执沿用原契约；应用失败仍保留 last-good，不宣称已切换或即时终止旧连接。目标线路配置版本纳入桥接拨测失效，旧结果不得写回。配置同步使用失效代数防止旧构建污染缓存，各防抖批次只结算本轮等待者。
 
 #### 证书管理
-- `GET /admin/certificates?page&pageSize&search`：分页查询证书，支持按名称、主题、签发者和 SAN 搜索；响应为 `{ data, total, page, pageSize }`，返回 SAN、签发者、有效期、状态（`VALID`/`EXPIRING`/`EXPIRED`/`NOT_YET_VALID`）和关联线路数，不返回 PEM 私钥。⭐
-- `GET /admin/certificates/:id`：查询证书详情，除列表字段外返回 `certificatePem` 与 `privateKeyPem` 明文，必须由管理员鉴权。⭐
-- `POST /admin/certificates/parse`：前端预解析 PEM 证书。请求 `{ certificatePem, privateKeyPem? }`；使用 Node.js 原生 `crypto.X509Certificate` 提取 subject、issuer、serialNumber、SAN、有效期，并在提供私钥时校验公私钥匹配。⭐
-- `POST /admin/certificates`：创建证书。请求 `{ name, certificatePem, privateKeyPem }`；仅接受包含 SAN 的 X.509 叶子证书和未加密 PEM 私钥，证书与私钥不匹配返回 `400`。⭐
-- `PATCH /admin/certificates/:id`：更新证书名称或 PEM 内容；省略 `privateKeyPem` 时保留现有私钥。保存后自动查找关联线路的入口/落地节点并推送 `config_sync`，响应附带 `affectedNodeIds` 与 `syncedNodeIds`。⭐
+- 全部接口需管理员 JWT；不涉及 ACME 或面板反向代理证书。接受 SAN 叶子证书及按叶子→中间 CA→可选根排列的 fullchain（最多16张），检查可解析性、重复、公私钥匹配、相邻签发及签名。允许自签名、私有 CA、缺少根的链，不联网补链；`chainValidation=PASSED` 仅表示内部校验，`trustValidation=NOT_CHECKED` 明确不等于公信任。
+- `GET /admin/certificates?page&pageSize&search&status&association&sort`：默认20、上限100；status=`VALID/EXPIRING/EXPIRED/NOT_YET_VALID`，association=`linked/unlinked`，sort=`expiry-asc/expiry-desc/updated-desc`（默认最先到期）。保留原字段并追加 `currentRevision/fingerprint256/keyType/chainLength/chain/chainValidation/trustValidation`，列表无 PEM/私钥。⭐
+- `GET /admin/certificates/:id`：详情返回 PEM 与解密私钥，`Cache-Control: no-store`；`?publicOnly=true` 仅返回元信息，供证书选择器读取当前选项。私钥读取写系统日志。⭐
+- `POST /admin/certificates/parse`：请求 `{ certificatePem, privateKeyPem? }`，返回元信息、校验与 `duplicates:[{id,name}]`；重复叶子允许继续保存。⭐
+- `POST /admin/certificates`：请求 `{ name, certificatePem, privateKeyPem }`，错误链/私钥返回400；过期或未来证书允许保存。新绑定、启用和内容替换检查有效期及全部关联/桥接实际 TLS 校验名称（精确域名、单层通配符、IP SAN）；历史异常不自动停线，名称修改/停用/解除关联允许。⭐
+- `PATCH /admin/certificates/:id`：省略私钥沿用原值；可选 `expectedRevision`（新版 UI 必传），不一致409。内容摘要按规范链及私钥公钥计算，相同内容/改名不生成版本或推送；实际替换在短事务中保存新修订，返回 `{certificate,contentChanged,affectedNodeIds,syncedNodeIds,deploymentSummary}`。`syncedNodeIds` 兼容旧字段，仅代表同步已请求，不代表运行确认。⭐
 - `DELETE /admin/certificates/:id`：删除未被线路引用的证书；仍有关联线路时返回 `409`。⭐
+- `GET /admin/certificates/summary`：`{total,expired,expiring,notYetValid,invalid,needsAttention}`；类别可重叠，需处理数逐证书去重，仅管理员可见。⭐
+- `GET /admin/certificates/:id/lines?page&pageSize`：分页关联（含桥接引用）名称/协议/状态/关联节点/实际承载节点/SNI/匹配结果/异常原因；`hostingNodeIds` 区分盲转发落地与协议代理两端。⭐
+- `GET /admin/certificates/:id/revisions?page&pageSize`：只返回修订、时间、操作者及元信息，保留当前及最近10个历史版本，绝不返回历史私钥。⭐
+- `POST /admin/certificates/:id/preview-update`：与更新同参数，返回新旧有效期/SAN、当前修订、受影响线路及匹配结果，no-store；保存时再次校验。⭐
+- `POST /admin/certificates/:id/rollback`：`{revision,expectedRevision}`，重新校验历史内容与当前关联线路，创建新的递增修订并全体分发；不支持单节点长期固定旧版，过期/域名不覆盖则拒绝。⭐
+- `GET /admin/certificates/:id/deployments?page&pageSize`：修订/节点/目标配置版本/结果（包括历史替代记录）；状态 `WAITING/SENT/ACCEPTED/CONFIRMED/FAILED/TIMEOUT/SUPERSEDED/UNCONFIRMED/UNMANAGED`。WS 真实发送、HTTP 返回配置才记 SENT；接受回执不等于运行，心跳需对应包含该修订的持久快照且内核存活。相同修订的新配置可继续确认，旧回执不得覆盖新目标；旧 Agent 缺字段无法确认，高级覆盖更换证书/私钥或移除入站为未控制。在线发送后120秒超时，HTTP取120秒和三倍轮询周期最大值；离线等待，迟到有效心跳可确认，重启后对账继续。⭐
+- `POST /admin/certificates/:id/deployments/retry`：`{nodeIds?:UUID[]}`，限当前实际承载节点，重新请求配置同步；记录审计。⭐
+- `POST /admin/certificates/:id/export`：`{format:leaf|fullchain|private-key|bundle}`，响应附件、no-store；bundle为含叶子/fullchain/私钥的 ZIP，秘密下载需 UI 确认。不把秘密放 URL、日志或服务端临时文件。⭐
+- 系统设置追加 `certificateExpiryWarningDays`（1~90，默认30）、`certificateMailEnabled`（默认false）、`certificateMailRecipients`（默认空，最多20个合法邮箱）。启用需 SMTP 配置且连接/鉴权可用；站点时区每天每收件人最多一份汇总，阈值/7天/1天/过期阶段按修订持久去重，失败6小时重试，续期旧提醒失效。邮件无PEM/私钥，不保证SMTP严格恰好一次发送。提醒不写用户公告。
+- 操作审计使用系统日志 `module=Certificate`，记录操作者、ID、修订、结果，无秘密；保留期限与日志完整性限制沿用系统日志。配置改变可能触发现有 Sing-box 重启流程；未增加 WS/HTTP 消息字段或真实 TLS 握手。
 
 #### 上游订阅与节点管理 (`/admin/upstream`)
 - `GET /admin/upstream?page&pageSize&search&status`：真实分页来源列表；URL/Header 掩码，content 不返回，提供 hasContent。`format` 是配置，`detectedFormat` 为最近检测结果；`lastSyncAt` 与 `lastSuccessAt` 分离；用量字节值为十进制字符串或 null，未知不等于无限。

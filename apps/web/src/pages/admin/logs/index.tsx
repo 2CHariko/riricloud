@@ -40,7 +40,8 @@ export default function AdminLogsPage() {
   const [filter, setFilter] = React.useState<LogsFilter>(() => ({
     ...DEFAULT_FILTER,
     nodeId: initialNodeId,
-    module: initialModule
+    module: initialModule,
+    keyword: searchParams.get('keyword') || ''
   }));
   const [selectedLog, setSelectedLog] = React.useState<SystemLogItem | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = React.useState(false);
@@ -63,6 +64,7 @@ export default function AdminLogsPage() {
         ...prev,
         ...(qNodeId ? { nodeId: qNodeId } : {}),
         ...(qModule ? { module: qModule } : {}),
+        keyword: searchParams.get('keyword') || '',
         page: 1
       }));
     }

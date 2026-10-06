@@ -1,5 +1,10 @@
 import { ExternalLink, KeyRound } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { Input } from '@/components/ui/input';
+import { CertificatePager } from '../../certificates/certificate-pager';
+import { useAdminCertificates } from '../../certificates/use-certificates';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { UseFormReturn } from 'react-hook-form';
@@ -25,7 +30,12 @@ export function LineSecurityFields({ form, onGenerateParameters, parametersPendi
   const transportType = form.watch('transportType');
   const tlsAlpn = form.watch('tlsAlpn');
   const certificateId = form.watch('certificateId');
-  const selectedCertificate = certificates.find((certificate) => certificate.id === certificateId);
+  const [certificateSearch, setCertificateSearch] = useState('');
+  const [certificatePage, setCertificatePage] = useState(1);
+  const certificateQuery = useAdminCertificates(certificateSearch, certificatePage);
+  const currentCertificate = useQuery({ queryKey: ['admin', 'certificates', 'public', certificateId], enabled: mode === 'tls' && Boolean(certificateId) && certificateId !== MANUAL_CERTIFICATE_ID, queryFn: async () => (await api.get<{ certificate: ApiCertificate }>('/admin/certificates/' + certificateId, { params: { publicOnly: true } })).data.certificate });
+  const selectedCertificate = currentCertificate.data ?? certificates.find((certificate) => certificate.id === certificateId);
+  const certificateOptions = [...new Map([...(certificateQuery.data?.data ?? []), ...(selectedCertificate ? [selectedCertificate] : [])].map(cert => [cert.id, cert])).values()];
   const alpnOptions = getAlpnOptions(protocolType, transportType, tlsAlpn);
 
   const tlsModes: Array<'none' | 'tls' | 'reality' | 'acme'> = LOCAL_PROXY_PROTOCOLS.includes(protocolType)
@@ -44,7 +54,7 @@ export function LineSecurityFields({ form, onGenerateParameters, parametersPendi
 
   useEffect(() => {
     if (mode !== 'tls' || !selectedCertificate || form.getValues('tlsServerName').trim()) return;
-    const suggestedName = selectedCertificate.sans[0];
+    const suggestedName = selectedCertificate.sans.find(name => !name.includes('*') && !name.includes(':') && !/^\d+\.\d+\.\d+\.\d+$/.test(name));
     if (suggestedName) form.setValue('tlsServerName', suggestedName, { shouldDirty: true });
   }, [form, mode, selectedCertificate]);
 
@@ -94,19 +104,22 @@ export function LineSecurityFields({ form, onGenerateParameters, parametersPendi
       </>}
       {mode === 'tls' && <div className="space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 space-y-2">
+            <Input value={certificateSearch} onChange={event => { setCertificateSearch(event.target.value); setCertificatePage(1); }} placeholder={t('admin:certificates.searchPlaceholder')} />
+            {certificateQuery.isError && <Button type="button" variant="outline" onClick={() => void certificateQuery.refetch()}>{t('admin:certificateManagement.retry')}</Button>}
             <SelectField
               form={form}
               name="certificateId"
               label={t('admin:lineForm.certificateId')}
               options={[
                 { value: MANUAL_CERTIFICATE_ID, label: t('admin:lineForm.manualCertificate') },
-                ...certificates.map((certificate) => ({ value: certificate.id, label: `${certificate.name} · ${certificate.sans[0] ?? certificate.subject}` }))
+                ...certificateOptions.map((certificate) => ({ value: certificate.id, label: `${certificate.name} · ${certificate.sans[0] ?? certificate.subject}` }))
               ]}
             />
           </div>
           <Button type="button" variant="outline" size="sm" asChild className="shrink-0"><Link to="/admin/certificates"><ExternalLink />{t('admin:lineForm.manageCertificates')}</Link></Button>
         </div>
+        <CertificatePager page={certificatePage} total={certificateQuery.data?.total ?? 0} onChange={setCertificatePage} />
         {selectedCertificate ? <p className="text-xs text-muted-foreground">{t('admin:lineForm.certificateSelectedHint', { name: selectedCertificate.name })}</p> : <FieldGrid>
           <TextField form={form} name="tlsCertPath" label={t('admin:lineForm.tlsCertPath')} placeholder="/etc/ssl/cert.pem" />
           <TextField form={form} name="tlsKeyPath" label={t('admin:lineForm.tlsKeyPath')} placeholder="/etc/ssl/key.pem" />
