@@ -6,6 +6,7 @@ import { PrismaClient } from '@prisma/client';
 import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { AgentService } from '../agent-gateway/agent.service';
 import { CertificatesService } from './certificates.service';
 import { CertificatesController } from './certificates.controller';
@@ -27,6 +28,7 @@ describe('手动证书生命周期与轻量 E2E', () => {
   jest.setTimeout(120_000);
   let dir: string, prisma: PrismaClient, service: CertificatesService, bindings: CertificateBindingsService, tracking: CertificateTrackingService, agent: AgentService, app: INestApplication, base: string;
   let adminToken: string, userToken: string;
+  const originalJwtSecret = process.env.JWT_SECRET;
   const logs = { enqueue: jest.fn() };
   const settings = { certificateExpiryWarningDays: 30, certificateMailEnabled: false, certificateMailRecipients: ['admin@example.com'], smtpEnabled: true, systemTimezone: 'Asia/Shanghai' };
   const settingsService = { getSettings: jest.fn(async () => settings) };
@@ -37,6 +39,7 @@ describe('手动证书生命周期与轻量 E2E', () => {
   const heartbeat: HeartbeatData = { protocolVersion: 2, cpuUsage: 0, memoryUsage: 0, bandwidthRate: 0, trafficSnapshots: [], kernelRunning: true };
 
   beforeAll(async () => {
+    process.env.JWT_SECRET = randomBytes(32).toString('hex');
     dir = await mkdtemp(join(tmpdir(), 'riricloud-certificates-'));
     // 单连接让历史迁移的 PRAGMA/DROP/RENAME 共用连接，避免不同平台池大小影响。
     const databaseUrl = 'file:' + join(dir, 'test.db').replaceAll('\\', '/') + '?connection_limit=1';
@@ -78,7 +81,12 @@ describe('手动证书生命周期与轻量 E2E', () => {
     logs.enqueue.mockClear(); mail.sendCertificateSummary.mockReset();
     settings.certificateMailEnabled = false;
   });
-  afterAll(async () => { await app?.close(); await agent?.onModuleDestroy(); await prisma?.$disconnect(); if (dir) await rm(dir, { recursive: true, force: true }); });
+  afterAll(async () => {
+    await app?.close(); await agent?.onModuleDestroy(); await prisma?.$disconnect();
+    if (dir) await rm(dir, { recursive: true, force: true });
+    if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = originalJwtSecret;
+  });
   const create = (fixture = first) => service.create({ name: '测试证书', certificatePem: fixture.certificatePem, privateKeyPem: fixture.privateKeyPem });
   async function bind(id: string, extra: Record<string, unknown> = {}) {
     return prisma.line.create({ data: { name: '测试线路', entryNodeId: 'entry', entryPort: 443, certificateId: id, paramsJson: '{"tls":{"mode":"tls","enabled":true,"serverName":"example.com"}}', ...extra } });
