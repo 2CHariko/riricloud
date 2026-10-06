@@ -83,8 +83,15 @@ export function parseLastProbe(value: unknown): ProbeResult | null {
     || (p.status === 'SUCCESS' && (p.engine !== 'MIHOMO' || typeof p.latencyMs !== 'number' || !Number.isInteger(p.latencyMs) || p.latencyMs <= 0 || p.latencyMs > 65535 || p.errorCode !== null))) return null;
   return p as unknown as ProbeResult;
 }
-export function probeTone(result: Pick<ProbeResult, 'status'>): 'success' | 'warning' | 'danger' | 'muted' {
-  if (result.status === 'SUCCESS') return 'success';
+export function probeTone(result: Pick<ProbeResult, 'status'> & { latencyMs?: number | null }): 'success' | 'warning' | 'danger' | 'muted' {
+  if (result.status === 'SUCCESS') {
+    if (typeof result.latencyMs === 'number' && Number.isFinite(result.latencyMs)) {
+      if (result.latencyMs < 150) return 'success';
+      if (result.latencyMs < 400) return 'warning';
+      return 'danger';
+    }
+    return 'success';
+  }
   if (result.status === 'ERROR' || result.status === 'TIMEOUT') return 'danger';
   if (result.status === 'UNSUPPORTED' || result.status === 'ENVIRONMENT_UNAVAILABLE') return 'warning';
   return 'muted';

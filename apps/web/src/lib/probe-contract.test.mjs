@@ -21,6 +21,8 @@ test('all task result statuses remain distinct without presenting technical meta
   for (const status of ['SUCCESS', 'TIMEOUT', 'ERROR', 'UNSUPPORTED', 'ENVIRONMENT_UNAVAILABLE', 'CANCELED', 'STALE', 'SKIPPED']) assert.equal(parseLastProbe({ ...valid, status }).status, status);
   assert.equal(probeTone(valid), 'success');
   assert.equal(probeTone({ ...valid, engine: 'SINGBOX' }), 'success');
+  assert.equal(probeTone({ ...valid, latencyMs: 250 }), 'warning');
+  assert.equal(probeTone({ ...valid, latencyMs: 800 }), 'danger');
   for (const status of ['UNSUPPORTED', 'ENVIRONMENT_UNAVAILABLE']) assert.equal(probeTone({ ...valid, status }), 'warning');
   for (const status of ['CANCELED', 'STALE', 'SKIPPED']) assert.equal(probeTone({ ...valid, status }), 'muted');
 });
