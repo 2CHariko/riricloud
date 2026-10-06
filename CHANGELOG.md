@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- 锁定 `proxy-addr 2.0.8` 与 `source-map-js 1.2.2` 安全补丁，修复既有传递依赖的 IP 信任网段绕过与索引 source map 拒绝服务告警，恢复高危依赖审计。
+
 ### Added
 
 ### Changed

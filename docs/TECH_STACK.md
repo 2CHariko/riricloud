@@ -72,6 +72,8 @@ Linux 开发机使用系统环境安装 Node.js、pnpm 与 Go，不在仓库内�
 
 ### 3.2 安全依赖审计说明
 
+**2026-10-06 补充 — `proxy-addr` / `source-map-js` 安全补丁锁定**：证书管理 PR 的 CI 揭示既有传递依赖新披露的 Critical/High 告警。`proxy-addr@2.0.7` 经 NestJS/Express 引入，受 [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h) 的 IPv4 映射 IPv6 信任网段绕过影响；`source-map-js@1.2.1` 经 PostCSS/Vite 工具链引入，受 [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) 的索引 source map 拒绝服务影响。根 `pnpm.overrides` 分别锁定官方修复补丁 `2.0.8` / `1.2.2` 并同步锁文件，不新增依赖或忽略项。上游自行采用修复版本后应移除相应临时 override，持续由安全 CI 复核。
+
 截至 **2026-09-06**，`pnpm audit --prod` 仅报告一条已在根 `package.json` 忽略清单中登记的 High advisory：`deepmerge-ts` 经 `prisma -> @prisma/config` 引入（`GHSA-ggr8-5vv4-36mx`）。该依赖只存在于 Prisma CLI/config 合并链路，不进入 RiriCloud 的业务请求合并路径；业务线路与订阅配置使用服务端显式校验和本地合并函数。残余风险由 Prisma 版本升级、`pnpm audit --prod` 和发布门禁持续复核，若调用链或上游修复状态变化，必须移除忽略项或重新评估。
 
 **2026-09-10 补充 — `multer` 传递依赖强制升级**：新披露 3 条 High DoS advisory（`GHSA-wc9g-mqfw-jrwm`、`GHSA-qfvm-cv95-jqjf`、`GHSA-535w-7cp7-47q4`）影响 `multer@2.2.0`，该版本经 `@nestjs/platform-express -> multer` 传递进入主控的上传链路。由于 `@nestjs/platform-express` 11.x 最新版（11.2.3）仍精确依赖 `multer@2.2.0`，在 **NestJS 11 内无版本可升**，因此在根 `package.json` 的 `pnpm.overrides` 中强制 `multer: 2.3.0`（advisory 声明的已修复版本），并随 `pnpm-lock.yaml` 一并锁定。该 override 属**临时安全锁定**：当 `@nestjs/platform-express` 自行依赖 `multer>=2.3.0`（或升级到 NestJS 12 时）必须移除本项，避免长期漂移；`pnpm audit --audit-level high` 已恢复通过（仅剩上方已登记的忽略项）。
