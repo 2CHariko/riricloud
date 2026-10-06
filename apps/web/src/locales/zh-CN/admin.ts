@@ -58,6 +58,7 @@ const admin = {
     requestFailed: '延迟测试请求失败，请稍后重试。',
     taskUnavailable: '任务查询失败或已过期，可刷新或重新测试。', resultsUnavailable: '结果读取失败，可刷新重试。',
     invalidResult: '暂无有效延迟测试结果，请重新测试。', notTested: '未测试',
+    qualityExcellent: '延迟极佳', qualityNormal: '延迟一般', qualityHigh: '延迟较高',
     closeHelp: '关闭窗口仅停止刷新，不会取消后台测试；重新打开可继续查看。',
     configuredTarget: '测试目标', testTime: '测试时间：{{time}}',
     status: { SUCCESS: '测试成功', TIMEOUT: '测试超时', ERROR: '测试失败', UNSUPPORTED: '暂不支持测试', ENVIRONMENT_UNAVAILABLE: '测试暂不可用', CANCELED: '已取消', STALE: '结果已过期', SKIPPED: '已跳过' },
