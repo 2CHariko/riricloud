@@ -46,14 +46,14 @@ export class CertificatesService {
       return { chainValidation: 'INVALID' as const, trustValidation: 'NOT_CHECKED' as const, chainLength: 0, chain: [], fingerprint256: null, keyType: null, selfSigned: false };
     }
   }
-  private view(row: Row, warningDays = 30) {
+  private view(row: Row, warningDays = 30, counts = { directLineCount: row._count?.lines ?? 0, inheritedLineCount: 0, associatedLineCount: row._count?.lines ?? 0 }) {
     let sans: string[] = [];
     try {
       sans = JSON.parse(row.sansJson) as string[];
     }
     catch { /* 历史数据保留 */ }
     const metadata = row.validationJson ? JSON.parse(row.validationJson) as ReturnType<CertificatesService['metadata']> : this.metadata(row.certificatePem);
-    return { id: row.id, name: row.name, subject: row.subject, issuer: row.issuer, serialNumber: row.serialNumber, sans, validFrom: row.validFrom, validTo: row.validTo, status: getCertificateStatus(row.validFrom, row.validTo, new Date(), warningDays), daysUntilExpiry: Math.ceil((row.validTo.getTime() - Date.now()) / 86400000), lineCount: row._count?.lines ?? 0, createdAt: row.createdAt, updatedAt: row.updatedAt, currentRevision: row.currentRevision, ...metadata };
+    return { id: row.id, name: row.name, subject: row.subject, issuer: row.issuer, serialNumber: row.serialNumber, sans, validFrom: row.validFrom, validTo: row.validTo, status: getCertificateStatus(row.validFrom, row.validTo, new Date(), warningDays), daysUntilExpiry: Math.ceil((row.validTo.getTime() - Date.now()) / 86400000), lineCount: row._count?.lines ?? 0, ...counts, createdAt: row.createdAt, updatedAt: row.updatedAt, currentRevision: row.currentRevision, ...metadata };
   }
   private async ensure(row: Row): Promise<void> {
     // 历史记录惰性初始化，异常 PEM 保留原内容；密钥统一加密后进入历史。
@@ -101,7 +101,8 @@ export class CertificatesService {
     const orderBy: Prisma.CertificateOrderByWithRelationInput = query.sort === 'updated-desc' ? { updatedAt: 'desc' } : { validTo: query.sort === 'expiry-desc' ? 'desc' : 'asc' };
     const [total, rows] = await Promise.all([this.prisma.certificate.count({ where }), this.prisma.certificate.findMany({ where, include: includeCount, orderBy, skip: ((query.page ?? 1) - 1) * (query.pageSize ?? 20), take: query.pageSize ?? 20 })]);
     await Promise.all(rows.map(row => this.ensure(row)));
-    return { data: rows.map(row => this.view(row, warningDays)), total, page: query.page ?? 1, pageSize: query.pageSize ?? 20 };
+    const counts = await this.bindings?.counts(rows.map(row => row.id));
+    return { data: rows.map(row => this.view(row, warningDays, counts?.get(row.id))), total, page: query.page ?? 1, pageSize: query.pageSize ?? 20 };
   }
   async summary() {
     const days = (await this.settings?.getSettings())?.certificateExpiryWarningDays ?? 30;
@@ -136,12 +137,13 @@ export class CertificatesService {
   }
   async detail(id: string, operatorId?: string, publicOnly = false) {
     const row = await this.raw(id);
+    const counts = (await this.bindings?.counts([id]))?.get(id);
     if (publicOnly)
-      return { certificate: this.view(row, (await this.settings?.getSettings())?.certificateExpiryWarningDays) };
+      return { certificate: this.view(row, (await this.settings?.getSettings())?.certificateExpiryWarningDays, counts) };
     try {
       const privateKeyPem = decryptSecret(row.privateKeyPem);
       this.audit('PRIVATE_KEY_READ', id, row.currentRevision, operatorId);
-      return { certificate: { ...this.view(row, (await this.settings?.getSettings())?.certificateExpiryWarningDays), certificatePem: row.certificatePem, privateKeyPem } };
+      return { certificate: { ...this.view(row, (await this.settings?.getSettings())?.certificateExpiryWarningDays, counts), certificatePem: row.certificatePem, privateKeyPem } };
     }
     catch (error) {
       this.audit('PRIVATE_KEY_READ', id, row.currentRevision, operatorId, 'FAILED');
@@ -167,7 +169,9 @@ export class CertificatesService {
   }
   async associatedLines(id: string, query: QueryCertificateDto) {
     const row = await this.raw(id);
-    return pageRows(await this.bindings!.lines(id, row.certificatePem), query);
+    const search = query.search?.trim().toLocaleLowerCase();
+    const rows = (await this.bindings!.lines(id, row.certificatePem)).filter(line => (!search || line.name.toLocaleLowerCase().includes(search)) && (!query.lineStatus || line.status === query.lineStatus) && (!query.relation || line.inherited === (query.relation === 'inherited')));
+    return pageRows(rows, query);
   }
   async revisions(id: string, query: QueryCertificateDto) {
     await this.raw(id);
@@ -212,7 +216,8 @@ export class CertificatesService {
     });
     this.audit(result.changed ? event === 'UPDATE' ? 'REPLACE' : event : 'RENAME', id, result.row.currentRevision, operatorId);
     const sync = await Promise.all(result.nodeIds.map(async (nodeId) => ({ nodeId, synced: await this.agentGateway.pushConfig(nodeId) })));
-    return { certificate: this.view(result.row), contentChanged: result.changed, affectedNodeIds: result.nodeIds, syncedNodeIds: sync.filter(row => row.synced).map(row => row.nodeId), deploymentSummary: { affected: sync.length, requested: sync.filter(row => row.synced).length } };
+    const counts = (await this.bindings?.counts([id]))?.get(id);
+    return { certificate: this.view(result.row, (await this.settings?.getSettings())?.certificateExpiryWarningDays, counts), contentChanged: result.changed, affectedNodeIds: result.nodeIds, syncedNodeIds: sync.filter(row => row.synced).map(row => row.nodeId), deploymentSummary: { affected: sync.length, requested: sync.filter(row => row.synced).length } };
   }
   async rollback(id: string, revision: number, expectedRevision?: number, operatorId?: string) {
     const current = await this.raw(id);

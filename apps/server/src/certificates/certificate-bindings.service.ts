@@ -80,6 +80,20 @@ export function bindingServerName(line: BindingLine): string {
 @Injectable()
 export class CertificateBindingsService {
   constructor(private readonly prisma: PrismaService) { }
+  async counts(ids: string[]) {
+    const rows = await this.prisma.line.findMany({ where: { OR: [{ certificateId: { in: ids } }, { targetLine: { certificateId: { in: ids } } }] }, select: { certificateId: true, targetLine: { select: { certificateId: true } } } });
+    const result = new Map(ids.map(id => [id, { directLineCount: 0, inheritedLineCount: 0, associatedLineCount: 0 }]));
+    for (const row of rows) {
+      for (const id of new Set([row.certificateId, row.targetLine?.certificateId])) {
+        const count = id ? result.get(id) : undefined;
+        if (!count) continue;
+        count.associatedLineCount++;
+        if (row.certificateId === id) count.directLineCount++;
+        else count.inheritedLineCount++;
+      }
+    }
+    return result;
+  }
   async associations(ids: string[]) {
     return this.prisma.line.findMany({ where: { OR: [{ certificateId: { in: ids } }, { targetLine: { certificateId: { in: ids } } }] }, include: bindingLineInclude, orderBy: { createdAt: 'asc' } });
   }
@@ -102,7 +116,9 @@ export class CertificateBindingsService {
       catch (error) {
         validationError = error instanceof Error ? error.message : '证书不可用于此线路';
       }
-      return { id: line.id, name: line.name, protocolType: line.protocolType, status: line.status, inherited: !own, serverName, serverNames, matched: serverNames.every(name => certificateMatchesHost(pem, name)), validationError, entryNode: line.entryNode ? { id: line.entryNode.id, name: line.entryNode.name } : null, landingNode: line.landingNode ? { id: line.landingNode.id, name: line.landingNode.name } : null, hostingNodeId: hostingNodeIds[0] ?? null, hostingNodeIds, nodeIds: [line.entryNodeId, line.landingNodeId].filter((id): id is string => Boolean(id)) };
+      const candidates = own ? [line.entryNode, line.landingNode] : [line.targetLine?.entryNode];
+      const hostingNodes = hostingNodeIds.map(id => candidates.find(node => node?.id === id)).filter((node): node is NonNullable<typeof node> => Boolean(node)).map(node => ({ id: node.id, name: node.name }));
+      return { id: line.id, name: line.name, type: line.type, relayMode: line.relayMode, targetLine: line.targetLine ? { id: line.targetLine.id, name: line.targetLine.name } : null, protocolType: line.protocolType, status: line.status, inherited: !own, serverName, serverNames, matched: serverNames.every(name => certificateMatchesHost(pem, name)), validationError, entryNode: line.entryNode ? { id: line.entryNode.id, name: line.entryNode.name } : null, landingNode: line.landingNode ? { id: line.landingNode.id, name: line.landingNode.name } : null, hostingNodeId: hostingNodeIds[0] ?? null, hostingNodeIds, hostingNodes, nodeIds: [line.entryNodeId, line.landingNodeId].filter((id): id is string => Boolean(id)) };
     });
   }
   async assertReplacement(id: string, pem: string, client: Prisma.TransactionClient = this.prisma) {

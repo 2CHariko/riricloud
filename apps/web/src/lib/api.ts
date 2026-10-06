@@ -218,6 +218,9 @@ export interface ApiCertificate {
   status: CertificateStatus;
   daysUntilExpiry: number;
   lineCount: number;
+  directLineCount?: number;
+  inheritedLineCount?: number;
+  associatedLineCount?: number;
   createdAt: string;
   updatedAt: string;
 }

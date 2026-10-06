@@ -156,7 +156,8 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 - `PATCH /admin/certificates/:id`：省略私钥沿用原值；可选 `expectedRevision`（新版 UI 必传），不一致409。内容摘要按规范链及私钥公钥计算，相同内容/改名不生成版本或推送；实际替换在短事务中保存新修订，返回 `{certificate,contentChanged,affectedNodeIds,syncedNodeIds,deploymentSummary}`。`syncedNodeIds` 兼容旧字段，仅代表同步已请求，不代表运行确认。⭐
 - `DELETE /admin/certificates/:id`：删除未被线路引用的证书；仍有关联线路时返回 `409`。⭐
 - `GET /admin/certificates/summary`：`{total,expired,expiring,notYetValid,invalid,needsAttention}`；类别可重叠，需处理数逐证书去重，仅管理员可见。⭐
-- `GET /admin/certificates/:id/lines?page&pageSize`：分页关联（含桥接引用）名称/协议/状态/关联节点/实际承载节点/SNI/匹配结果/异常原因；`hostingNodeIds` 区分盲转发落地与协议代理两端。⭐
+- `GET /admin/certificates/:id/lines?page&pageSize&search&lineStatus&relation`：分页关联（含桥接引用），search 按线路名称搜索，lineStatus=`ACTIVE/DISABLED`，relation=`direct/inherited`，过滤后再分页。返回名称/协议/状态/关联节点/实际承载节点/SNI/匹配结果/异常原因，追加 `type/relayMode/targetLine:{id,name}|null/hostingNodes:[{id,name}]`；`hostingNodeIds` 区分盲转发落地与协议代理两端，桥接承载节点取目标线路的真实节点。无 PEM、私钥及节点凭据。⭐
+- 列表/详情/更新响应追加 `directLineCount/inheritedLineCount/associatedLineCount`：分别为直接绑定、通过目标桥接使用、按线路去重的总影响数；同一线路同时关联和引用该证书只计一次并归为直接绑定。保留旧 `lineCount` 直接绑定口径。⭐
 - `GET /admin/certificates/:id/revisions?page&pageSize`：只返回修订、时间、操作者及元信息，保留当前及最近10个历史版本，绝不返回历史私钥。⭐
 - `POST /admin/certificates/:id/preview-update`：与更新同参数，返回新旧有效期/SAN、当前修订、受影响线路及匹配结果，no-store；保存时再次校验。⭐
 - `POST /admin/certificates/:id/rollback`：`{revision,expectedRevision?}`（新版 UI 必传 expectedRevision），重新校验历史内容与当前关联线路，创建新的递增修订并全体分发；不支持单节点长期固定旧版，过期/域名不覆盖则拒绝。⭐

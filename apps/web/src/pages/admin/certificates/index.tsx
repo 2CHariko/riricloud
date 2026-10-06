@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { positivePage } from '@/lib/certificate-navigation';
+import { CertificateLinesDialog } from './certificate-lines-dialog';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PageContainer, PageHeader } from '@/components/shared/page-container';
@@ -28,11 +31,19 @@ function statusVariant(status: CertificateStatus): 'default' | 'secondary' | 'de
 
 export default function AdminCertificatesPage() {
   const { t } = useTranslation(['admin', 'common']);
-  const [search, setSearch] = React.useState('');
-  const [page, setPage] = React.useState(1);
-  const [status, setStatus] = React.useState('all');
-  const [association, setAssociation] = React.useState('all');
-  const [sort, setSort] = React.useState('expiry-asc');
+  const [params, setParams] = useSearchParams();
+  const search = params.get('search') ?? '';
+  const page = positivePage(params.get('page'));
+  const status = params.get('status') ?? 'all';
+  const association = params.get('association') ?? 'all';
+  const sort = params.get('sort') ?? 'expiry-asc';
+  const setFilter = (key: string, value: string) => {
+    setParams(current => { const next = new URLSearchParams(current); next.set(key, value); next.set('page', '1'); return next; }, { replace: true });
+  };
+  const setPage = (value: number) => setParams(current => { const next = new URLSearchParams(current); next.set('page', String(value)); return next; }, { replace: true });
+  const associatedId = params.get('tab') === 'lines' ? params.get('certificateId') : null;
+  const openLines = (id: string) => setParams(current => { const next = new URLSearchParams(current); next.set('certificateId', id); next.set('tab', 'lines'); ['linePage', 'lineSearch', 'lineStatus', 'lineRelation'].forEach(key => next.delete(key)); return next; });
+  const closeLines = () => setParams(current => { const next = new URLSearchParams(current); ['certificateId', 'tab', 'linePage', 'lineSearch', 'lineStatus', 'lineRelation'].forEach(key => next.delete(key)); return next; }, { replace: true });
   const summary = useCertificateSummary();
   const [formOpen, setFormOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -75,14 +86,14 @@ export default function AdminCertificatesPage() {
       <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative w-full min-w-0 flex-1 sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={t('admin:certificates.searchPlaceholder')} className="pl-9" />
+          <Input value={search} onChange={(event) => setFilter('search', event.target.value)} placeholder={t('admin:certificates.searchPlaceholder')} className="pl-9" />
         </div>
         <Button className="w-full lg:w-auto" onClick={openCreate}><Plus />{t('admin:certificates.uploadCert')}</Button>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
-        <Select value={status} onValueChange={value => { setStatus(value); setPage(1); }}><SelectTrigger aria-label={t('admin:certificateManagement.allStatuses')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allStatuses')}</SelectItem>{Object.entries(statusLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
-        <Select value={association} onValueChange={value => { setAssociation(value); setPage(1); }}><SelectTrigger aria-label={t('admin:certificateManagement.allAssociations')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allAssociations')}</SelectItem><SelectItem value="linked">{t('admin:certificateManagement.linked')}</SelectItem><SelectItem value="unlinked">{t('admin:certificateManagement.unlinked')}</SelectItem></SelectContent></Select>
-        <Select value={sort} onValueChange={value => { setSort(value); setPage(1); }}><SelectTrigger aria-label={t('admin:certificateManagement.expiryAsc')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="expiry-asc">{t('admin:certificateManagement.expiryAsc')}</SelectItem><SelectItem value="expiry-desc">{t('admin:certificateManagement.expiryDesc')}</SelectItem><SelectItem value="updated-desc">{t('admin:certificateManagement.updatedDesc')}</SelectItem></SelectContent></Select>
+        <Select value={status} onValueChange={value => setFilter('status', value)}><SelectTrigger aria-label={t('admin:certificateManagement.allStatuses')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allStatuses')}</SelectItem>{Object.entries(statusLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
+        <Select value={association} onValueChange={value => setFilter('association', value)}><SelectTrigger aria-label={t('admin:certificateManagement.allAssociations')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allAssociations')}</SelectItem><SelectItem value="linked">{t('admin:certificateManagement.linked')}</SelectItem><SelectItem value="unlinked">{t('admin:certificateManagement.unlinked')}</SelectItem></SelectContent></Select>
+        <Select value={sort} onValueChange={value => setFilter('sort', value)}><SelectTrigger aria-label={t('admin:certificateManagement.expiryAsc')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="expiry-asc">{t('admin:certificateManagement.expiryAsc')}</SelectItem><SelectItem value="expiry-desc">{t('admin:certificateManagement.expiryDesc')}</SelectItem><SelectItem value="updated-desc">{t('admin:certificateManagement.updatedDesc')}</SelectItem></SelectContent></Select>
       </div>
       <Card>
         <CardContent className="p-0">
@@ -110,7 +121,7 @@ export default function AdminCertificatesPage() {
                     <TableCell><div className="flex max-w-64 flex-wrap gap-1">{certificate.sans.slice(0, 4).map((san) => <Badge key={san} variant="secondary">{san}</Badge>)}{certificate.sans.length > 4 && <Badge variant="outline">+{certificate.sans.length - 4}</Badge>}</div></TableCell>
                     <TableCell className="max-w-56 truncate text-sm text-muted-foreground">{certificate.issuer}</TableCell>
                     <TableCell><div className="flex flex-col items-start gap-1"><Badge variant={statusVariant(certificate.status)}>{statusLabels[certificate.status]}</Badge><span className="text-xs text-muted-foreground">{t('admin:certificates.validUntil', { date: formatDate(certificate.validTo) })}</span></div></TableCell>
-                    <TableCell><span className="font-medium">{certificate.lineCount}</span><span className="ml-1 text-xs text-muted-foreground">{t('admin:certificates.associatedLines')}</span></TableCell>
+                    <TableCell><Button variant="link" className="h-auto p-0" onClick={() => openLines(certificate.id)}>{t('admin:certificateManagement.totalLines', { count: certificate.associatedLineCount ?? certificate.lineCount })}</Button><p className="text-xs text-muted-foreground">{t('admin:certificateManagement.associationCounts', { direct: certificate.directLineCount ?? certificate.lineCount, inherited: certificate.inheritedLineCount ?? 0 })}</p></TableCell>
                     <TableCell><div className="flex justify-end gap-1"><IconButton variant="ghost" size="icon-sm" aria-label={t('admin:certificates.editCert')} onClick={() => openEdit(certificate)}><Pencil /></IconButton><IconButton variant="ghost" size="icon-sm" aria-label={t('common:actions.delete')} onClick={() => setDeleting(certificate)}><Trash2 className="text-destructive" /></IconButton></div></TableCell>
                   </TableRow>
                 ))}
@@ -133,6 +144,7 @@ export default function AdminCertificatesPage() {
           : create.mutate(payload, { onSuccess: () => setFormOpen(false) })}
       />}
       {detailOpen && <CertificateDetailDialog open={detailOpen} onOpenChange={setDetailOpen} certificateId={detailId} />}
+      {associatedId && <CertificateLinesDialog key={associatedId} id={associatedId} onClose={closeLines} />}
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

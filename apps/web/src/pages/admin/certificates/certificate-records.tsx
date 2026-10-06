@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { certificateLinesPath, positivePage } from '@/lib/certificate-navigation';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,22 +12,42 @@ import { CertificatePager } from './certificate-pager';
 import { useCertificateRecords, useCertificateMutations, type CertificateLine, type CertificateRevision, type CertificateDeployment } from './use-certificates';
 import { formatDate } from '@/lib/utils';
 
-export function CertificateLines({ id }: { id: string }) {
+export function CertificateLines({ id, preserveContext = false }: { id: string; preserveContext?: boolean }) {
   const { t } = useTranslation(['admin', 'common']);
-  const [page, setPage] = useState(1);
-  const query = useCertificateRecords<CertificateLine>(id, 'lines', page);
+  const location = useLocation();
+  const [params, setParams] = useSearchParams();
+  const [localPage, setLocalPage] = useState(1);
+  const [localFilters, setLocalFilters] = useState({ search: '', lineStatus: '', relation: '' });
+  const page = preserveContext ? positivePage(params.get('linePage')) : localPage;
+  const filters = preserveContext ? { search: params.get('lineSearch') ?? '', lineStatus: params.get('lineStatus') ?? '', relation: params.get('lineRelation') ?? '' } : localFilters;
+  const query = useCertificateRecords<CertificateLine>(id, 'lines', page, true, filters);
+  const returnTo = certificateLinesPath(location.search, id, page, filters);
+  const navigationState = { certificateReturn: returnTo };
+  const change = (nextPage: number, nextFilters = filters) => {
+    if (preserveContext) setParams(new URLSearchParams(certificateLinesPath(location.search, id, nextPage, nextFilters).split('?')[1]), { replace: true });
+    else { setLocalPage(nextPage); setLocalFilters(nextFilters); }
+  };
+  const nodeLink = (node: { id: string; name: string }) => <Button key={node.id} variant="link" className="h-auto p-0" asChild><Link to={'/admin/nodes/' + node.id} state={navigationState}>{node.name}</Link></Button>;
   return <div className="space-y-2">
-    {query.isError && <Button variant="outline" onClick={() => void query.refetch()}>{t('common:actions.retry')}</Button>}
-    <Table><TableHeader><TableRow><TableHead>{t('admin:certificateManagement.lines')}</TableHead><TableHead>{t('admin:certificateManagement.associated')}</TableHead><TableHead>{t('admin:certificateManagement.hosting')}</TableHead><TableHead>{t('admin:certificateManagement.sni')}</TableHead></TableRow></TableHeader><TableBody>
+    <div className="flex flex-wrap gap-2">
+      <Input aria-label={t('admin:certificateManagement.lineSearch')} placeholder={t('admin:certificateManagement.lineSearch')} className="sm:max-w-xs" value={filters.search} onChange={event => change(1, { ...filters, search: event.target.value })} />
+      <Select value={filters.lineStatus || 'all'} onValueChange={value => change(1, { ...filters, lineStatus: value === 'all' ? '' : value })}><SelectTrigger className="w-full sm:w-40" aria-label={t('admin:certificateManagement.allLineStatuses')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allLineStatuses')}</SelectItem><SelectItem value="ACTIVE">{t('admin:certificateManagement.lineActive')}</SelectItem><SelectItem value="DISABLED">{t('admin:certificateManagement.lineDisabled')}</SelectItem></SelectContent></Select>
+      <Select value={filters.relation || 'all'} onValueChange={value => change(1, { ...filters, relation: value === 'all' ? '' : value })}><SelectTrigger className="w-full sm:w-40" aria-label={t('admin:certificateManagement.allRelations')}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t('admin:certificateManagement.allRelations')}</SelectItem><SelectItem value="direct">{t('admin:certificateManagement.directBinding')}</SelectItem><SelectItem value="inherited">{t('admin:certificateManagement.inherited')}</SelectItem></SelectContent></Select>
+    </div>
+    {query.isPending && <p className="text-sm text-muted-foreground">{t('admin:certificateManagement.lineLoading')}</p>}
+    {query.isError && <div className="flex items-center gap-2"><p className="text-sm text-destructive">{t('admin:certificateManagement.lineUnavailable')}</p><Button variant="outline" onClick={() => void query.refetch()}>{t('common:actions.retry')}</Button></div>}
+    <Table><TableHeader><TableRow><TableHead>{t('admin:certificateManagement.lines')}</TableHead><TableHead>{t('admin:certificateManagement.relation')}</TableHead><TableHead>{t('admin:certificateManagement.associated')}</TableHead><TableHead>{t('admin:certificateManagement.hosting')}</TableHead><TableHead>{t('admin:certificateManagement.sni')}</TableHead><TableHead>{t('common:actions.edit')}</TableHead></TableRow></TableHeader><TableBody>
       {query.data?.data.map(row => <TableRow key={row.id}>
-        <TableCell><Button variant="link" asChild><Link to={'/admin/lines?lineId=' + row.id}>{row.name}</Link></Button><p className="text-xs">{row.protocolType} · {row.status}{row.inherited && <Badge variant="outline">{t('admin:certificateManagement.inherited')}</Badge>}</p></TableCell>
-        <TableCell>{[row.entryNode?.name, row.landingNode?.name].filter(Boolean).join(' / ')}</TableCell>
-        <TableCell>{row.hostingNodeIds.map(nodeId => [row.entryNode, row.landingNode].find(node => node?.id === nodeId)?.name ?? nodeId).join(' / ')}</TableCell>
+        <TableCell><Button variant="link" className="h-auto p-0" asChild><Link to={'/admin/lines?lineId=' + row.id} state={navigationState}>{row.name}</Link></Button><p className="text-xs">{row.protocolType} · {t(`admin:lines.type${row.type === 'RELAY' ? 'Relay' : 'Direct'}`)} · {t(`admin:certificateManagement.${row.status === 'ACTIVE' ? 'lineActive' : 'lineDisabled'}`)}</p></TableCell>
+        <TableCell><Badge variant="outline">{t(`admin:certificateManagement.${row.inherited ? 'inherited' : 'directBinding'}`)}</Badge>{row.targetLine && <div className="mt-1 text-xs"><p>{t('admin:certificateManagement.targetLine')}</p><Button variant="link" className="h-auto p-0" asChild><Link to={'/admin/lines?lineId=' + row.targetLine.id} state={navigationState}>{row.targetLine.name}</Link></Button></div>}</TableCell>
+        <TableCell><div className="flex flex-col items-start gap-1">{[row.entryNode, row.landingNode].filter((node): node is NonNullable<typeof node> => Boolean(node)).map(nodeLink)}</div></TableCell>
+        <TableCell><div className="flex flex-col items-start gap-1">{row.hostingNodes.map(nodeLink)}</div></TableCell>
         <TableCell><p className="break-all">{row.serverNames.join(' / ')}</p><Badge variant={row.validationError ? 'destructive' : 'secondary'}>{row.matched ? t('admin:certificateManagement.matched') : t('admin:certificateManagement.mismatched')}</Badge>{row.validationError && <p className="text-xs text-destructive">{row.validationError}</p>}</TableCell>
+        <TableCell><Button variant="outline" size="sm" asChild><Link to={'/admin/lines?lineId=' + row.id + '&edit=1'} state={navigationState}>{t('admin:certificateManagement.editLine')}</Link></Button></TableCell>
       </TableRow>)}
     </TableBody></Table>
     {query.data?.total === 0 && <p className="text-sm text-muted-foreground">{t('admin:certificateManagement.noRecords')}</p>}
-    <CertificatePager page={page} total={query.data?.total ?? 0} onChange={setPage} />
+    <CertificatePager page={page} total={query.data?.total ?? 0} onChange={value => change(value)} />
   </div>;
 }
 

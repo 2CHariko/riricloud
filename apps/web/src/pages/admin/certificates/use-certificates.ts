@@ -46,12 +46,13 @@ export interface CertificateSummary { total: number; expired: number; expiring: 
 export function useCertificateSummary(enabled = true) {
   return useQuery({ queryKey: ['admin', 'certificates', 'summary'], enabled, queryFn: async () => (await api.get<CertificateSummary>('/admin/certificates/summary')).data, refetchInterval: 60_000 });
 }
-export interface CertificateLine { id: string; name: string; protocolType: string; status: string; serverName: string; serverNames: string[]; matched: boolean; validationError: string | null; entryNode: { id: string; name: string } | null; landingNode: { id: string; name: string } | null; hostingNodeIds: string[]; inherited: boolean }
+export interface CertificateLine { id: string; name: string; type: string; relayMode: string | null; targetLine: { id: string; name: string } | null; protocolType: string; status: string; serverName: string; serverNames: string[]; matched: boolean; validationError: string | null; entryNode: { id: string; name: string } | null; landingNode: { id: string; name: string } | null; hostingNodeIds: string[]; hostingNodes: Array<{ id: string; name: string }>; inherited: boolean }
 export interface CertificateRevision { revision: number; createdAt: string; metadata: { validFrom?: string; validTo?: string; sans?: string[]; fingerprint256?: string } }
 export interface CertificateDeployment { id: string; nodeId: string; nodeName: string; nodeStatus: string; revision: number; configVersion: number | null; state: string; error: string | null }
 export interface CertificatePreview { expectedRevision: number; before: CertificateRevision['metadata']; after: CertificateRevision['metadata']; lines: CertificateLine[]; contentChanged: boolean }
-export function useCertificateRecords<T>(id: string | null, kind: 'lines' | 'revisions' | 'deployments', page = 1, enabled = true) {
-  return useQuery({ queryKey: ['admin', 'certificates', id, kind, page], enabled: enabled && Boolean(id), queryFn: async () => (await api.get<{ data: T[]; total: number }>(`/admin/certificates/${id}/${kind}`, { params: { page, pageSize: 20 } })).data, refetchInterval: kind === 'deployments' ? 5000 : false });
+export function useCertificateRecords<T>(id: string | null, kind: 'lines' | 'revisions' | 'deployments', page = 1, enabled = true, filters: { search?: string; lineStatus?: string; relation?: string } = {}) {
+  const activeFilters = Object.fromEntries(Object.entries(filters).filter(([, value]) => Boolean(value)));
+  return useQuery({ queryKey: ['admin', 'certificates', id, kind, page, activeFilters], enabled: enabled && Boolean(id), queryFn: async () => (await api.get<{ data: T[]; total: number }>(`/admin/certificates/${id}/${kind}`, { params: { page, pageSize: 20, ...activeFilters } })).data, refetchInterval: kind === 'deployments' ? 5000 : false });
 }
 
 export function useCertificateDetail(id: string | null, enabled = true) {

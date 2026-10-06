@@ -12,6 +12,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { json } from '@codemirror/lang-json';
 import { ArrowLeft, FileText, Network, RefreshCw, RotateCcw, Server, Trash2, Wrench } from 'lucide-react';
 import { PageContainer } from '@/components/shared/page-container';
+import { CertificateReturnLink } from '@/components/shared/certificate-return-link';
 import { CopyButton } from '@/components/shared/copy-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Badge } from '@/components/ui/badge';
@@ -83,9 +84,10 @@ export default function NodeDetailPage() {
 
   const override = form.watch('configOverride');
 
-  if (isPending) return <PageContainer><Skeleton className="h-8 w-48" /><Skeleton className="h-12 w-full" /><Skeleton className="h-72 w-full" /></PageContainer>;
+  if (isPending) return <PageContainer><CertificateReturnLink /><Skeleton className="h-8 w-48" /><Skeleton className="h-12 w-full" /><Skeleton className="h-72 w-full" /></PageContainer>;
   if (isError || !node) return (
     <PageContainer>
+      <CertificateReturnLink />
       <EmptyState title={t('admin:nodes.nodeNotFound')} description={t('admin:nodes.nodeNotFoundDesc')} />
       <Button variant="outline" size="sm" asChild>
         <Link to="/admin/nodes">{t('admin:nodes.backToNodes')}</Link>
@@ -117,6 +119,7 @@ export default function NodeDetailPage() {
 
   return (
     <PageContainer>
+      <CertificateReturnLink />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <IconButton variant="ghost" size="icon-sm" asChild aria-label={t('common:actions.back')}>
