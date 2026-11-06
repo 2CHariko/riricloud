@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useFieldArray, useForm, useFormContext, useWatch } from 'react-hook-form';
 import { Plus, Settings2, Trash2 } from 'lucide-react';
 import type { SettingsForm } from '../index';

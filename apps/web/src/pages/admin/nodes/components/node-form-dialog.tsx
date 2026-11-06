@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useFormResetOnKey } from '@/hooks/use-form-reset';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { z } from 'zod';
 import { Server } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';

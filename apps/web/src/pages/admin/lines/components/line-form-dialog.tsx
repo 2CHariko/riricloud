@@ -7,7 +7,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useTranslation } from 'react-i18next';
 import { useFormResetOnKey } from '@/hooks/use-form-reset';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { Button } from '@/components/ui/button';
 import { DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ResponsiveDialog, ResponsiveDialogContent } from '@/components/shared/responsive-dialog';

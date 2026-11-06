@@ -61,7 +61,7 @@
     "gate:docs": "node scripts/doc-governance.mjs check",
     "gate:i18n": "node scripts/i18n-governance.mjs check",
     "gate:server": "pnpm --filter @riricloud/server exec tsc --noEmit && pnpm --filter @riricloud/server lint && pnpm --filter @riricloud/server test",
-    "gate:web": "pnpm --filter @riricloud/web lint && pnpm --filter @riricloud/web build",
+    "gate:web": "pnpm --filter @riricloud/web test && pnpm --filter @riricloud/web lint && pnpm --filter @riricloud/web build",
     "gate:agent": "bash scripts/gate-agent.sh",
     "gate": "pnpm gate:version && pnpm gate:docs && pnpm gate:i18n && pnpm gate:server && pnpm gate:web && pnpm gate:agent",
     "i18n:report": "node scripts/i18n-governance.mjs report",

@@ -1,4 +1,4 @@
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n/config';
