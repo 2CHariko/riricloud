@@ -32,9 +32,9 @@ export function currentExpiryMilestone(daysRemaining: number, configuredDays: nu
   return due.length ? Math.min(...due) : null;
 }
 
-export function trafficEventKey(subscription: { trafficPeriodStartAt: Date | null; startedAt: Date; expireAt: Date | null }): string {
+export function trafficEventKey(subscription: { trafficPeriodStartAt: Date | null; startedAt: Date; expireAt: Date | null; trafficWarningVersion: number }): string {
   const cycleStart = subscription.trafficPeriodStartAt ?? subscription.startedAt;
-  return `${cycleStart.toISOString()}|${subscription.expireAt?.toISOString() ?? 'none'}`;
+  return `${cycleStart.toISOString()}|${subscription.expireAt?.toISOString() ?? 'none'}|${subscription.trafficWarningVersion}`;
 }
 
 export function expiryEventKey(expireAt: Date): string {
@@ -93,7 +93,6 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
           ],
           user: {
             isActive: true,
-            role: 'USER',
             emailVerifiedAt: { not: null },
             subscriptionEmailNotificationsEnabled: true
           }
@@ -126,6 +125,7 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
     startedAt: Date;
     expireAt: Date | null;
     trafficPeriodStartAt: Date | null;
+    trafficWarningVersion: number;
     user: { id: string; email: string };
     plan: { name?: string } | null;
   }, settings: SystemSettings, now: Date) {

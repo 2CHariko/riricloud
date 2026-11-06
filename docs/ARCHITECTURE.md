@@ -6,7 +6,7 @@
 
 证书替换与线路绑定/启用在 SQLite 短事务中重验，保存相同内容与改名不推送。回滚创建新修订并同步所有当前承载节点，当前及10个历史版本私钥采用 AES-GCM。历史异常惰性初始化且不自动停线。巡检启动延迟10秒、每小时、单并发且可退出；提醒记录位于现有主库，邮件按站点日和收件人去重，无外部队列。审计沿用现有遥测系统日志的保留与完整性限制。ACME、反向代理 HTTPS/WSS 与 Agent 协议字段保持原契约。
 
-订阅流量预警与套餐到期提醒由 Master 内的 `SubscriptionEmailRemindersService` 驱动。启动 30 秒后首扫、之后每 5 分钟单飞巡检；只对启用邮件偏好的已验证普通用户，以 `Subscription.trafficUsedBytes/ trafficLimitBytes` 和 `expireAt` 为唯一判定源。每次只选择当前已跨过的最高流量档或最紧迫到期档，使用 `SubscriptionEmailDelivery` 的周期键与里程碑唯一约束持久去重；SMTP 失败 6 小时后重试，记录保留 180 天。该链路不新增 Agent 协议字段、不引入外部队列，也不把提醒写成用户公告。
+订阅流量预警与套餐到期提醒由 Master 内的 `SubscriptionEmailRemindersService` 驱动。启动 30 秒后首扫、之后每 5 分钟单飞巡检；只对启用邮件偏好的已验证用户（含管理员），以 `Subscription.trafficUsedBytes/ trafficLimitBytes` 和 `expireAt` 为唯一判定源。每次只选择当前已跨过的最高流量档或最紧迫到期档；流量事件周期键同时包含 `trafficWarningVersion`，管理员实际修改配额/已用流量/套餐后版本递增并允许同档位重新提醒。使用 `SubscriptionEmailDelivery` 的周期键与里程碑唯一约束持久去重；SMTP 失败 6 小时后重试，记录保留 180 天。该链路不新增 Agent 协议字段、不引入外部队列，也不把提醒写成用户公告。
 
 ## 1. 总体架构拓扑
 

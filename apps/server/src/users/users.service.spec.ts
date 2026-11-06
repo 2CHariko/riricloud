@@ -261,6 +261,34 @@ describe('UsersService', () => {
       });
     });
 
+    it('管理员实际修改用户流量配额时递增流量预警版本', async () => {
+      prisma.user.findUnique.mockResolvedValue(seededUser);
+      prisma.user.update.mockResolvedValue(seededUser);
+      prisma.subscription.findUnique.mockResolvedValue({ id: 'sub-1', trafficLimitBytes: BigInt(100) });
+      prisma.subscription.update.mockResolvedValue({ id: 'sub-1' });
+
+      await service.updateUser('u1', { trafficLimitBytes: 200 }, 'admin-1');
+
+      expect(prisma.subscription.update).toHaveBeenCalledWith({
+        where: { id: 'sub-1' },
+        data: { trafficLimitBytes: BigInt(200), trafficWarningVersion: { increment: 1 } }
+      });
+    });
+
+    it('管理员保存相同流量配额时不递增流量预警版本', async () => {
+      prisma.user.findUnique.mockResolvedValue(seededUser);
+      prisma.user.update.mockResolvedValue(seededUser);
+      prisma.subscription.findUnique.mockResolvedValue({ id: 'sub-1', trafficLimitBytes: seededUser.trafficLimitBytes });
+      prisma.subscription.update.mockResolvedValue({ id: 'sub-1' });
+
+      await service.updateUser('u1', { trafficLimitBytes: 107374182400 }, 'admin-1');
+
+      expect(prisma.subscription.update).toHaveBeenCalledWith({
+        where: { id: 'sub-1' },
+        data: { trafficLimitBytes: BigInt(107374182400) }
+      });
+    });
+
     it('用户不存在抛出 NotFoundException', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       await expect(service.updateUser('nope', {}, 'admin-1')).rejects.toThrow(NotFoundException);

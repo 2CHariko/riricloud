@@ -455,6 +455,7 @@ model Subscription {
   subscriptionToken    String    @unique @default(uuid())
   canceledAt           DateTime?
   trafficPeriodStartAt DateTime?
+  trafficWarningVersion Int      @default(0) // 管理员实际修改配额/已用流量/套餐时递增，用于重开流量预警周期
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

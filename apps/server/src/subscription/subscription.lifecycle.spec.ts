@@ -226,6 +226,31 @@ describe('SubscriptionService lifecycle', () => {
     });
   });
 
+  it('管理员实际修改流量配额时递增流量预警版本', async () => {
+    const current = { ...subscription, plan: { ...plan, trafficResetMode: 'CALENDAR_MONTH' } };
+    prisma.subscription.findUnique.mockResolvedValue(current);
+    tx.subscription.update.mockResolvedValue({ ...current, trafficLimitBytes: BigInt(2000), trafficWarningVersion: 1 });
+
+    await service.adminUpdate('s1', { trafficLimitBytes: 2000 });
+
+    expect(tx.subscription.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 's1' },
+      data: expect.objectContaining({ trafficWarningVersion: { increment: 1 } })
+    }));
+  });
+
+  it('管理员保存相同流量配额时不递增流量预警版本', async () => {
+    prisma.subscription.findUnique.mockResolvedValue({ ...subscription, plan: { ...plan, trafficResetMode: 'CALENDAR_MONTH' } });
+    tx.subscription.update.mockResolvedValue(subscription);
+
+    await service.adminUpdate('s1', { trafficLimitBytes: 1000 });
+
+    expect(tx.subscription.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 's1' },
+      data: expect.not.objectContaining({ trafficWarningVersion: expect.anything() })
+    }));
+  });
+
   it('首次订购付费套餐会在订阅事务内扣除余额', async () => {
     const paidPlan = { ...plan, price: 1999 };
     prisma.plan.findUnique.mockResolvedValue(paidPlan);

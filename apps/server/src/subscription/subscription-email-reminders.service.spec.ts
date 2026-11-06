@@ -34,6 +34,7 @@ function subscription(overrides: Record<string, unknown> = {}) {
     startedAt: new Date('2026-11-01T00:00:00Z'),
     expireAt: new Date(Date.now() + 10 * DAY_MS),
     trafficPeriodStartAt: new Date('2026-11-01T00:00:00Z'),
+    trafficWarningVersion: 0,
     user: { id: 'user-1', email: 'user@example.com', nickname: 'Alice', uid: 123456 },
     plan: { name: 'Pro' },
     ...overrides
@@ -95,7 +96,7 @@ describe('subscription email reminder milestones', () => {
   });
 
   it('周期键在续期或流量周期变化后改变', () => {
-    const base = { startedAt: new Date('2026-11-01T00:00:00Z'), trafficPeriodStartAt: null, expireAt: new Date('2026-12-01T00:00:00Z') };
+    const base = { startedAt: new Date('2026-11-01T00:00:00Z'), trafficPeriodStartAt: null, expireAt: new Date('2026-12-01T00:00:00Z'), trafficWarningVersion: 0 };
     expect(trafficEventKey(base)).not.toBe(trafficEventKey({ ...base, expireAt: new Date('2027-01-01T00:00:00Z') }));
     expect(expiryEventKey(base.expireAt)).not.toBe(expiryEventKey(new Date('2027-01-01T00:00:00Z')));
   });
@@ -128,12 +129,48 @@ describe('SubscriptionEmailRemindersService', () => {
       where: expect.objectContaining({
         user: {
           isActive: true,
-          role: 'USER',
           emailVerifiedAt: { not: null },
           subscriptionEmailNotificationsEnabled: true
         }
       })
     }));
+  });
+
+  it('管理员订阅按普通用户规则参与流量预警', async () => {
+    const { prisma } = createPrismaMock();
+    prisma.subscription.findMany.mockResolvedValue([subscription({
+      user: { id: 'admin-1', email: 'admin@example.com', role: 'ADMIN' },
+      trafficUsedBytes: BigInt(96)
+    })]);
+    const settings = { getSettings: jest.fn().mockResolvedValue(baseSettings({ subscriptionExpiryMailEnabled: false })) };
+    const mail = { sendTrafficWarning: jest.fn().mockResolvedValue({}), sendSubscriptionExpiry: jest.fn() };
+    const service = new SubscriptionEmailRemindersService(prisma as unknown as PrismaService, settings as unknown as SettingsService, mail as unknown as MailService);
+
+    await service.check();
+    expect(mail.sendTrafficWarning).toHaveBeenCalledWith('admin@example.com', expect.objectContaining({ percentage: 96 }));
+  });
+
+  it('管理员调整配额后新版本可重新发送同一流量档位', async () => {
+    const { prisma } = createPrismaMock();
+    const current = subscription({ trafficUsedBytes: BigInt(80), trafficLimitBytes: BigInt(100), trafficWarningVersion: 0 });
+    prisma.subscription.findMany.mockResolvedValue([current]);
+    const settings = { getSettings: jest.fn().mockResolvedValue(baseSettings({ subscriptionExpiryMailEnabled: false })) };
+    const mail = { sendTrafficWarning: jest.fn().mockResolvedValue({}), sendSubscriptionExpiry: jest.fn() };
+    const service = new SubscriptionEmailRemindersService(prisma as unknown as PrismaService, settings as unknown as SettingsService, mail as unknown as MailService);
+
+    await service.check();
+    expect(mail.sendTrafficWarning).toHaveBeenCalledTimes(1);
+
+    current.trafficLimitBytes = BigInt(200);
+    current.trafficUsedBytes = BigInt(100);
+    current.trafficWarningVersion = 1;
+    await service.check();
+    expect(mail.sendTrafficWarning).toHaveBeenCalledTimes(1);
+
+    current.trafficUsedBytes = BigInt(160);
+    await service.check();
+    expect(mail.sendTrafficWarning).toHaveBeenCalledTimes(2);
+    expect(mail.sendTrafficWarning.mock.calls[1][1]).toEqual(expect.objectContaining({ percentage: 80 }));
   });
 
   it('到期邮件在已过期但仍在 24 小时宽限期内发送', async () => {
