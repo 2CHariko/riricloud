@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, Gauge, Globe2, Layout, Palette, RotateCcw, Save, Send, ShieldCheck, UsersRound } from 'lucide-react';
 import { toast } from 'sonner';

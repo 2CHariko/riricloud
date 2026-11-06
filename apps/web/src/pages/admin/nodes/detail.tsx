@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n/config';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 import CodeMirror from '@uiw/react-codemirror';

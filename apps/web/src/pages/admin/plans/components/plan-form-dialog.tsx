@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n/config';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useFormResetOnKey } from '@/hooks/use-form-reset';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';

@@ -1,5 +1,5 @@
 import { useFormResetOnKey } from '@/hooks/use-form-reset';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { CheckCircle2, CircleX, Clock3 } from 'lucide-react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';

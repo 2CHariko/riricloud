@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useFormResetOnKey } from '@/hooks/use-form-reset';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import {
   AlertTriangle,
   ChevronDown,
