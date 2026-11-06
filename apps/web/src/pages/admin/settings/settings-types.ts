@@ -54,6 +54,10 @@ export interface SystemSettings {
   certificateExpiryWarningDays: number;
   certificateMailEnabled: boolean;
   certificateMailRecipients: string[];
+  trafficWarningMailEnabled: boolean;
+  trafficWarningThresholds: number[];
+  subscriptionExpiryMailEnabled: boolean;
+  subscriptionExpiryReminderDays: number[];
   smtpEnabled: boolean;
   smtpHost: string;
   smtpPort: number;

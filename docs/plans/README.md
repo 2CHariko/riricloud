@@ -31,6 +31,7 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
+| [subscription-email-reminders](./archive/2026-11-06-subscription-email-reminders.md) | `Unreleased` | 2026-11-06 | — |
 | [证书关联明细与跳转优化](./archive/2026-10-07-certificate-associations.md) | `Unreleased` | 2026-10-07 | — |
 | [手动证书管理完善](./archive/2026-10-06-certificate-management.md) | `Unreleased` | 2026-10-06 | #253 |
 | [订阅模板可配置机械诊断与安全修复](./archive/2026-10-05-template-validation.md) | `Unreleased` | 2026-10-05 | — |

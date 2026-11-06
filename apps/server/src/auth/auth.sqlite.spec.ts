@@ -41,6 +41,7 @@ describe('AuthService SQLite security', () => {
         "nickname" TEXT,
         "email" TEXT NOT NULL UNIQUE,
         "emailVerifiedAt" DATETIME,
+        "subscriptionEmailNotificationsEnabled" BOOLEAN NOT NULL DEFAULT true,
         "passwordHash" TEXT NOT NULL,
         "role" TEXT NOT NULL DEFAULT 'USER',
         "balance" INTEGER NOT NULL DEFAULT 0,

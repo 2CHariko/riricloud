@@ -25,7 +25,7 @@
   - 邮箱不存在、验证码错误或过期时统一返回 400 `重置请求无效`；新密码需满足系统设置的密码复杂度策略（`passwordMinLength` 与 `passwordRequire*` 开关）；核验 `RESET_PASSWORD` 验证码后使用 bcrypt 加密更新密码，并递增 `sessionVersion` 使旧会话失效。
   - 存量或未核验邮箱的用户重置成功后，系统自动将其标记为已核验（`emailVerifiedAt = now()`），并向在线节点推送配置恢复其节点代理访问。
   - 响应：`{ success: true, message: '密码重置成功' }`。
-- `GET /auth/me`：获取当前登录用户的详细信息、套餐、角色与邮箱核验状态 (`emailVerifiedAt`)；用户自身视图额外返回 `uid`、`nickname`、`balance`（分）和 `uuid`。⭐
+- `GET /auth/me`：获取当前登录用户的详细信息、套餐、角色、邮箱核验状态 (`emailVerifiedAt`) 与订阅邮件偏好 (`subscriptionEmailNotificationsEnabled`)；用户自身视图额外返回 `uid`、`nickname`、`balance`（分）和 `uuid`。⭐
 
 ### 1.2 用户面板 (`/user`)
 - `GET /user/dashboard`：获取个人仪表盘数据（总配额、已用流量、剩余有效期、可用线路数及线路摘要）。⭐ **Deprecated**：前端已下线独立仪表盘并统一使用 `GET /user/subscription`；该接口仍保留以兼容外部脚本。
@@ -34,6 +34,7 @@
 - `POST /user/reset-sub`：重置用户的 `subscriptionToken`（防止订阅泄漏）。⭐ 响应 `{ subscriptionToken }`；旧链接立即失效（404）；若当前用户未绑定有效订阅返回 400。
 - `POST /user/change-password`：修改当前登录密码。⭐ 请求 `{ oldPassword, newPassword }`；新密码需满足系统设置的密码复杂度策略（`passwordMinLength` 与 `passwordRequire*` 开关）；旧密码校验通过后使用 bcrypt 更新。
 - `PATCH /user/profile`：修改当前用户昵称。⭐ 请求 `{ nickname }`，服务端清洗首尾空白并限制为 2~20 个字符；响应 `{ uid, nickname }`。
+- `PATCH /user/notification-preferences`：修改当前用户订阅邮件偏好。⭐ 请求与响应均为 `{ subscriptionEmailNotificationsEnabled: boolean }`；关闭后不再接收流量预警与套餐到期邮件，安全验证邮件不受影响。
 - `POST /user/verify-email`：核验当前账号邮箱所有权。⭐ 请求 `{ code }`（6 位数字验证码，需登录态）；核验 `VERIFY_CURRENT_EMAIL` 验证码成功后更新 `emailVerifiedAt = now()` 并向节点推送配置恢复订阅与节点连接，响应 `{ verified: true, emailVerifiedAt }`。
 - `POST /user/change-email`：换绑当前账号邮箱。⭐ 请求 `{ newEmail, verificationCode, currentPassword }`；验证码必须是发往新邮箱且行为为 `CHANGE_EMAIL` 的有效 6 位验证码，当前密码使用 bcrypt 二次确认，邮箱唯一性检查与更新完成后标记 `emailVerifiedAt = now()` 并向节点推送配置，返回 `{ updated: true, email }`。
 - `POST /user/reset-uuid`：重置当前用户代理凭据（底层为 UUID）。⭐ 响应 `{ uuid }`；更新后向在线 Agent 全量推送配置，旧代理凭据立即失效。
@@ -195,6 +196,7 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 
 
 #### 系统设置
+- 订阅邮件提醒设置：`trafficWarningMailEnabled`（默认 `false`）、`trafficWarningThresholds`（默认 `[80,95,100]`，1~100 最多 5 档）、`subscriptionExpiryMailEnabled`（默认 `false`）、`subscriptionExpiryReminderDays`（默认 `[7,3,1,0]`，0~90 最多 5 档）。启用任一提醒或修改启用状态下的 SMTP 连接配置时，服务端必须验证 SMTP 可用。提醒只发送给启用了偏好、邮箱已验证且账号启用的普通用户，每周期只发送当前最高流量档或最紧迫到期档，发送失败 6 小时后重试；不新增投递记录管理 API。
 - `GET /admin/settings`：读取全量设置。⭐ 响应包含 `docs/DATA_MODELS.md` §SystemSetting 列出的全部强类型字段（含 SMTP、邮箱验证、CAPTCHA、统一时区 `systemTimezone`、速率色彩阶梯 `speedLimitColorTiers` 与单位换算 `speedLimitUnitConversionEnabled`、存储日志策略、结构化公告列表 `siteAnnouncementsJson`、首页配置 `landingEnabled` / `landingHero*` / `landingShow*` / `landingCustom*Json`、多设备限制 `deviceLimitEnabled`（默认 `true`）与在线活跃窗口 `deviceOnlineWindowSecs`（默认 60 秒）等）；`smtpPass` 与 `turnstileSecretKey` 有值时均返回 `********`。存储日志策略包括 `trafficHourlyRetentionDays`（默认 90）、`nodeRateRetentionDays`（默认 30）、`logsRetentionDays`（默认 7）、`logsMaxCount`（默认 100000）、`logsMinIngestLevel`（默认 `INFO`）、`agentLogMaxSizeMb`（默认 50）和 `agentLogMaxFiles`（默认 5）。
 - `GET /system/public-info`：公开系统设置端点（无需鉴权）。⭐ 返回前端公共消费字段（站点品牌、Logo、公告 `siteAnnouncement` 与结构化公告列表 `siteAnnouncementsJson`、客服、注册开关、密码复杂度策略、公共订阅与基准地址、短链接开关、时区、首页配置 `landingEnabled` / `landingHeroBadge` / `landingHeroTitle` / `landingHeroSubtitle` / `landingShowFeatures` / `landingShowPlans` / `landingShowFaq` / `landingCustomFeaturesJson` / `landingCustomFaqJson` 等）。
 - `PUT /admin/settings`：部分更新。⭐ 请求任意子集，服务端校验范围、URL、邮箱、UUID、数组、速率阶梯色阶对象、探针对象、IANA 时区合法性以及 `deviceOnlineWindowSecs`（15~600 秒）；`deviceLimitEnabled` 控制自动上限执行，关闭时仍允许手动踢设备。敏感字段提交 `********` 表示保留当前密钥，响应返回更新后全量脱敏设置。保存 `siteAnnouncementsJson` 时自动保持向下兼容的 `siteAnnouncement` 字段同步。

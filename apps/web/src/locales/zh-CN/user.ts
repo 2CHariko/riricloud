@@ -330,6 +330,13 @@ const user = {
     emailUnverified: '未验证',
     verifyNow: '立即验证',
     changeEmailAction: '更换',
+    notificationSettingsTitle: '邮件通知',
+    notificationSettingsDesc: '管理订阅相关邮件的接收偏好。',
+    subscriptionEmailNotifications: '订阅邮件提醒',
+    subscriptionEmailNotificationsDesc: '接收流量预警和套餐到期提醒；安全验证邮件不受此开关影响。',
+    subscriptionEmailNeedsVerification: '当前邮箱尚未验证，验证前不会发送订阅提醒。',
+    notificationPreferencesSuccess: '邮件通知偏好已更新',
+    notificationPreferencesFailed: '更新邮件通知偏好失败',
     uidLabel: 'UID:',
     joinedAt: '加入于 {{date}}',
     // tabs

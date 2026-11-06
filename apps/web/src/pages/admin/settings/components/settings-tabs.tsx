@@ -104,6 +104,21 @@ export function SettingsTabs({ publicPlans, defaultTemplate, dbStatsQuery, vacuu
               <SettingsSwitch name="includeUsageHeaders" label={t('admin:settings.fieldIncludeUsageHeaders')} description={t('admin:settings.descIncludeUsageHeaders')} />
               <SettingsSwitch name="appendSubscriptionSpeedBadge" label={t('admin:settings.fieldAppendSubscriptionSpeedBadge')} description={t('admin:settings.descAppendSubscriptionSpeedBadge')} />
               <SettingsSwitch name="speedLimitUnitConversionEnabled" label={t('admin:settings.fieldSpeedLimitUnitConversionEnabled')} description={t('admin:settings.descSpeedLimitUnitConversionEnabled')} />
+              <div className="md:col-span-2 min-w-0 space-y-4 rounded-lg border p-4 shadow-sm">
+                <div className="flex items-start gap-2">
+                  <Mail className="mt-0.5 size-5 shrink-0 text-primary" />
+                  <div>
+                    <h3 className="text-sm font-semibold">{t('admin:settings.sectionSubscriptionEmailReminders')}</h3>
+                    <p className="text-xs text-muted-foreground">{t('admin:settings.descSubscriptionEmailReminders')}</p>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <SettingsSwitch name="trafficWarningMailEnabled" label={t('admin:settings.fieldTrafficWarningMailEnabled')} description={t('admin:settings.descTrafficWarningMailEnabled')} />
+                  <SettingsInput name="trafficWarningThresholdsText" label={t('admin:settings.fieldTrafficWarningThresholds')} placeholder="80, 95, 100" description={t('admin:settings.descTrafficWarningThresholds')} />
+                  <SettingsSwitch name="subscriptionExpiryMailEnabled" label={t('admin:settings.fieldSubscriptionExpiryMailEnabled')} description={t('admin:settings.descSubscriptionExpiryMailEnabled')} />
+                  <SettingsInput name="subscriptionExpiryReminderDaysText" label={t('admin:settings.fieldSubscriptionExpiryReminderDays')} placeholder="7, 3, 1, 0" description={t('admin:settings.descSubscriptionExpiryReminderDays')} />
+                </div>
+              </div>
               <div className="md:col-span-2 min-w-0">
                 <SpeedTierEditor />
               </div>

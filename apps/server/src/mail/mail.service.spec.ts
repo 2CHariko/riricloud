@@ -64,6 +64,36 @@ describe('MailService', () => {
     expect(jest.mocked(nodemailer.createTransport)).toHaveBeenCalledWith(expect.objectContaining({ socketTimeout: 30000 }));
   });
 
+  it('发送流量预警邮件，包含 BigInt 流量、转义信息和退订入口', async () => {
+    settingsService.getSettings.mockResolvedValue({ ...enabledSettings, siteName: 'Riri & Cloud', publicBaseUrl: 'https://panel.example.com' });
+    transporter.sendMail.mockResolvedValue({});
+    await service.sendTrafficWarning('user@example.com', {
+      planName: '<Professional>', usedBytes: BigInt(85) * BigInt(1024 ** 3), limitBytes: BigInt(100) * BigInt(1024 ** 3), percentage: 95
+    });
+    expect(transporter.sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      subject: '【Riri & Cloud】流量使用提醒',
+      to: 'user@example.com',
+      html: expect.stringContaining('85 GB')
+    }));
+    const payload = JSON.stringify(transporter.sendMail.mock.calls);
+    expect(payload).toContain('&lt;Professional&gt;');
+    expect(payload).toContain('https://panel.example.com/profile');
+    expect(payload).toContain('95%');
+    expect(payload).not.toContain('subscriptionToken');
+  });
+
+  it('发送套餐到期邮件并使用站点时区', async () => {
+    settingsService.getSettings.mockResolvedValue({ ...enabledSettings, publicBaseUrl: 'https://panel.example.com' });
+    transporter.sendMail.mockResolvedValue({});
+    await service.sendSubscriptionExpiry('user@example.com', {
+      planName: 'Pro', expireAt: new Date('2026-11-07T00:00:00Z'), daysRemaining: 1, timezone: 'Asia/Shanghai'
+    });
+    expect(transporter.sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      subject: '【测试站点】套餐即将到期',
+      text: expect.stringContaining('2026年11月7日')
+    }));
+  });
+
   it('测试 SMTP 连接后发送测试邮件', async () => {
     settingsService.getSettings.mockResolvedValue(enabledSettings);
     transporter.verify.mockResolvedValue(undefined);

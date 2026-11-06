@@ -110,6 +110,10 @@ export const SETTING_KEYS = {
   CERTIFICATE_EXPIRY_WARNING_DAYS: 'certificateExpiryWarningDays',
   CERTIFICATE_MAIL_ENABLED: 'certificateMailEnabled',
   CERTIFICATE_MAIL_RECIPIENTS: 'certificateMailRecipients',
+  TRAFFIC_WARNING_MAIL_ENABLED: 'trafficWarningMailEnabled',
+  TRAFFIC_WARNING_THRESHOLDS: 'trafficWarningThresholds',
+  SUBSCRIPTION_EXPIRY_MAIL_ENABLED: 'subscriptionExpiryMailEnabled',
+  SUBSCRIPTION_EXPIRY_REMINDER_DAYS: 'subscriptionExpiryReminderDays',
   SMTP_ENABLED: 'smtpEnabled',
   SMTP_HOST: 'smtpHost',
   SMTP_PORT: 'smtpPort',
@@ -194,6 +198,10 @@ export interface SystemSettings {
   certificateExpiryWarningDays: number;
   certificateMailEnabled: boolean;
   certificateMailRecipients: string[];
+  trafficWarningMailEnabled: boolean;
+  trafficWarningThresholds: number[];
+  subscriptionExpiryMailEnabled: boolean;
+  subscriptionExpiryReminderDays: number[];
   smtpEnabled: boolean;
   smtpHost: string;
   smtpPort: number;
@@ -330,6 +338,10 @@ export const DEFAULTS: SystemSettings = {
   certificateExpiryWarningDays: 30,
   certificateMailEnabled: false,
   certificateMailRecipients: [],
+  trafficWarningMailEnabled: false,
+  trafficWarningThresholds: [80, 95, 100],
+  subscriptionExpiryMailEnabled: false,
+  subscriptionExpiryReminderDays: [7, 3, 1, 0],
   smtpEnabled: false,
   smtpHost: '',
   smtpPort: 587,
@@ -414,6 +426,10 @@ const DESCRIPTIONS: Record<keyof SystemSettings, string> = {
   certificateExpiryWarningDays: '证书到期提醒天数',
   certificateMailEnabled: '证书邮件提醒开关',
   certificateMailRecipients: '证书提醒收件人',
+  trafficWarningMailEnabled: '流量预警邮件开关',
+  trafficWarningThresholds: '流量预警百分比阈值',
+  subscriptionExpiryMailEnabled: '套餐到期邮件提醒开关',
+  subscriptionExpiryReminderDays: '套餐到期提醒天数',
   smtpEnabled: '是否启用 SMTP 发信服务',
   smtpHost: 'SMTP 服务器地址',
   smtpPort: 'SMTP 服务器端口',
@@ -597,6 +613,10 @@ export class SettingsService implements OnModuleInit {
       certificateExpiryWarningDays: this.readInteger(map, 'certificateExpiryWarningDays', 1, 90),
       certificateMailEnabled: this.readBoolean(map, 'certificateMailEnabled'),
       certificateMailRecipients: [...new Set(this.readStringArray(map, 'certificateMailRecipients').map(email => email.trim().toLowerCase()).filter(Boolean))],
+      trafficWarningMailEnabled: this.readBoolean(map, 'trafficWarningMailEnabled'),
+      trafficWarningThresholds: this.readIntegerArray(map, 'trafficWarningThresholds', 1, 100, 5),
+      subscriptionExpiryMailEnabled: this.readBoolean(map, 'subscriptionExpiryMailEnabled'),
+      subscriptionExpiryReminderDays: this.readIntegerArray(map, 'subscriptionExpiryReminderDays', 0, 90, 5),
       smtpEnabled: this.readBoolean(map, 'smtpEnabled'),
       smtpHost: this.readString(map, 'smtpHost'),
       smtpPort: this.readInteger(map, 'smtpPort', 1, 65535),
@@ -685,19 +705,45 @@ export class SettingsService implements OnModuleInit {
   }
 
   async updateSettings(patch: SystemSettingsPatch): Promise<SystemSettings> {
-    const entries = Object.entries(patch).filter(
+    let entries = Object.entries(patch).filter(
       ([key, value]) => key in DEFAULTS && value !== undefined
     ) as Array<[keyof SystemSettings, SystemSettings[keyof SystemSettings]]>;
     if (!entries.length) throw new BadRequestException('未提供任何有效设置字段');
     const cleanPatch = Object.fromEntries(entries) as SystemSettingsPatch;
+    for (const [key, min, max] of [['trafficWarningThresholds', 1, 100], ['subscriptionExpiryReminderDays', 0, 90]] as const) {
+      const values = cleanPatch[key];
+      if (values === undefined) continue;
+      if (!Array.isArray(values) || values.length === 0 || values.length > 5 || values.some((value) => !Number.isSafeInteger(value) || value < min || value > max)) {
+        throw new BadRequestException('邮件提醒阈值配置无效');
+      }
+      cleanPatch[key] = [...new Set(values)].sort((a, b) => b - a);
+    }
+    entries = Object.entries(cleanPatch) as Array<[keyof SystemSettings, SystemSettings[keyof SystemSettings]]>;
     await this.validateReferences(cleanPatch);
-    if (['certificateMailEnabled', 'certificateMailRecipients', 'smtpEnabled', 'smtpHost', 'smtpFrom', 'smtpUser'].some(key => key in cleanPatch)) {
-      const next = { ...await this.getSettings(), ...cleanPatch };
-      if (next.certificateMailEnabled && (!next.smtpEnabled || !next.smtpHost || !(next.smtpFrom || next.smtpUser) || !next.certificateMailRecipients?.length)) throw new BadRequestException('开启证书邮件提醒需要有效 SMTP 配置及至少一位收件人');
-      if (next.certificateMailEnabled && cleanPatch.certificateMailEnabled === true) {
-        const original = await this.getSettings();
-        const transporter = nodemailer.createTransport({ host: next.smtpHost ?? '', port: next.smtpPort ?? 587, secure: next.smtpSecure ?? false, auth: next.smtpUser ? { user: next.smtpUser, pass: next.smtpPass === '********' ? original.smtpPass : next.smtpPass ?? '' } : undefined, connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000 });
-        try { await transporter.verify(); } catch { throw new BadRequestException('SMTP 无法连接或鉴权，请先修复 SMTP 配置'); } finally { transporter.close(); }
+    const mailSettingKeys = [
+      'certificateMailEnabled', 'certificateMailRecipients', 'trafficWarningMailEnabled', 'trafficWarningThresholds',
+      'subscriptionExpiryMailEnabled', 'subscriptionExpiryReminderDays', 'smtpEnabled', 'smtpHost', 'smtpPort',
+      'smtpSecure', 'smtpPass', 'smtpFrom', 'smtpUser'
+    ];
+    if (mailSettingKeys.some(key => key in cleanPatch)) {
+      const original = await this.getSettings();
+      const next = { ...original, ...cleanPatch };
+      const mailEnabled = next.certificateMailEnabled || next.trafficWarningMailEnabled || next.subscriptionExpiryMailEnabled;
+      if (mailEnabled) {
+        if (!next.smtpEnabled || !next.smtpHost || !(next.smtpFrom || next.smtpUser)) {
+          throw new BadRequestException('启用邮件提醒需要有效 SMTP 配置');
+        }
+        if (next.certificateMailEnabled && !next.certificateMailRecipients?.length) {
+          throw new BadRequestException('开启证书邮件提醒需要至少一位收件人');
+        }
+        const enablingMail = cleanPatch.certificateMailEnabled === true
+          || cleanPatch.trafficWarningMailEnabled === true
+          || cleanPatch.subscriptionExpiryMailEnabled === true;
+        const changingConnection = ['smtpEnabled', 'smtpHost', 'smtpPort', 'smtpSecure', 'smtpPass', 'smtpFrom', 'smtpUser'].some(key => key in cleanPatch);
+        if (enablingMail || changingConnection) {
+          const transporter = nodemailer.createTransport({ host: next.smtpHost ?? '', port: next.smtpPort ?? 587, secure: next.smtpSecure ?? false, auth: next.smtpUser ? { user: next.smtpUser, pass: next.smtpPass === '********' ? original.smtpPass : next.smtpPass ?? '' } : undefined, connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000 });
+          try { await transporter.verify(); } catch { throw new BadRequestException('SMTP 无法连接或鉴权，请先修复 SMTP 配置'); } finally { transporter.close(); }
+        }
       }
     }
 
@@ -797,6 +843,17 @@ export class SettingsService implements OnModuleInit {
   private readEnum<K extends keyof SystemSettings, T extends string>(map: Map<string, string>, key: K, values: readonly T[]): T {
     const value = map.get(key)?.trim().toLowerCase();
     return values.find((item) => item.toLowerCase() === value) ?? DEFAULTS[key] as unknown as T;
+  }
+
+  private readIntegerArray(map: Map<string, string>, key: keyof SystemSettings, min: number, max: number, maxItems: number): number[] {
+    try {
+      const value: unknown = JSON.parse(map.get(key) ?? 'null');
+      if (!Array.isArray(value)) return DEFAULTS[key] as number[];
+      const normalized = [...new Set(value.filter((item): item is number => Number.isSafeInteger(item) && item >= min && item <= max))].sort((a, b) => b - a).slice(0, maxItems);
+      return normalized.length ? normalized : DEFAULTS[key] as number[];
+    } catch {
+      return DEFAULTS[key] as number[];
+    }
   }
 
   private readStringArray(map: Map<string, string>, key: keyof SystemSettings): string[] {
