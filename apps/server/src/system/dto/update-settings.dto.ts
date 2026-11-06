@@ -2,6 +2,7 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -74,6 +75,18 @@ export class UpdateSettingsDto {
   certificateMailEnabled?: boolean;
   @IsOptional() @IsArray() @ArrayMaxSize(20) @IsEmail({}, { each: true })
   certificateMailRecipients?: string[];
+  @ApiPropertyOptional({ example: false, description: '是否发送订阅流量预警邮件' })
+  @IsOptional() @IsBoolean()
+  trafficWarningMailEnabled?: boolean;
+  @ApiPropertyOptional({ example: [80, 95, 100], description: '流量使用百分比阈值，最多 5 档' })
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5) @IsInt({ each: true }) @Min(1, { each: true }) @Max(100, { each: true })
+  trafficWarningThresholds?: number[];
+  @ApiPropertyOptional({ example: false, description: '是否发送用户套餐到期邮件' })
+  @IsOptional() @IsBoolean()
+  subscriptionExpiryMailEnabled?: boolean;
+  @ApiPropertyOptional({ example: [7, 3, 1, 0], description: '套餐到期前提醒天数，0 表示到期当天，最多 5 档' })
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5) @IsInt({ each: true }) @Min(0, { each: true }) @Max(90, { each: true })
+  subscriptionExpiryReminderDays?: number[];
   @ApiPropertyOptional({ example: '我的面板' })
   @IsString()
   @MinLength(1)

@@ -9,6 +9,7 @@ export interface ProfileUser {
   nickname: string;
   email: string;
   emailVerifiedAt: string | null;
+  subscriptionEmailNotificationsEnabled: boolean;
   role: 'ADMIN' | 'USER';
   balance: number;
   uuid: string;
@@ -87,6 +88,11 @@ export function useProfileMutations() {
     onSuccess: () => { toast.success(i18n.t('user:profile.nicknameSuccess')); invalidate(); },
     onError: (error: unknown) => toast.error(extractErrorMessage(error, i18n.t('user:profile.nicknameFailed')))
   });
+  const updateNotificationPreferences = useMutation({
+    mutationFn: async (payload: { subscriptionEmailNotificationsEnabled: boolean }) => (await api.patch<{ subscriptionEmailNotificationsEnabled: boolean }>('/user/notification-preferences', payload)).data,
+    onSuccess: () => { toast.success(i18n.t('user:profile.notificationPreferencesSuccess')); invalidate(); },
+    onError: (error: unknown) => toast.error(extractErrorMessage(error, i18n.t('user:profile.notificationPreferencesFailed')))
+  });
   const sendEmailCode = useMutation({
     mutationFn: async (email: string) => (await api.post('/verification/send-code', { email, action: 'CHANGE_EMAIL' })).data,
     onSuccess: () => toast.success(i18n.t('user:profile.codeSentNewEmail')),
@@ -107,5 +113,5 @@ export function useProfileMutations() {
     onSuccess: () => { toast.success(i18n.t('user:profile.emailVerifySuccess')); invalidate(); },
     onError: (error: unknown) => toast.error(extractErrorMessage(error, i18n.t('user:profile.emailVerifyFailed')))
   });
-  return { redeem, changePassword, resetUuid, updateProfile, sendEmailCode, changeEmail, sendCurrentEmailCode, verifyCurrentEmail };
+  return { redeem, changePassword, resetUuid, updateProfile, updateNotificationPreferences, sendEmailCode, changeEmail, sendCurrentEmailCode, verifyCurrentEmail };
 }

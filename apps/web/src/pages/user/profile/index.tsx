@@ -31,6 +31,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AlertDialog,
@@ -107,7 +108,7 @@ export default function ProfilePage() {
   const passwordComplexity = useMemo(() => passwordComplexityFromSettings(publicSettings.data), [publicSettings.data]);
   const passwordPolicy = useMemo(() => buildPasswordStrengthPolicy(passwordComplexity), [passwordComplexity]);
   const passwordSchema = useMemo(() => buildPasswordSchema(passwordMinLength, passwordPolicy), [passwordMinLength, passwordPolicy]);
-  const { redeem, changePassword, resetUuid, updateProfile, sendEmailCode, changeEmail, sendCurrentEmailCode, verifyCurrentEmail } = useProfileMutations();
+  const { redeem, changePassword, resetUuid, updateProfile, updateNotificationPreferences, sendEmailCode, changeEmail, sendCurrentEmailCode, verifyCurrentEmail } = useProfileMutations();
 
   const transactionLabels: Record<string, string> = useMemo(
     () => ({
@@ -494,6 +495,31 @@ export default function ProfilePage() {
               </div>
             </Card>
           </div>
+
+          <Card className="min-w-0">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <MailCheck className="size-4 text-primary" />
+                {t('user:profile.notificationSettingsTitle')}
+              </CardTitle>
+              <CardDescription>{t('user:profile.notificationSettingsDesc')}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-4 rounded-lg border p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">{t('user:profile.subscriptionEmailNotifications')}</p>
+                  <p className="text-xs text-muted-foreground">{t('user:profile.subscriptionEmailNotificationsDesc')}</p>
+                  {!user.data.emailVerifiedAt ? <p className="text-xs text-amber-600">{t('user:profile.subscriptionEmailNeedsVerification')}</p> : null}
+                </div>
+                <Switch
+                  checked={user.data.subscriptionEmailNotificationsEnabled}
+                  disabled={updateNotificationPreferences.isPending}
+                  onCheckedChange={(checked) => updateNotificationPreferences.mutate({ subscriptionEmailNotificationsEnabled: checked })}
+                  aria-label={t('user:profile.subscriptionEmailNotifications')}
+                />
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Tab 2: 资产与财务 */}

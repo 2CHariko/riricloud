@@ -327,6 +327,18 @@ describe('UsersService', () => {
       expect(walletService.adjustBalance).toHaveBeenCalledWith('u1', 500, 'ADMIN_ADJUST', '活动补发');
     });
 
+    it('可独立更新用户订阅邮件通知偏好', async () => {
+      prisma.user.findUnique.mockResolvedValue({ id: 'u1' });
+      prisma.user.update.mockResolvedValue({ subscriptionEmailNotificationsEnabled: false });
+      await expect(service.updateNotificationPreferences('u1', { subscriptionEmailNotificationsEnabled: false }))
+        .resolves.toEqual({ subscriptionEmailNotificationsEnabled: false });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { subscriptionEmailNotificationsEnabled: false },
+        select: { subscriptionEmailNotificationsEnabled: true }
+      });
+    });
+
     it('验证当前邮箱成功后更新 emailVerifiedAt 并向在线节点推送配置', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'test@example.com' });
       verificationService.verifyCode.mockResolvedValue(undefined);

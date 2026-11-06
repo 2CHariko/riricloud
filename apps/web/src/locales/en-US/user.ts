@@ -330,6 +330,13 @@ const user = {
     emailUnverified: 'Unverified',
     verifyNow: 'Verify Now',
     changeEmailAction: 'Change',
+    notificationSettingsTitle: 'Email Notifications',
+    notificationSettingsDesc: 'Manage your subscription email preferences.',
+    subscriptionEmailNotifications: 'Subscription email reminders',
+    subscriptionEmailNotificationsDesc: 'Receive traffic warnings and subscription expiry reminders. Security emails are unaffected.',
+    subscriptionEmailNeedsVerification: 'Verify your email before subscription reminders can be delivered.',
+    notificationPreferencesSuccess: 'Email notification preferences updated',
+    notificationPreferencesFailed: 'Failed to update email notification preferences',
     uidLabel: 'UID:',
     joinedAt: 'Joined on {{date}}',
     // tabs

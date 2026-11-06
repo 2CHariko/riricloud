@@ -14,6 +14,13 @@
 
 ### Added
 
+- 订阅流量预警与套餐到期邮件：支持管理端配置多档流量百分比和到期天数、用户个人中心退订、已验证邮箱过滤、周期级持久去重、SMTP 失败 6 小时重试与 180 天投递台账清理。
+- 新增 `PATCH /user/notification-preferences`，并在 `GET /auth/me` 返回用户订阅邮件偏好。
+
+### Security
+
+- 修复 CI 新披露依赖漏洞：升级 Vite 与 Zod，并锁定 `handlebars`、`follow-redirects`、`body-parser`、`multer` 至官方修复版本；同步完成 Zod 4 兼容写法调整。
+
 ### Changed
 
 ### Fixed

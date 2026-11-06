@@ -13,6 +13,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ChangeEmailDto } from './dto/change-email.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { getTrafficPeriod } from '../common/traffic-reset';
 import { VerificationService } from '../verification/verification.service';
 import { assertEmailLength, assertPasswordPolicy, buildPasswordStrengthPolicy, normalizeEmail, passwordComplexityFromSettings } from '../common/auth-security';
@@ -141,6 +142,17 @@ export class UsersService {
     this.audit('PASSWORD_CHANGED', {}, userId);
     this.audit('SESSION_INVALIDATED', { reason: 'password_change' }, userId);
     return { updated: true };
+  }
+
+  async updateNotificationPreferences(userId: string, dto: UpdateNotificationPreferencesDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) throw new UnauthorizedException();
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { subscriptionEmailNotificationsEnabled: dto.subscriptionEmailNotificationsEnabled },
+      select: { subscriptionEmailNotificationsEnabled: true }
+    });
+    return { subscriptionEmailNotificationsEnabled: updated.subscriptionEmailNotificationsEnabled };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {

@@ -54,6 +54,38 @@ describe('SettingsService', () => {
     expect(prisma.systemSetting.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { key: 'certificateMailEnabled' } }));
   });
 
+  it('订阅邮件提醒默认关闭，阈值受 DTO 校验并需要可用 SMTP', async () => {
+    expect(DEFAULTS.trafficWarningMailEnabled).toBe(false);
+    expect(DEFAULTS.trafficWarningThresholds).toEqual([80, 95, 100]);
+    expect(DEFAULTS.subscriptionExpiryMailEnabled).toBe(false);
+    expect(DEFAULTS.subscriptionExpiryReminderDays).toEqual([7, 3, 1, 0]);
+    for (const patch of [
+      { trafficWarningThresholds: [] },
+      { trafficWarningThresholds: [0, 80] },
+      { trafficWarningThresholds: [80, 80, 90, 95, 99, 100] },
+      { subscriptionExpiryReminderDays: [-1] },
+      { subscriptionExpiryReminderDays: [91] }
+    ]) expect((await validate(plainToInstance(UpdateSettingsDto, patch))).length).toBeGreaterThan(0);
+    expect(await validate(plainToInstance(UpdateSettingsDto, {
+      trafficWarningThresholds: [80, 95, 100],
+      subscriptionExpiryReminderDays: [7, 3, 1, 0]
+    }))).toHaveLength(0);
+
+    prisma.systemSetting.findMany.mockResolvedValue([]);
+    await expect(service.updateSettings({ trafficWarningMailEnabled: true })).rejects.toThrow('SMTP');
+    const transporter = { verify: jest.fn().mockResolvedValue(undefined), close: jest.fn() };
+    jest.mocked(nodemailer.createTransport).mockReturnValue(transporter as unknown as nodemailer.Transporter);
+    await expect(service.updateSettings({
+      trafficWarningMailEnabled: true,
+      trafficWarningThresholds: [95, 80, 95],
+      smtpEnabled: true,
+      smtpHost: 'smtp.example.com',
+      smtpFrom: 'admin@example.com'
+    })).resolves.toBeDefined();
+    expect(transporter.verify).toHaveBeenCalled();
+    expect(prisma.systemSetting.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { key: 'trafficWarningThresholds' }, update: { value: '[95,80]' } }));
+  });
+
   it('普通延迟默认十秒但不覆盖已有显式超时', async () => {
     expect(DEFAULTS.lineSpeedtestTargetUrl).toBe('https://cp.cloudflare.com/generate_204');
     expect(DEFAULTS.lineSpeedtestTimeoutMs).toBe(10000);

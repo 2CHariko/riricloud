@@ -10,6 +10,15 @@ function isValidTimezone(value: string): boolean {
     return false;
   }
 }
+export function parseSettingsNumberList(value: string, min: number, max: number): number[] | null {
+  const tokens = value.split(/[,\s，]+/).map((item) => item.trim()).filter(Boolean);
+  if (!tokens.length) return null;
+  const numbers = tokens.map(Number);
+  if (numbers.some((number) => !Number.isSafeInteger(number) || number < min || number > max)) return null;
+  const unique = [...new Set(numbers)].sort((a, b) => b - a);
+  return unique.length <= 5 ? unique : null;
+}
+
 export function createSettingsSchema() {
   return z.object({
     siteName: z.string().trim().min(1, i18n.t('admin:settings.valSiteNameReq')).max(32),
@@ -80,6 +89,10 @@ export function createSettingsSchema() {
     certificateExpiryWarningDays: z.coerce.number().int().min(1).max(90),
     certificateMailEnabled: z.boolean(),
     certificateMailRecipientsText: z.string().refine(value => { const emails = value.split(/\r?\n|,/).map(s => s.trim()).filter(Boolean); return emails.length <= 20 && emails.every(email => z.string().email().safeParse(email).success); }, i18n.t('admin:certificateManagement.invalidEmail')),
+    trafficWarningMailEnabled: z.boolean(),
+    trafficWarningThresholdsText: z.string().refine((value) => parseSettingsNumberList(value, 1, 100) !== null, i18n.t('admin:settings.valTrafficWarningThresholds')),
+    subscriptionExpiryMailEnabled: z.boolean(),
+    subscriptionExpiryReminderDaysText: z.string().refine((value) => parseSettingsNumberList(value, 0, 90) !== null, i18n.t('admin:settings.valSubscriptionExpiryDays')),
     smtpEnabled: z.boolean(),
     smtpHost: z.string().max(255),
     smtpPort: z.coerce.number().int().min(1).max(65535),

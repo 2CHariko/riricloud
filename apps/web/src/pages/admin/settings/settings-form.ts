@@ -1,5 +1,5 @@
 import type { SystemSettings } from './settings-types';
-import type { SettingsForm } from './settings-schema';
+import { parseSettingsNumberList, type SettingsForm } from './settings-schema';
 import { DEFAULT_SPEED_TIERS } from '@/lib/speed-tier';
 import { derivePrimaryBannerText, parseAnnouncements } from '@/lib/announcements';
 import { toProbePresetFormValue, toProbePresetTarget } from './components/probe-preset-schema';
@@ -69,6 +69,10 @@ export function toForm(settings: SystemSettings, availablePublicPlanIds?: Set<st
     certificateExpiryWarningDays: settings.certificateExpiryWarningDays ?? 30,
     certificateMailEnabled: settings.certificateMailEnabled ?? false,
     certificateMailRecipientsText: (settings.certificateMailRecipients ?? []).join('\n'),
+    trafficWarningMailEnabled: settings.trafficWarningMailEnabled ?? false,
+    trafficWarningThresholdsText: (settings.trafficWarningThresholds ?? [80, 95, 100]).join(', '),
+    subscriptionExpiryMailEnabled: settings.subscriptionExpiryMailEnabled ?? false,
+    subscriptionExpiryReminderDaysText: (settings.subscriptionExpiryReminderDays ?? [7, 3, 1, 0]).join(', '),
     smtpEnabled: settings.smtpEnabled,
     smtpHost: cleanStr(settings.smtpHost),
     smtpPort: settings.smtpPort,
@@ -157,6 +161,10 @@ export function toPayload(values: SettingsForm) {
     certificateExpiryWarningDays: values.certificateExpiryWarningDays,
     certificateMailEnabled: values.certificateMailEnabled,
     certificateMailRecipients: [...new Set(values.certificateMailRecipientsText.split(/\r?\n|,/).map(value => value.trim().toLowerCase()).filter(Boolean))],
+    trafficWarningMailEnabled: values.trafficWarningMailEnabled,
+    trafficWarningThresholds: parseSettingsNumberList(values.trafficWarningThresholdsText, 1, 100) ?? [80, 95, 100],
+    subscriptionExpiryMailEnabled: values.subscriptionExpiryMailEnabled,
+    subscriptionExpiryReminderDays: parseSettingsNumberList(values.subscriptionExpiryReminderDaysText, 0, 90) ?? [7, 3, 1, 0],
     smtpEnabled: values.smtpEnabled,
     smtpHost: values.smtpHost,
     smtpPort: values.smtpPort,
@@ -202,6 +210,8 @@ export function defaultSettingsForm(): SettingsForm {
       lineSpeedtestTargetUrl: 'https://cp.cloudflare.com/generate_204', lineSpeedtestTimeoutMs: 10000,
       probeSingboxFallbackEnabled: true,
       certificateExpiryWarningDays: 30, certificateMailEnabled: false, certificateMailRecipients: [],
+      trafficWarningMailEnabled: false, trafficWarningThresholds: [80, 95, 100],
+      subscriptionExpiryMailEnabled: false, subscriptionExpiryReminderDays: [7, 3, 1, 0],
       smtpEnabled: false, smtpHost: '', smtpPort: 587, smtpSecure: false, smtpUser: '', smtpPass: '', smtpFrom: '',
       emailVerificationEnabled: false, enforceEmailVerification: false, captchaMode: 'OFF', turnstileSiteKey: '', turnstileSecretKey: '',
       logsRetentionDays: 7, logsMaxCount: 100000, logsMinIngestLevel: 'INFO', trafficHourlyRetentionDays: 90,

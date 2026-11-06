@@ -191,6 +191,7 @@ export class AuthService {
          nickname: true,
          email: true,
          emailVerifiedAt: true,
+         subscriptionEmailNotificationsEnabled: true,
         role: true,
         balance: true,
         uuid: true,

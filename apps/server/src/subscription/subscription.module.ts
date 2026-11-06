@@ -9,11 +9,13 @@ import { SubscriptionService } from './subscription.service';
 import { UserSubscriptionController } from './user-subscription.controller';
 import { WalletModule } from '../wallet/wallet.module';
 import { PlanPurchasesModule } from './plan-purchases.module';
+import { MailModule } from '../mail/mail.module';
+import { SubscriptionEmailRemindersService } from './subscription-email-reminders.service';
 
 @Module({
-  imports: [AgentGatewayModule, PlansModule, LinesModule, SystemModule, WalletModule, PlanPurchasesModule],
+  imports: [AgentGatewayModule, PlansModule, LinesModule, SystemModule, WalletModule, PlanPurchasesModule, MailModule],
   controllers: [SubscriptionController, UserSubscriptionController, AdminSubscriptionController],
-  providers: [SubscriptionService],
+  providers: [SubscriptionService, SubscriptionEmailRemindersService],
   exports: [SubscriptionService, PlanPurchasesModule]
 })
 export class SubscriptionModule {}

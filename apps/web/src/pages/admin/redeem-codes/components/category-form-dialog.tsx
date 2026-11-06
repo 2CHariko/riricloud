@@ -30,7 +30,7 @@ export function CategoryFormDialog({ open, onOpenChange, category, plans, pendin
       .max(80, t('admin:redeemCodes.valCategoryNameMax')),
     tags: z.string(),
     rewardType: z.enum(['BALANCE', 'PLAN']),
-    rewardAmountYuan: z.coerce.number({ invalid_type_error: t('admin:redeemCodes.valAmountInvalid') })
+    rewardAmountYuan: z.coerce.number({ error: t('admin:redeemCodes.valAmountInvalid') })
       .positive(t('admin:redeemCodes.valAmountPositive'))
       .multipleOf(0.01, t('admin:redeemCodes.valAmountDecimals'))
       .optional(),

@@ -75,6 +75,7 @@ model User {
   nickname          String?                                      // 自定义昵称；为空时展示 用户_<UID>
   email             String       @unique
   emailVerifiedAt   DateTime?                                 // 邮箱核验时间戳；未验证或存量老用户为 null
+  subscriptionEmailNotificationsEnabled Boolean @default(true) // 是否接收订阅流量与到期邮件
   passwordHash      String
   role              String       @default("USER")
   balance           Int          @default(0)             // 账户余额，单位为分
@@ -490,6 +491,7 @@ model Subscription {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan Plan @relation(fields: [planId], references: [id])
   planPurchases PlanPurchase[]
+  emailDeliveries SubscriptionEmailDelivery[]
 
   @@index([status])
   @@index([expireAt])
@@ -497,7 +499,34 @@ model Subscription {
 }
 
 // ==============================
-// 2.6 用户额外线路授权 (UserLineGrant，v0.5.0)
+// 2.6 订阅邮件投递台账 (SubscriptionEmailDelivery)
+// 以事件周期与里程碑唯一约束保证重启、重复巡检和并发消费不重复发送。
+// 状态：PENDING | SENT | FAILED；失败后等待 6 小时重试，记录保留 180 天。
+// ==============================
+model SubscriptionEmailDelivery {
+  id             String    @id @default(uuid())
+  userId         String
+  subscriptionId String
+  kind           String    // TRAFFIC_WARNING | SUBSCRIPTION_EXPIRY
+  milestone      String    // 流量百分比或到期天数阶段
+  eventKey       String    // 流量周期/到期时间版本键
+  state          String    @default("PENDING")
+  attemptedAt    DateTime?
+  sentAt         DateTime?
+  errorCode      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, kind, eventKey, milestone])
+  @@index([state, attemptedAt])
+  @@index([createdAt])
+}
+
+// ==============================
+// 2.7 用户额外线路授权 (UserLineGrant，v0.5.0)
 // 用户级授权独立于 Subscription 生命周期，删除订阅不会删除授权。
 // ==============================
 model UserLineGrant {
@@ -768,6 +797,11 @@ model HelpArticle {
 | `lineSpeedtestTimeoutMs` | 十进制整数（500~30000） | `"10000"` | 单资源普通延迟超时（毫秒），新默认十秒，不覆盖已有值 |
 | `systemTimezone` | IANA 时区标识（如 `Asia/Shanghai`） | `"Asia/Shanghai"` | 全系统统一时区设置；驱动全站前端时间格式化、后端流量图表按小时/天聚合时间桶以及自然月重置边界精确计算 |
 | `smtpEnabled` | `"true"` / `"false"` | `"false"` | 是否启用 SMTP 发信；密码只在服务端保存，管理端读取时脱敏 |
+| `trafficWarningMailEnabled` | `"true"` / `"false"` | `"false"` | 是否向已验证邮箱发送订阅流量预警 |
+| `trafficWarningThresholds` | 整数 JSON 数组（1~100，最多 5 档） | `[80,95,100]` | 流量百分比里程碑；每订阅周期只发送当前最高跨过档位 |
+| `subscriptionExpiryMailEnabled` | `"true"` / `"false"` | `"false"` | 是否向已验证邮箱发送套餐到期提醒 |
+| `subscriptionExpiryReminderDays` | 整数 JSON 数组（0~90，最多 5 档） | `[7,3,1,0]` | 到期前提醒天数；0 表示到期当天 |
+
 | `smtpHost` / `smtpPort` / `smtpSecure` | 主机文本 / 十进制端口 / 布尔 | `""` / `"587"` / `"false"` | SMTP 服务器连接参数；`smtpSecure=true` 使用 SSL/TLS |
 | `smtpUser` / `smtpPass` / `smtpFrom` | 文本 | `""` | SMTP 登录账号、密码和发信人地址；密码使用 AES-GCM 应用层密文保存，管理端返回 `********` |
 | `emailVerificationEnabled` | `"true"` / `"false"` | `"false"` | 是否要求注册提交 6 位邮箱验证码 |
@@ -1094,7 +1128,7 @@ NORMAL 节点的 SINGBOX INFO/DEBUG 不进入 `SystemLog`；真实 WARN/ERROR �
 
 | 数据库文件 | 环境变量 | Prisma Schema 路径 | 生成 Client | 承载模型 | 调优策略 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **主业务库** (`app.db` / `riri.db` / `dev.db`) | `DATABASE_URL` | `apps/server/prisma/schema.prisma` | `@prisma/client` | `User`, `Subscription`, `Plan`, `Line`, `Node`, `ProxyKey`, `TrafficCursor`, `SystemSetting`, `BalanceTransaction` 等 | WAL 模式，`busy_timeout = 10000ms`，单写队列调度 |
+| **主业务库** (`app.db` / `riri.db` / `dev.db`) | `DATABASE_URL` | `apps/server/prisma/schema.prisma` | `@prisma/client` | `User`, `Subscription`, `SubscriptionEmailDelivery`, `Plan`, `Line`, `Node`, `ProxyKey`, `TrafficCursor`, `SystemSetting`, `BalanceTransaction` 等 | WAL 模式，`busy_timeout = 10000ms`，单写队列调度 |
 | **时序与日志库** (`telemetry.db` / `dev-telemetry.db`) | `TELEMETRY_DATABASE_URL` | `apps/server/prisma/telemetry/schema.prisma` | `@prisma/telemetry-client` | `TrafficHourlyMetric`, `NodeRateMetric`, `SystemLog` | 独立 WAL 模式与 `busy_timeout`，内存批量合并写入与定期滑动窗口清理 |
 
 ### 9.2 跨库数据关联与 Hydration 模式

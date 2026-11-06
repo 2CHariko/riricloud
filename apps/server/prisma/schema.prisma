@@ -18,6 +18,7 @@ model User {
   nickname          String? // 用户自定义昵称；为空时由应用层回退为 用户_<UID>
   email             String    @unique
   emailVerifiedAt   DateTime? // 邮箱核验时间；未核验或存量老用户为 null
+  subscriptionEmailNotificationsEnabled Boolean @default(true) // 用户订阅流量/到期邮件提醒偏好
   passwordHash      String
   role              String    @default("USER") // Role 枚举：ADMIN | USER
   balance           Int       @default(0) // 账户余额，单位为分
@@ -41,6 +42,7 @@ model User {
   redeemedCodes          RedeemCode[]          @relation("RedeemedCodes")
   extraLineGrants        UserLineGrant[]
   proxyKeys              ProxyKey[]
+  subscriptionEmailDeliveries SubscriptionEmailDelivery[]
 
   @@index([role])
   @@index([isActive])
@@ -460,10 +462,34 @@ model Subscription {
   plan          Plan           @relation(fields: [planId], references: [id])
   planPurchases PlanPurchase[]
   planSnapshotJson String? // immutable benefits for a redeemed plan code
+  emailDeliveries SubscriptionEmailDelivery[]
 
   @@index([status])
   @@index([expireAt])
   @@index([trafficPeriodStartAt])
+}
+
+// 订阅提醒投递台账：以事件周期和里程碑唯一约束保证重启/重复巡检幂等。
+model SubscriptionEmailDelivery {
+  id             String    @id @default(uuid())
+  userId         String
+  subscriptionId String
+  kind           String // TRAFFIC_WARNING | SUBSCRIPTION_EXPIRY
+  milestone      String // 流量百分比或到期阶段标识
+  eventKey       String // 流量周期或到期时间标识
+  state          String    @default("PENDING") // PENDING | SENT | FAILED
+  attemptedAt    DateTime?
+  sentAt         DateTime?
+  errorCode      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, kind, eventKey, milestone])
+  @@index([state, attemptedAt])
+  @@index([createdAt])
 }
 
 // 用户级额外线路授权，独立于订阅生命周期长期保留。

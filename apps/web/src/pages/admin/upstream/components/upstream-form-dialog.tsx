@@ -185,7 +185,7 @@ export function UpstreamFormDialog({
           ) {
             throw new Error();
           }
-          payload.customHeaders = z.record(z.string()).parse(headers);
+          payload.customHeaders = z.record(z.string(), z.string()).parse(headers);
         } catch {
           form.setError('customHeaders', { message: t('admin:upstream.headersInvalid') });
           return;

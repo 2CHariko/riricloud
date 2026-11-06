@@ -330,6 +330,13 @@ const user = {
     emailUnverified: '未認証',
     verifyNow: '今すぐ認証',
     changeEmailAction: '変更',
+    notificationSettingsTitle: 'メール通知',
+    notificationSettingsDesc: 'サブスクリプション関連メールの受信設定を管理します。',
+    subscriptionEmailNotifications: 'サブスクリプションのメール通知',
+    subscriptionEmailNotificationsDesc: '通信量の警告と有効期限のリマインダーを受信します。セキュリティメールには影響しません。',
+    subscriptionEmailNeedsVerification: 'メールアドレスを確認するまで、サブスクリプション通知は送信されません。',
+    notificationPreferencesSuccess: 'メール通知設定を更新しました',
+    notificationPreferencesFailed: 'メール通知設定の更新に失敗しました',
     uidLabel: 'UID:',
     joinedAt: '{{date}} に登録',
     // tabs
