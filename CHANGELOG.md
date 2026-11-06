@@ -14,6 +14,15 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+
+## [0.9.18] - 2026-11-06
+
+### Added
+
 - 订阅流量预警与套餐到期邮件：支持管理端配置多档流量百分比和到期天数、用户个人中心退订、已验证邮箱过滤、周期级持久去重、SMTP 失败 6 小时重试与 180 天投递台账清理。
 - 新增 `PATCH /user/notification-preferences`，并在 `GET /auth/me` 返回用户订阅邮件偏好。
 
@@ -21,11 +30,10 @@
 
 - 修复 CI 新披露依赖漏洞：升级 Vite 与 Zod，并锁定 `handlebars`、`follow-redirects`、`body-parser`、`multer` 至官方修复版本；同步完成 Zod 4 兼容写法调整。
 
-### Changed
-
 ### Fixed
 
 - 修复 Zod 4 升级后表单校验失败不显示字段错误的问题：升级 `@hookform/resolvers` 至 5.x，通过本地类型适配器保持既有表单类型，并增加 resolver 回归测试与 CI Web 测试步骤。
+
 
 
 ## [0.9.17] - 2026-10-07
