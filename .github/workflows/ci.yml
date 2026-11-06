@@ -68,6 +68,8 @@ jobs:
         run: pnpm --filter @riricloud/web exec tsc --noEmit
       - name: Lint
         run: pnpm --filter @riricloud/web lint
+      - name: 回归测试
+        run: pnpm --filter @riricloud/web test
       - name: 构建
         run: pnpm --filter @riricloud/web build
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { useTranslation } from 'react-i18next';

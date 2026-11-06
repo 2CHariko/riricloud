@@ -1,4 +1,4 @@
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Link } from 'react-router-dom';

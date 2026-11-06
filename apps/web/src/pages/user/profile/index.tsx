@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useFormResetOnKey } from '@/hooks/use-form-reset';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { zodResolver } from '@/lib/zod-resolver';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import {
