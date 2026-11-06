@@ -537,6 +537,7 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
         ? addDays(current.expireAt && current.expireAt.getTime() > Date.now() ? current.expireAt : new Date(), dto.addDays)
         : current.expireAt;
     const planChanged = Boolean(dto.planId && dto.planId !== current.planId);
+    const quotaChanged = limit !== current.trafficLimitBytes || used !== current.trafficUsedBytes || planChanged;
     const subscription = await this.prisma.$transaction(async (tx) => {
       const purchaseId = planChanged && plan && this.planPurchases
         ? await this.planPurchases.claim(
@@ -557,6 +558,7 @@ export class SubscriptionService implements OnModuleInit, OnModuleDestroy {
           trafficLimitBytes: limit,
           trafficUsedBytes: used,
           expireAt,
+          ...(quotaChanged ? { trafficWarningVersion: { increment: 1 } } : {}),
           ...(dto.planId ? { trafficPeriodStartAt: this.getInitialTrafficPeriodStart(plan!, new Date(), current.startedAt) } : {})
         }
       });

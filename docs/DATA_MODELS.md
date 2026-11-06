@@ -484,6 +484,7 @@ model Subscription {
   subscriptionToken String    @unique @default(uuid())
   canceledAt        DateTime?
   trafficPeriodStartAt DateTime? // 当前流量周期起点；旧订阅首次启用策略时惰性初始化
+  trafficWarningVersion Int     @default(0) // 管理员实际修改配额/已用流量/套餐时递增，用于重开流量预警周期
   planSnapshotJson  String?   // 套餐卡兑换时冻结的完整套餐权益快照，避免编辑套餐影响已发卡权益
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -502,6 +503,7 @@ model Subscription {
 // 2.6 订阅邮件投递台账 (SubscriptionEmailDelivery)
 // 以事件周期与里程碑唯一约束保证重启、重复巡检和并发消费不重复发送。
 // 状态：PENDING | SENT | FAILED；失败后等待 6 小时重试，记录保留 180 天。
+// 流量事件周期键包含 trafficWarningVersion；管理员实际修改配额/已用流量/套餐后版本递增，可重新触发同档位预警。
 // ==============================
 model SubscriptionEmailDelivery {
   id             String    @id @default(uuid())

@@ -449,11 +449,13 @@ export class UsersService {
       ? await subscriptionDelegate.findUnique({ where: { userId: id } })
       : null;
     if (subscription) {
+      const nextTrafficLimit = dto.trafficLimitBytes !== undefined ? BigInt(dto.trafficLimitBytes) : subscription.trafficLimitBytes;
       await this.prisma.subscription.update({
         where: { id: subscription.id },
         data: {
-          ...(dto.trafficLimitBytes !== undefined ? { trafficLimitBytes: BigInt(dto.trafficLimitBytes) } : {}),
-          ...(dto.expireAt !== undefined ? { expireAt: dto.expireAt ? new Date(dto.expireAt) : null } : {})
+          ...(dto.trafficLimitBytes !== undefined ? { trafficLimitBytes: nextTrafficLimit } : {}),
+          ...(dto.expireAt !== undefined ? { expireAt: dto.expireAt ? new Date(dto.expireAt) : null } : {}),
+          ...(nextTrafficLimit !== subscription.trafficLimitBytes ? { trafficWarningVersion: { increment: 1 } } : {})
         }
       });
     }
