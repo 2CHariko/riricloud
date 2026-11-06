@@ -23,7 +23,7 @@ export interface GenerateDialogProps {
 export function GenerateDialog({ open, onOpenChange, categories, onSubmit, pending }: GenerateDialogProps) {
   const { t, i18n } = useTranslation(['admin', 'common']);
   const schema = React.useMemo(() => z.object({
-    count: z.coerce.number({ invalid_type_error: t('admin:redeemCodes.valCountInvalid') })
+    count: z.coerce.number({ error: t('admin:redeemCodes.valCountInvalid') })
       .int(t('admin:redeemCodes.valCountInteger'))
       .min(1, t('admin:redeemCodes.valCountMin'))
       .max(1000, t('admin:redeemCodes.valCountMax')),

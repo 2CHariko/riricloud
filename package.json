@@ -18,8 +18,11 @@
     },
     "overrides": {
       "qs": "6.16.0",
-      "multer": ">=2.4.0",
+      "multer": ">=2.5.0",
       "nodemailer": ">=10.0.9",
+      "body-parser": "2.4.0",
+      "follow-redirects": "1.16.2",
+      "handlebars": "4.7.10",
       "fast-uri@>=3.0.0 <3.1.7": ">=3.1.7",
       "brace-expansion@1": "1.1.21",
       "brace-expansion@2": "2.1.7",

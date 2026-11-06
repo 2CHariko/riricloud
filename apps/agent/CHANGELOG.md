@@ -16,6 +16,10 @@
 
 ### Changed
 
+### Security
+
+- 升级 `golang.org/x/net` 至 `v0.60.0`，修复 CI `govulncheck` 报告的 HTTP/2 HPACK 编码器竞态可达漏洞。
+
 ### Fixed
 
 
