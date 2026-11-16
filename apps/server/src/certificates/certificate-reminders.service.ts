@@ -1,9 +1,11 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../system/settings.service';
-import { MailService } from '../mail/mail.service';
+import { MailService, type MailContext } from '../mail/mail.service';
 import { CertificatesService } from './certificates.service';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { SystemLogsService } from '../system-logs/system-logs.service';
+import { mailErrorDetails } from '../system-logs/mail-log';
 export function reminderStage(days: number, threshold: number): string | null {
   if (days <= 0)
     return 'EXPIRED';
@@ -15,12 +17,11 @@ export function reminderStage(days: number, threshold: number): string | null {
 }
 @Injectable()
 export class CertificateRemindersService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(CertificateRemindersService.name);
   private startup?: NodeJS.Timeout;
   private timer?: NodeJS.Timeout;
   private running?: Promise<void>;
   private stopped = false;
-  constructor(private readonly prisma: PrismaService, private readonly settings: SettingsService, private readonly mail: MailService, private readonly certificates: CertificatesService) { }
+  constructor(private readonly prisma: PrismaService, private readonly settings: SettingsService, private readonly mail: MailService, private readonly certificates: CertificatesService, @Optional() private readonly systemLogs?: SystemLogsService) { }
   onModuleInit() {
     this.startup = setTimeout(() => { void this.check(); }, 10000);
     this.timer = setInterval(() => { void this.check(); }, 3600000);
@@ -33,8 +34,20 @@ export class CertificateRemindersService implements OnModuleInit, OnModuleDestro
       return this.running;
     if (this.stopped)
       return Promise.resolve();
-    this.running = this.run().catch(() => { this.logger.warn('Certificate reminder check failed'); }).finally(() => { this.running = undefined; });
+    const startedAt = Date.now();
+    this.running = this.run().catch((error: unknown) => { this.recordSweepFailure(error, startedAt); }).finally(() => { this.running = undefined; });
     return this.running;
+  }
+  private recordSweepFailure(error: unknown, startedAt: number, context: MailContext = {}, to?: string) {
+    try {
+      const { userId, ...association } = context;
+      void Promise.resolve(this.systemLogs?.enqueueMail({ level: 'ERROR', userId, metadata: {
+        ...association, to, event: 'MAIL_SWEEP_FAILED', operationId: randomUUID(), mailType: 'CERTIFICATE_SWEEP',
+        stage: 'SWEEP', durationMs: Date.now() - startedAt, error: mailErrorDetails(error)
+      } })).catch(() => undefined);
+    } catch {
+      // 日志故障不得阻断巡检退出与后续重试。
+    }
   }
   private async run() {
     const settings = await this.settings.getSettings();
@@ -83,16 +96,25 @@ export class CertificateRemindersService implements OnModuleInit, OnModuleDestro
         continue;
       const ids = current.map(row => row.id);
       await this.prisma.certificateReminder.updateMany({ where: { id: { in: ids } }, data: { attemptedAt: now, state: 'PENDING' } });
+      const context: MailContext = {
+        certificateIds: current.map(row => row.certificateId),
+        certificateRevisions: current.map(row => ({ certificateId: row.certificateId, revision: row.revision })),
+        certificateCount: current.length
+      };
+      const startedAt = Date.now();
+      let sent = false;
       try {
-        await this.mail.sendCertificateSummary(recipient, current, settings.systemTimezone);
+        await this.mail.sendCertificateSummary(recipient, current, settings.systemTimezone, context);
+        sent = true;
         await this.prisma.$transaction(async tx => {
           await tx.certificateReminder.updateMany({ where: { id: { in: ids } }, data: { sentAt: new Date(), sentDay: day, state: 'SENT' } });
           await tx.systemSetting.upsert({ where: { key: dailyKey }, create: { key: dailyKey, value: day }, update: { value: day } });
         });
       }
-      catch {
+      catch (error) {
+        if (sent) this.recordSweepFailure(error, startedAt, context, recipient);
         await this.prisma.certificateReminder.updateMany({ where: { id: { in: ids } }, data: { state: 'FAILED' } });
-        this.logger.warn('Certificate reminder email failed');
+        // 发送失败由邮件层统一记录；台账异常另记巡检失败，保持原重试规则。
       }
     }
   }

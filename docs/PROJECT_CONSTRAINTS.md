@@ -75,7 +75,7 @@ Agent 面向最低配 VPS 运行，资源预算是验收指标而非建议：
 3. **密码存储**：`bcrypt`（成本因子 ≥ 10），禁止 MD5/SHA1/明文；禁止可逆加密存密码。浏览器 JWT 只允许放入 HttpOnly、SameSite Cookie，禁止 localStorage/sessionStorage；密码修改、重置、注销、禁用和管理员 CLI 重置必须递增 `sessionVersion`。
 4. **鉴权默认拒绝**：所有 API 默认挂 JWT Guard，公开端点须显式 `@Public()` 声明并逐一登记；Agent 鉴权失败必须断开连接；AgentToken 仅允许 Header，SSE 仅允许一次性短期票据。
 5. **输入校验**：服务端对一切外部输入（HTTP / WS / 订阅 token）校验后才使用（详见 [CODE_REVIEW.md](./CODE_REVIEW.md) §5）。
-6. **日志脱敏**：`passwordHash`、`agentToken`、`uuid`（用户凭证）不得以任何级别输出到日志。
+6. **日志脱敏**：`passwordHash`、`agentToken`、`uuid`（用户凭证）不得以任何级别输出到日志。服务端邮件专用 `enqueueMail` 白名单允许业务邮箱、域名/IP、主题和去除凭据后的 SMTP 诊断明文，普通日志 mask 不变，外部上报不得借模块名绕过。邮件正文、验证码、密码、AUTH 凭据及完整配置/异常对象不采集；本项仅澄清业务诊断字段，不放宽凭据禁入红线，详见 [邮件发送日志契约](./API_AND_PROTOCOLS.md#邮件发送日志契约server--mail)。
 7. **认证输入与会话**：邮箱统一 trim/小写并限制 254 字符；密码统一受系统 `passwordMinLength` 与 64 字符上限约束；认证响应禁止缓存，注册/找回密码/验证码发送不得通过响应差异枚举邮箱。
 8. **依赖安全**：CI 中运行 `pnpm audit` 与 `govulncheck`，高危漏洞阻断合并。
 

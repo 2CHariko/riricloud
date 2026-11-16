@@ -31,6 +31,7 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
+| [邮件发送日志统一记录](./archive/2026-11-17-server-mail-logs.md) | `Unreleased` | 2026-11-17 | — |
 | [subscription-email-reminders](./archive/2026-11-06-subscription-email-reminders.md) | `Unreleased` | 2026-11-06 | — |
 | [证书关联明细与跳转优化](./archive/2026-10-07-certificate-associations.md) | `Unreleased` | 2026-10-07 | — |
 | [手动证书管理完善](./archive/2026-10-06-certificate-management.md) | `Unreleased` | 2026-10-06 | #253 |
