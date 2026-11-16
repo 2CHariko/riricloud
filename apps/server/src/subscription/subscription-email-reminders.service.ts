@@ -1,8 +1,11 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { MailService } from '../mail/mail.service';
+import { Injectable, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { MailService, type MailContext } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService, type SystemSettings } from '../system/settings.service';
 import { applyPlanSnapshot } from './plan-snapshot';
+import { randomUUID } from 'node:crypto';
+import { SystemLogsService } from '../system-logs/system-logs.service';
+import { mailErrorDetails } from '../system-logs/mail-log';
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -43,7 +46,6 @@ export function expiryEventKey(expireAt: Date): string {
 
 @Injectable()
 export class SubscriptionEmailRemindersService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(SubscriptionEmailRemindersService.name);
   private startup?: NodeJS.Timeout;
   private timer?: NodeJS.Timeout;
   private running?: Promise<void>;
@@ -53,7 +55,8 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
-    private readonly mail: MailService
+    private readonly mail: MailService,
+    @Optional() private readonly systemLogs?: SystemLogsService
   ) {}
 
   onModuleInit() {
@@ -73,10 +76,23 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
   check(): Promise<void> {
     if (this.running) return this.running;
     if (this.stopped) return Promise.resolve();
+    const startedAt = Date.now();
     this.running = this.run()
-      .catch(() => { this.logger.warn('Subscription email reminder sweep failed'); })
+      .catch((error: unknown) => { this.recordSweepFailure(error, startedAt); })
       .finally(() => { this.running = undefined; });
     return this.running;
+  }
+
+  private recordSweepFailure(error: unknown, startedAt: number, context: MailContext = {}) {
+    try {
+      const { userId, ...association } = context;
+      void Promise.resolve(this.systemLogs?.enqueueMail({ level: 'ERROR', userId, metadata: {
+        ...association, event: 'MAIL_SWEEP_FAILED', operationId: randomUUID(), mailType: 'SUBSCRIPTION_SWEEP',
+        stage: 'SWEEP', durationMs: Date.now() - startedAt, error: mailErrorDetails(error)
+      } })).catch(() => undefined);
+    } catch {
+      // 日志故障不得阻断巡检退出与后续重试。
+    }
   }
 
   private async run() {
@@ -140,12 +156,12 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
           kind: TRAFFIC_WARNING_KIND,
           milestone: String(milestone),
           eventKey: trafficEventKey(subscription)
-        }, now, () => this.mail.sendTrafficWarning(subscription.user.email, {
+        }, now, (deliveryId) => this.mail.sendTrafficWarning(subscription.user.email, {
           planName,
           usedBytes: subscription.trafficUsedBytes,
           limitBytes: subscription.trafficLimitBytes,
           percentage
-        }));
+        }, { userId: subscription.user.id, subscriptionId: subscription.id, deliveryId }));
       }
     }
 
@@ -161,12 +177,12 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
             kind: SUBSCRIPTION_EXPIRY_KIND,
             milestone: String(milestone),
             eventKey: expiryEventKey(subscription.expireAt)
-          }, now, () => this.mail.sendSubscriptionExpiry(subscription.user.email, {
+          }, now, (deliveryId) => this.mail.sendSubscriptionExpiry(subscription.user.email, {
             planName,
             expireAt: subscription.expireAt!,
             daysRemaining,
             timezone: settings.systemTimezone
-          }));
+          }, { userId: subscription.user.id, subscriptionId: subscription.id, deliveryId }));
         }
       }
     }
@@ -178,7 +194,7 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
     kind: string;
     milestone: string;
     eventKey: string;
-  }, now: Date, send: () => Promise<unknown>) {
+  }, now: Date, send: (deliveryId: string) => Promise<unknown>) {
     const retryBefore = new Date(now.getTime() - RETRY_MS);
     const existing = await this.prisma.subscriptionEmailDelivery.findUnique({
       where: {
@@ -226,18 +242,22 @@ export class SubscriptionEmailRemindersService implements OnModuleInit, OnModule
     });
     if (!claimed.count) return;
 
+    let sent = false;
+    const startedAt = Date.now();
     try {
-      await send();
+      await send(deliveryId);
+      sent = true;
       await this.prisma.subscriptionEmailDelivery.update({
         where: { id: deliveryId },
         data: { state: 'SENT', sentAt: new Date(), errorCode: null }
       });
-    } catch {
+    } catch (error) {
+      if (sent) this.recordSweepFailure(error, startedAt, { userId: input.userId, subscriptionId: input.subscriptionId, deliveryId });
       await this.prisma.subscriptionEmailDelivery.update({
         where: { id: deliveryId },
         data: { state: 'FAILED', errorCode: 'SEND_FAILED' }
       });
-      this.logger.warn(`Subscription email delivery failed: ${input.kind}/${input.milestone}`);
+      // 发送失败由邮件层统一记录；台账异常另记巡检失败，保持原重试规则。
     }
   }
 

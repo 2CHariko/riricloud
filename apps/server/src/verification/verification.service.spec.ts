@@ -62,7 +62,16 @@ describe('VerificationService', () => {
     const sentCode = mailService.sendVerificationCode.mock.calls[0][1] as string;
     expect(sentCode).toMatch(/^\d{6}$/);
     expect(data.codeHash).toBe(hashAuthValue('verification-code', sentCode));
-    expect(mailService.sendVerificationCode).toHaveBeenCalledWith('user@example.com', sentCode, 'REGISTER');
+    expect(mailService.sendVerificationCode).toHaveBeenCalledWith('user@example.com', sentCode, 'REGISTER', undefined);
+  });
+
+  it('已登录用户验证邮箱时传递用户关联且不额外查询', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'user-1', email: 'user@example.com' });
+    await service.sendCode({ email: 'User@Example.com', action: 'VERIFY_CURRENT_EMAIL' }, 'user-1');
+    expect(mailService.sendVerificationCode).toHaveBeenCalledWith(
+      'user@example.com', expect.stringMatching(/^\d{6}$/), 'VERIFY_CURRENT_EMAIL', { userId: 'user-1' }
+    );
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
   });
 
   it('同邮箱同一行为六十秒内拒绝重复发送', async () => {

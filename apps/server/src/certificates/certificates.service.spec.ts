@@ -282,6 +282,9 @@ describe('手动证书生命周期与轻量 E2E', () => {
     const reminders = new CertificateRemindersService(prisma as never, settingsService as never, mail as never, service);
     mail.sendCertificateSummary.mockRejectedValueOnce(new Error('smtp unavailable'));
     await reminders.check(); await reminders.check(); expect(mail.sendCertificateSummary).toHaveBeenCalledTimes(1);
+    expect(mail.sendCertificateSummary.mock.calls[0][3]).toEqual({
+      certificateIds: [certificate.id], certificateRevisions: [{ certificateId: certificate.id, revision: 1 }], certificateCount: 1
+    });
     await prisma.certificateReminder.updateMany({ data: { attemptedAt: new Date(Date.now() - 6 * 3600_000 - 1000) } });
     mail.sendCertificateSummary.mockResolvedValue({}); await reminders.check(); await reminders.check();
     expect(mail.sendCertificateSummary).toHaveBeenCalledTimes(2);

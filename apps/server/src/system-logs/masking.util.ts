@@ -25,19 +25,36 @@ function anonymousTarget(value: string, type: 'host' | 'ip' = isIP(value) ? 'ip'
   return `[redacted-${type}:${ref}]`;
 }
 
-/** 完整遮蔽凭据，目标保留匿名关联，避免时间/代码/版本误伤。 */
-export function maskSensitiveString(input: string): string {
+/** 邮件专用入口共用凭据清理；UUID 是否为凭据仍由调用方的字段契约决定。 */
+export function maskCredentialsOnly(input: string): string {
   if (!input || typeof input !== 'string') return input;
+  return maskCredentialSuffix(maskCredentialPrefix(input));
+}
+
+function maskCredentialPrefix(input: string): string {
   let result = input.replace(ANSI_CONTROL_PATTERN, '');
   result = result.replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/gi, '***PRIVATE_KEY***');
   result = result.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '***');
-  result = result.replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, '***');
+  return result;
+}
+
+function maskCredentialSuffix(input: string): string {
+  let result = input;
   result = result.replace(/\b(?:Bearer|Basic)\s+[^\s,;]+/gi, (value) => `${value.split(/\s/)[0]} ***`);
   result = result.replace(/([?&](?:token|password|secret|key|ticket|uuid)=)[^&\s]+/gi, '$1***');
   // Cookie header 的分号后同样可能有凭据，未加引号时保守遮蔽整行。
   result = result.replace(/(\b(?:set-cookie|cookie)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]*)/gi, '$1***');
   result = result.replace(/((?:password|passwd|pwd|token|secret|authorization|cookie|credential|uuid|hash|jwt|api[-_]?key|access[-_]?key|private[-_]?key|public[-_]?key|signing[-_]?key)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}]+)/gi, '$1***');
   result = result.replace(/(\/sub\/)[A-Za-z0-9_-]+/g, '$1***');
+  return result;
+}
+
+/** 完整遮蔽凭据，目标保留匿名关联，避免时间/代码/版本误伤。 */
+export function maskSensitiveString(input: string): string {
+  if (!input || typeof input !== 'string') return input;
+  let result = maskCredentialPrefix(input);
+  result = result.replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, '***');
+  result = maskCredentialSuffix(result);
   // 绝对 URL 不保留浏览路径或用户信息；端口可供运维判断。
   result = result.replace(/\b(?:https?|socks5?|tcp|udp):\/\/[^\s"'<>]+/gi, (raw) => {
     try {

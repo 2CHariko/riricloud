@@ -96,7 +96,7 @@ export class VerificationService {
       }
     });
     try {
-      await this.mailService.sendVerificationCode(email, code, dto.action);
+      await this.mailService.sendVerificationCode(email, code, dto.action, userId ? { userId } : undefined);
       this.audit('VERIFICATION_SENT', { ...metadata, delivered: true });
       return this.genericResponse();
     } catch (error) {

@@ -451,6 +451,22 @@ systemctl restart riri-agent
 
 本次改动不要求 schema 迁移或新增服务；Master 与 Agent 的当前版本保持不变，发布时分别按 Unreleased 进入各自版本轨道。
 
+### 4.1.2 查询邮件发送与巡检日志
+
+1. 管理员进入「系统日志」，按来源 `SERVER`、模块 `Mail` 和故障时间范围筛选；关键词可检索 `MAIL_SEND_ACCEPTED`、`MAIL_SEND_FAILED` 或 `MAIL_SWEEP_FAILED`，也可搜索业务邮箱、主题或关联 ID。成功为 INFO，失败为 ERROR。验证码包含注册、换绑、验证当前邮箱和重置密码四种 action；流量、到期、证书和 SMTP 测试也在同一模块。
+2. 打开 metadata 核对 `mailType/action`、`to/from/subject`、`smtpHost/smtpPort/smtpSecure`、`durationMs` 与 `stage`。CONFIG 指向配置/准备，VERIFY 指向 SMTP 测试连接或鉴权，SEND 指向发送，SWEEP 指向巡检自身。检查 `error.code/responseCode/command/response` 和 `smtpResponse/accepted/rejected/messageId`；未到相应阶段时可没有 SMTP 返回值。
+3. 使用本条 `operationId` 作为 traceId 过滤；按 `userId/subscriptionId/deliveryId` 或 `certificateIds/certificateRevisions/certificateCount` 定位业务。重试会有新 operationId，同一投递沿用 deliveryId；AUTH 业务审计仍在原模块，同一发送失败不应被调用方重复记账。SMTP accepted 不代表进收件箱；如已接受仍未收到，应继续核对上游 SMTP 的退信/投递记录和收件方垃圾箱。
+4. 可复用管理员鉴权后的现有接口（下列路径均含完整前缀），不新增邮件专用接口：
+
+   ```text
+   GET /api/v1/logs?source=SERVER&module=Mail&keyword=MAIL_SEND_FAILED
+   GET /api/v1/logs?source=SERVER&module=Mail&traceId=<operationId>
+   GET /api/v1/logs?source=SERVER&module=Mail&keyword=<deliveryId>
+   GET /api/v1/logs/export?format=bundle&source=SERVER&module=Mail
+   ```
+
+业务邮箱、域名/IP、主题与无凭据 SMTP 诊断保留明文，导出文件同样包含这些信息；正文、验证码、密码和 AUTH 凭据不采集。metadata 超过 16 KiB 时仅保留 identity summary 并标记 `truncated`，必要时缩小时间窗口导出。成功日志受 `logsMinIngestLevel` 门槛约束，WARN/ERROR 门槛下不会采集 INFO 成功项；现有 5000 条/8 MiB 队列、清理、导出 5000 条上限与 SSE best effort 语义不变，缺少日志不能证明未发送，实时可见不能证明已落库。保存 SMTP 设置时单独进行的 verify 继续查看 HTTP 日志；管理员点击 SMTP 测试才生成 Mail 发送终态。完整契约见 [接口规范](./API_AND_PROTOCOLS.md#邮件发送日志契约server--mail)。
+
 ### 4.2 节点网络与端口检测
 - 检查 Sing-box 监听端口是否正常（将 `<port>` 替换为管理端显示的实际五位端口）：
   ```bash

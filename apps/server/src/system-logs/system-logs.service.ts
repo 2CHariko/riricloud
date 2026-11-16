@@ -8,6 +8,7 @@ import type { LogMetricsDto, TrendBucket } from './dto/log-metrics.dto';
 import type { QueryLogsDto } from './dto/query-logs.dto';
 import { maskSensitiveString, retainLogIdentity, sanitizeLogMetadata } from './masking.util';
 import { SSEHubService } from './sse-hub.service';
+import { MAIL_LOG_MESSAGES, sanitizeMailMetadata, type MailLogInput } from './mail-log';
 
 export const LOG_LEVEL_SEVERITY: Record<'DEBUG' | 'INFO' | 'WARN' | 'ERROR', number> = {
   DEBUG: 10,
@@ -126,10 +127,6 @@ export class SystemLogsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const id = input.id || randomUUID();
-    const createdAt = input.createdAt || new Date();
-    const maskedMessage = maskSensitiveString(input.message).slice(0, 8192);
-
     let metadataStr = '{}';
     if (typeof input.metadata === 'string') {
       try {
@@ -146,6 +143,28 @@ export class SystemLogsService implements OnModuleInit, OnModuleDestroy {
       metadataStr = JSON.stringify({ ...retainLogIdentity(JSON.parse(metadataStr)), truncated: true });
     }
 
+    this.enqueuePrepared(input, metadataStr);
+  }
+
+  /** 邮件明文仅限专用白名单，门槛与队列容量沿用通用日志路径。 */
+  enqueueMail(input: MailLogInput): void {
+    if (input.level !== 'INFO' && input.level !== 'ERROR') return;
+    if (LOG_LEVEL_SEVERITY[input.level] < LOG_LEVEL_SEVERITY[this.minIngestLevel]) {
+      this.ingestion.filtered += 1;
+      return;
+    }
+    const metadata = sanitizeMailMetadata(input.metadata);
+    if (!metadata) return;
+    this.enqueuePrepared({
+      source: 'SERVER', module: 'Mail', level: input.level, userId: input.userId,
+      traceId: metadata.operationId as string, message: MAIL_LOG_MESSAGES[input.metadata.event]
+    }, JSON.stringify(metadata));
+  }
+
+  private enqueuePrepared(input: EnqueueLogInput, metadataStr: string): void {
+    const id = input.id || randomUUID();
+    const createdAt = input.createdAt || new Date();
+    const maskedMessage = maskSensitiveString(input.message).slice(0, 8192);
     const entry: Prisma.SystemLogCreateManyInput = {
       id,
       traceId: input.traceId || null,

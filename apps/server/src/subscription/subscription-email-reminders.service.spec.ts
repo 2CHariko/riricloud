@@ -1,6 +1,7 @@
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../system/settings.service';
+import { SystemLogsService } from '../system-logs/system-logs.service';
 import {
   currentExpiryMilestone,
   currentTrafficMilestone,
@@ -103,6 +104,26 @@ describe('subscription email reminder milestones', () => {
 });
 
 describe('SubscriptionEmailRemindersService', () => {
+  it('SMTP 成功后台账写入失败记录巡检异常并保留原重试间隔', async () => {
+    const { prisma, deliveries } = createPrismaMock();
+    prisma.subscription.findMany.mockResolvedValue([subscription()]);
+    const settings = { getSettings: jest.fn().mockResolvedValue(baseSettings()) };
+    const mail = { sendTrafficWarning: jest.fn().mockResolvedValue({}), sendSubscriptionExpiry: jest.fn() };
+    const logs = { enqueueMail: jest.fn() };
+    const error = new Error('delivery ledger unavailable');
+    prisma.subscriptionEmailDelivery.update.mockRejectedValueOnce(error);
+    const service = new SubscriptionEmailRemindersService(prisma as unknown as PrismaService, settings as unknown as SettingsService, mail as unknown as MailService, logs as unknown as SystemLogsService);
+    await service.check();
+    expect(logs.enqueueMail).toHaveBeenCalledTimes(1);
+    expect(logs.enqueueMail).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-1', level: 'ERROR', metadata: expect.objectContaining({
+      event: 'MAIL_SWEEP_FAILED', mailType: 'SUBSCRIPTION_SWEEP', subscriptionId: 'sub-1', deliveryId: 'delivery-1',
+      error: expect.objectContaining({ message: error.message })
+    }) }));
+    expect([...deliveries.values()][0].state).toBe('FAILED');
+    await service.check();
+    expect(mail.sendTrafficWarning).toHaveBeenCalledTimes(1);
+  });
+
   it('发送当前最高流量阈值并保证后续巡检不重复发送', async () => {
     const { prisma, deliveries } = createPrismaMock();
     prisma.subscription.findMany.mockResolvedValue([subscription()]);
@@ -112,6 +133,7 @@ describe('SubscriptionEmailRemindersService', () => {
 
     await service.check();
     expect(mail.sendTrafficWarning).toHaveBeenCalledTimes(1);
+    expect(mail.sendTrafficWarning.mock.calls[0][2]).toEqual({ userId: 'user-1', subscriptionId: 'sub-1', deliveryId: 'delivery-1' });
     expect(mail.sendTrafficWarning.mock.calls[0][1]).toEqual(expect.objectContaining({ percentage: 96, planName: 'Pro' }));
     expect([...deliveries.values()][0]).toEqual(expect.objectContaining({ kind: 'TRAFFIC_WARNING', milestone: '95', state: 'SENT' }));
 
@@ -147,7 +169,7 @@ describe('SubscriptionEmailRemindersService', () => {
     const service = new SubscriptionEmailRemindersService(prisma as unknown as PrismaService, settings as unknown as SettingsService, mail as unknown as MailService);
 
     await service.check();
-    expect(mail.sendTrafficWarning).toHaveBeenCalledWith('admin@example.com', expect.objectContaining({ percentage: 96 }));
+    expect(mail.sendTrafficWarning).toHaveBeenCalledWith('admin@example.com', expect.objectContaining({ percentage: 96 }), { userId: 'admin-1', subscriptionId: 'sub-1', deliveryId: 'delivery-1' });
   });
 
   it('管理员调整配额后新版本可重新发送同一流量档位', async () => {
@@ -185,7 +207,7 @@ describe('SubscriptionEmailRemindersService', () => {
     const service = new SubscriptionEmailRemindersService(prisma as unknown as PrismaService, settings as unknown as SettingsService, mail as unknown as MailService);
 
     await service.check();
-    expect(mail.sendSubscriptionExpiry).toHaveBeenCalledWith('user@example.com', expect.objectContaining({ daysRemaining: 0, planName: 'Pro' }));
+    expect(mail.sendSubscriptionExpiry).toHaveBeenCalledWith('user@example.com', expect.objectContaining({ daysRemaining: 0, planName: 'Pro' }), { userId: 'user-1', subscriptionId: 'sub-1', deliveryId: 'delivery-1' });
   });
 
   it('SMTP 失败后记录 FAILED，6 小时内不重试，之后可恢复发送', async () => {
@@ -206,6 +228,8 @@ describe('SubscriptionEmailRemindersService', () => {
     record.attemptedAt = new Date(Date.now() - 7 * HOUR_MS);
     await service.check();
     expect(mail.sendSubscriptionExpiry).toHaveBeenCalledTimes(2);
+    expect(mail.sendSubscriptionExpiry.mock.calls[0][2]).toEqual(mail.sendSubscriptionExpiry.mock.calls[1][2]);
+    expect(mail.sendSubscriptionExpiry.mock.calls[1][2]).toEqual({ userId: 'user-1', subscriptionId: 'sub-1', deliveryId: 'delivery-1' });
     expect(record.state).toBe('SENT');
   });
 });

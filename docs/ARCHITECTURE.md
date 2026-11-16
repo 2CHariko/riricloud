@@ -103,6 +103,16 @@ graph TB
 - **卡密分类与兑换履约 (`apps/server/src/redeem-codes`)**：每张卡密保存生成时的余额金额或完整套餐权益快照；分类额度以共享购买身份为键累计，不使用标签计数。兑换在单一 SQLite 事务中条件核销卡密、原子递增分类额度，并提交余额流水或订阅/套餐购买台账，确保同卡并发只履约一次且跨账号共享身份不能突破上限。套餐卡与其他来源共用购买限购；有效订阅时拒绝且回滚，不核销。软删除只隐藏后台记录，不影响兑换，显式作废才禁止兑换；过期清理同样只软删除。
 - **持久化层 (Prisma + 双 SQLite 物理分库)**：零外部服务与网络数据库依赖，由主业务库（`app.db` / `riri.db`，由 `@prisma/client` 管理）与时序日志库（`telemetry.db`，由 `@prisma/telemetry-client` 管理）组成。两库物理隔离并分别开启独立 WAL 模式与 10s `busy_timeout`，高频的小时流量时序（`TrafficHourlyMetric`）、节点网卡速率（`NodeRateMetric`）与全链路日志（`SystemLog`）写入与业务账务完全物理分流，彻底杜绝单文件 SQLite 写锁争用风险。
 
+### 2.1.1 邮件发送与日志归属
+
+验证码四种 action、流量预警、套餐到期、证书到期汇总与 SMTP 测试统一经 `MailService` 发信。它在一次调用内覆盖 CONFIG、可选 VERIFY、SEND 阶段，成功记 `MAIL_SEND_ACCEPTED` / INFO，失败记 `MAIL_SEND_FAILED` / ERROR，每次调用只有一条终态。每次生成 `operationId` 并作为顶层 `traceId`；业务方传入已有 `userId/subscriptionId/deliveryId` 或 `certificateIds/certificateRevisions/certificateCount` 关联，重试生成新操作号但保留同一投递的 `deliveryId`。SMTP accepted 仅代表上游接受提交，不确认收件箱投递。
+
+链路为：业务 Service → `MailService` → 服务端专用 `SystemLogsService.enqueueMail` 白名单 → 既有有界队列、SSE 与观测库 `SystemLog`。专用入口只保留业务邮箱、域名/IP、主题和 SMTP 诊断明文，仍剔除凭据；正文、验证码、密码、AUTH 凭据与完整配置/异常对象不采集。普通日志 mask 保持原行为，外部上报不能凭 Mail 模块名绕过脱敏。metadata 仍限 16 KiB，超限保留 identity summary 与 `truncated`；完整字段见 [邮件发送日志契约](./API_AND_PROTOCOLS.md#邮件发送日志契约server--mail)。
+
+AUTH 业务审计继续由业务方记录，发送失败诊断由 MailService 统一负责，调用方不重复写同一失败。订阅/证书提醒巡检自身的配置、查询或台账异常记 `MAIL_SWEEP_FAILED` / ERROR / SWEEP；SMTP 发送失败与巡检自身异常分别归属。保存 SMTP 配置时的 verify 保留原 HTTP 日志，不算发信；显式测试包含验证与发信终态。
+
+沿用现有日志门槛、5000 条/8 MiB 容量、批量写库与清理/SSE best effort 语义，日志失败不改变发信结果。现有主库的订阅/证书投递去重、重试与保留机制不变，观测日志不替代投递台账；不新增 API、表、迁移、页面、依赖或外部队列，当前版本号不变。
+
 ### 2.2 边缘节点守护程序 (Node Agent - `apps/agent`)
 - **双模式通信与自愈**：Agent 根据 `MASTER_URL` 的 `ws(s)://` / `http(s)://` 前缀推导模式，也可由 `AGENT_MODE=ws|http` 显式指定；WS 模式具备指数退避重连，HTTP 模式按 `POLL_INTERVAL_SECS` 轮询并接受 Master 的 `nextPollSecs` 调整；服务端只接受通过结构校验的 Agent 上行数据。
 - **内核生命周期管理**：Agent 内置 supervisor 单协程托管 Sing-box 子进程——`config_sync` 原子落盘后拉起内核（二进制路径由 YAML 配置或 `SINGBOX_BINARY_PATH` 指定），配置字节比对变化时优雅重启（SIGTERM → 宽限 → Kill）即热应用，进程异常退出按指数退避自动拉起。Docker Master 镜像和自包含发行包直接携带 Linux Sing-box；远程 Agent 由 `install` 命令从 Master 获取内核，失败时可回退 GitHub Release。

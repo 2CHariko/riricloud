@@ -282,6 +282,38 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 - `DELETE /logs?retentionDays&maxRecords`：旧版系统日志清理兼容接口。⭐ 新管理端统一使用上述遥测清理接口；后台每小时根据 `logsRetentionDays` 与 `logsMaxCount` 清理系统日志，手动清空使用 `mode=all`，不再用 `retentionDays=0` 表示清空。
 - `GET /logs/export?format=json|csv|bundle&level&source&nodeId&module&traceId&keyword&startTime&endTime`：管理员按当前过滤条件导出日志文件。⭐ 单次最多导出 5000 条；JSON 保持数组、CSV 防公式注入，bundle 提供诊断 manifest 与节点白名单上下文，详见日志可信度扩展。
 
+#### 邮件发送日志契约（SERVER / Mail）
+
+邮件发送复用现有 `/logs` 查询、导出与 SSE，不新增 API、数据表、迁移、页面或依赖。五个既有入口统一由 `MailService` 记录：验证码（`REGISTER`、`CHANGE_EMAIL`、`VERIFY_CURRENT_EMAIL`、`RESET_PASSWORD`）、流量预警、套餐到期、证书到期汇总、SMTP 测试。每次实际发信调用只产生一条终态事件（包含配置检查或测试连接阶段失败），通过服务端专用白名单入口 `SystemLogsService.enqueueMail` 写入；未触发发信的去重、冷却、资格过滤不伪造发送结果。
+
+| 事件 | source / module | level | 含义 |
+| :--- | :--- | :--- | :--- |
+| `MAIL_SEND_ACCEPTED` | `SERVER / Mail` | `INFO` | SMTP 服务器已接受此次提交；不代表邮件已投递至收件箱 |
+| `MAIL_SEND_FAILED` | `SERVER / Mail` | `ERROR` | 本次调用在配置、连接验证或发送阶段失败 |
+| `MAIL_SWEEP_FAILED` | `SERVER / Mail` | `ERROR` | 提醒巡检自身异常（如读取配置、查询或更新台账失败），不是再次记录同一发信失败 |
+
+`metadata` 采用下列白名单；按阶段与实际结果填写，未获得的 SMTP 返回字段不伪造，关联字段仅在已有业务上下文时提供：
+
+| 字段 | 契约 |
+| :--- | :--- |
+| `event` | 上表事件名 |
+| `operationId` | 每次调用生成的关联标识，同时写入日志顶层 `traceId`，可用既有 `traceId` 查询 |
+| `mailType`、`action` | 邮件业务类型；验证码的 `action` 区分上述四种用途 |
+| `to`、`from`、`subject` | 实际收件人、发件人、主题；业务邮箱和主题保留明文 |
+| `smtpHost`、`smtpPort`、`smtpSecure` | SMTP 主机、端口、连接加密配置；域名/IP 保留明文，不采集 SMTP AUTH 账号对象或密码 |
+| `durationMs` | 本次调用耗时，单位毫秒 |
+| `messageId`、`smtpResponse`、`accepted`、`rejected` | SMTP 返回的消息标识、响应及接受/拒绝收件人摘要；仅表示 SMTP 提交结果 |
+| `stage` | `CONFIG`：加载/检查配置及准备发送；`VERIFY`：SMTP 测试的连接/鉴权验证；`SEND`：调用 SMTP 发送；`SWEEP`：提醒巡检自身异常 |
+| `error` | 仅收集 `name`、`message`、`code`、`responseCode`、`command`、`response`；保留 SMTP 诊断中的业务邮箱/域名/IP，剔除嵌入的凭据，不透传完整异常、transport 或配置对象 |
+| `userId`、`subscriptionId`、`deliveryId` | 已知用户、订阅与既有投递台账关联；重试使用新的 `operationId`，同一投递保留 `deliveryId` |
+| `certificateIds`、`certificateRevisions`、`certificateCount` | 证书汇总的证书、修订与数量关联；不包含 PEM 或私钥 |
+
+仅专用入口的白名单业务字段允许明文。邮件正文（text/html）、验证码、密码及 AUTH 凭据不采集；诊断字符串仍须剔除秘密，禁止直接序列化邮件、配置或异常对象。普通 `enqueue` 的 mask 规则不变，前端/Agent 上报不能通过填写 `module=Mail`、`event` 或任意 metadata 获得此例外。metadata 序列化后的 UTF-8 大小仍限 16 KiB；超限保留可关联的 identity summary（事件、操作、类型、阶段及已有业务关联/数量等）并标记 `truncated: true`，不保存完整大对象，也不把整条日志丢弃。
+
+业务 AUTH 审计（验证码用途、认证成功/失败等）保留；调用方不重复写入同一 `MAIL_SEND_FAILED`。巡检失败使用 `MAIL_SWEEP_FAILED` / `stage=SWEEP`，区分发信与巡检故障。SMTP 已接受后，投递台账或证书日限额事务写入失败也须记录该事件并携带业务关联，不得将其当作已记录的发信失败而静默忽略；原 `MAIL_SEND_ACCEPTED` 仍表示 SMTP 接受事实。保存系统设置时的 SMTP `verify()` 仍归既有 HTTP 日志，不产生邮件发送事件；显式 SMTP 测试则包含 VERIFY 与实际发送，并最终只记一条发送终态。
+
+日志沿用 `logsMinIngestLevel`（默认 INFO）、5000 条/8 MiB 有界队列、单批 500 条、最多 3 次写库尝试及现有保留/数量清理策略；不绕过门槛、不增加专用保留期。SSE 为 best effort，实时可见不保证落库，日志被过滤/丢失不等于邮件没有发送，也不影响原业务调用的成功/失败语义。
+
 #### HTTP 请求日志智能降噪与采集门槛
 1. **高频探针与轮询降噪**：`HttpLoggingInterceptor` 对状态码 `< 400` 的常规成功请求静默跳过，不写入 `SystemLog`，包含：
    - 存活探针：`/health`、`/ping`、`/api/v1/health`、`/api/v1/ping`
@@ -582,7 +614,7 @@ Agent 在运行期通过有界环形缓冲区采集自身运行日志与托管�
 - `GET /logs/metrics` 接受日志查询同款过滤及 `hours`（1–168，默认24）；旧字段 `avgLatencyMs` 仅统计 SERVER/HTTP 的 HTTP 请求 `durationMs`，不是代理延迟。趋势最多取 20,000 条并通过 `sampled`/`sampleLimit` 显式提示，分类计数仍查询全量。加性 `ingestion` 提供主控实例累计 filtered/dropped/persistenceFailures/retries/persisted、队列条数与字节；其中 retries 为重入队条数，不是批次数。内存累计指标重启归零，实时流未承诺已落库。
 - Master 持久化队列最多 5000 条/8 MiB（含 in-flight），每批最多 500 条、失败最多尝试 3 次，下一次刷新再重试；容量紧张优先保留 WARN/ERROR 和结构化诊断证据，超过预算仍可能丢失并计数。SSE 可见不表示已写库，进程退出也不保证内存日志全部送达。
 - `GET /logs/export?format=bundle` 增加诊断 JSON `{ schemaVersion:1, manifest, nodes, logs }`：manifest 含生成时间、过滤、匹配条数/导出条数、5000 上限、truncated、pending、ingestion 与时间范围，nodes 仅白名单版本/架构/配置状态，不输出 host/token/config。原 json 数组与 csv 保持兼容，响应头 `X-Logs-Truncated` 提示5000上限；bundle完整性只指本次查询，不承诺未采集/已清理/未确认日志零丢失。
-- 日志目标以进程内随机 HMAC 密钥生成匿名引用，保留同一 Master 进程内相关性，重启改变引用；凭据全部遮蔽，不保留前后缀。脱敏识别合法 IP/目标上下文，不把时间、代码标识符和版本误当目标。
+- 普通日志目标以进程内随机 HMAC 密钥生成匿名引用，保留同一 Master 进程内相关性，重启改变引用；凭据全部遮蔽，不保留前后缀。脱敏识别合法 IP/目标上下文，不把时间、代码标识符和版本误当目标。仅上文「邮件发送日志契约」的服务端专用白名单业务字段可保留明文；凭据禁入规则不变。
 - SSE 过滤新增 module/traceId/userId/startTime/endTime，与查询一致；不提供重放保证。
 ```json
 {
