@@ -76,6 +76,7 @@
     "docker:down": "bash scripts/docker-build.sh down",
     "test:scripts": "node scripts/run-script-tests.mjs",
     "test:native": "node scripts/run-native-client-tests.mjs",
+    "test:e2e:local": "node scripts/dev-e2e-local.mjs",
     "backup:create": "pnpm --filter @riricloud/server backup:create",
     "backup:verify": "pnpm --filter @riricloud/server backup:verify",
     "backup:restore": "pnpm --filter @riricloud/server backup:restore",

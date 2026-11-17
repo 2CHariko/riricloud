@@ -314,7 +314,11 @@ bash scripts/dev-e2e.sh                  # 全套启动并跟踪 Agent 日志，
 SKIP_WEB=1 bash scripts/dev-e2e.sh       # 不启动 Web 面板
 NODE_PORT=9443 USE_MASTER_LOCAL=0 bash scripts/dev-e2e.sh # 使用独立联调节点并自定义端口
 E2E_SYNC_RESOURCES=0 bash scripts/dev-e2e.sh # 跳过本地构建产物同步
+pnpm test:e2e:local                         # 隔离验收，检查完成并清理后自动退出
 ```
+
+- `pnpm test:e2e:local` 使用独立临时双库、运行目录、密钥和回环监听，不载入开发 `.env`，不复用已有服务或写入资源仓。准备依赖与固定内核资源后，测试流量均在本机；可用 `SINGBOX_BINARY_PATH`、`MIHOMO_BINARY_PATH` 传入已准备的本机二进制。验收检查 Web 首页与代理、管理员和匿名权限、真实 Agent 上线及配置、普通用户订阅、订阅客户端 TCP HTTP 和 UDP 回显。成功退出前还要确认进程结束、端口可重新绑定、双库与运行目录维护锁释放；失败输出阶段与脱敏诊断。它不代替容器、发行包或公网验收，也不加入常规门禁。
+- `MAINTENANCE_LOCKED` 会单独列出已存在的锁路径。核对所有写入者均已停止后再按 §3.7 检查及人工归档残留锁目录，保留原库及 WAL/SHM。仅在 HTTP `EADDRINUSE` 后收到应用关闭确认且父入口已释放本次锁时，自动端口才可顺延；单凭日志里的 `EADDRINUSE` 字样不会重试。
 
 - 脚本默认使用独立的 `apps/server/prisma/dev-e2e.db` 联调数据库，再检查并应用数据库迁移，数据库首次创建时执行种子播种；这样即使本地 `3000` 端口的手动开发主控正在运行，也不会与其共享 SQLite WAL 写锁。可通过 `E2E_DATABASE_URL` 显式指定要复用的 SQLite URL；若主控已经在运行则跳过迁移，复用时需由调用者确保目标主控与该数据库匹配。随后自动完成管理员登录，优先使用显式 `ADMIN_EMAIL`/`ADMIN_PASSWORD`，其次读取 `apps/server/.env` 中的正式或兼容 `SEED_ADMIN_*` 配置，最后才回退到本地演示默认值；也可通过 `SERVER_ENV_FILE` 指定凭据配置文件。使用临时权限受限 Cookie jar 调用管理 API（登录响应不再读取 `accessToken` JSON；解析器兼容 curl Netscape 格式的 `#HttpOnly_` Cookie 标记）。登录失败时会显示 HTTP 状态和对应排查提示，不再直接暴露 `curl (22)`。脚本默认复用 seed 预置的 `Master-Local` 节点，并通过本地 Prisma bootstrap helper 读取其 AgentToken（节点列表 API 已脱敏，不再返回凭证），再构建并启动 Agent。`SINGBOX_BINARY_PATH` 可显式指定内核；未指定时脚本会按当前系统与 CPU 架构自动过滤候选文件，Linux 优先查找 `.cache/sing-box-v2ray-api/<version>/linux-<arch>/sing-box`，Windows 优先查找 `.exe`，并通过 `sing-box version` 验证文件确实可执行。如需使用独立联调节点，可设置 `USE_MASTER_LOCAL=0`，脚本会按 `127.0.0.1:<NODE_PORT>` 查找或创建节点；复用既有独立节点时必须显式设置 `AGENT_TOKEN`，否则脚本会提示删除旧节点后重新创建对应端口的 VLESS Reality 线路。
 - E2E 主库与遥测库 URL 在脚本启动时分别以 `prisma/` 与 `prisma/telemetry/` 的 schema 目录规范化成绝对 `file:` URL，文件存在判断、上游预检、迁移、种子、主控和 AgentToken helper 复用相同路径。双库部署入口也进行同样规范化；不要将 scratch/custom-output 客户端的生成文件复制进默认 Prisma client，Windows 引擎占用解除后从正式 schema 正常执行 `prisma generate`。
@@ -334,7 +338,7 @@ E2E_SYNC_RESOURCES=0 bash scripts/dev-e2e.sh # 跳过本地构建产物同步
 - 开发联调要求 Sing-box 启用 `with_v2ray_api`、`with_utls`、`with_quic` 和 `with_naive_outbound`。脚本会先按当前系统与 CPU 架构选择可执行的内核并检查这些标签；如果缓存中没有匹配版本，脚本会使用项目内 Go 工具链从 `SINGBOX_VERSION`（默认 `1.14.0`）源码构建并缓存到 `.cache/sing-box-v2ray-api/`。显式设置 `SINGBOX_BINARY_PATH` 时，若文件无法执行或缺少所需标签会直接报错，不会静默切换到其他内核。
 - 运行数据按规范化后的业务库与观测库 URL 共同计算 SHA-256 实例标识，固定保存于 `.cache/dev-e2e-instances/<实例标识>/data/`，并导出为 `RIRICLOUD_DATA_DIR`；不继承普通开发服务的数据目录。同一双库组合重复启动或自动更换端口时目录不变；不同双库组合分离。可用 `E2E_DATA_ROOT` 改变实例目录的父目录，每个实例仍保留独立子目录。日志、Agent 临时配置、实际端口及数据库/数据目录复用标记分别保存于该实例目录内；自动复用必须同时匹配业务库和数据目录，不再采用旧的全局端口标记。强制结束留下的维护锁需按 §3.7 检查处理，不自动删除或迁移旧联调库。
 - 未显式设置 `JWT_SECRET` 时，脚本会为本地联调生成强随机密钥并按数据库 URL 维度持久化到 `.cache/dev-e2e-secrets/`（同一联调数据库始终复用同一密钥），既避免空白开发 `.env` 阻止主控启动，也保证持久复用的联调库中加密凭据（Master-Local AgentToken 等）跨运行可解密；显式提供的 `JWT_SECRET` 优先但不落盘，若与目标数据库历史密钥不一致会出现解密失败，需换用历史密钥或删除该联调库重建。生产环境仍必须按源码部署要求手动配置强随机密钥。Cookie 会话仅在本次脚本生命周期内使用，退出时清理临时 jar。
-- 已在运行的主控/Web 服务会被复用而非重启；脚本退出时按进程树回收其自身启动的主控/Web/Agent 进程（Windows 下使用 `taskkill /T`，避免 pnpm 派生的 `nest`/`sing-box` 子进程成为孤儿继续占用端口）。若主控端口发生变化，需先停止旧的 5173 Web 进程，再重新执行脚本，使 Vite 重新读取 API 代理目标。
+- 已运行的 Web 必须同时通过首页和经 Vite 代理的 API 检查，且代理返回的实例标识与目标 Master 一致时才可复用。否则脚本会挑选可用端口并以严格端口模式启动新 Vite；显式 `WEB_URL` 端口被不匹配的服务占用时直接报错。退出只回收本次启动的主控/Web/Agent 和日志跟踪进程（Windows 下回收子进程使用 `taskkill /T`）。
 - 若主控进程启动失败，脚本会立即输出 `server.log` 最近 40 行并退出，不再静默等待完整超时；迁移、登录或节点准备阶段失败也会回收本次已启动的主控/Web 进程。
 - 可验证的内核行为：配置下发拉起（含 `sing-box check` 预检）、本地 StatsService 监听实际选定地址、面板编辑线路后优雅重启热应用、`taskkill` 内核后自动重拉、关闭 Agent 无残留进程。
 

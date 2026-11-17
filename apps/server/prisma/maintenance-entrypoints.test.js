@@ -6,6 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { spawn, spawnSync } = require('node:child_process');
 const { EventEmitter, once } = require('node:events');
+const { createServer } = require('node:net');
 const { fixture, KEY } = require('./maintenance-test-fixture');
 const { acquireLock, lockPaths, RESTORE_MARKER } = require('./maintenance-lock');
 const { createBackup } = require('./maintenance-backup');
@@ -165,7 +166,7 @@ test('受保护源码启动不能在子进程异常退出后释放可能仍由�
   const source = fs.readFileSync(path.join(__dirname, 'maintenance-start.js'), 'utf8');
   const fakeProcess = { ...process, env: environment(f.config), on() {}, removeListener() {}, chdir() {} };
   const context = { process: fakeProcess, __dirname, module: { exports: {} }, console, setInterval, clearInterval, require(id) {
-    if (id === 'node:child_process') return { spawn() { const child = new EventEmitter(); child.exitCode = null; child.kill = () => {}; setImmediate(() => child.emit('exit', null, 'SIGTERM')); return child; } };
+    if (id === 'node:child_process') return { spawn() { const child = new EventEmitter(); child.exitCode = null; child.kill = () => {}; setImmediate(() => child.emit('close', null, 'SIGTERM')); return child; } };
     if (id === './maintenance-config') return { ...require(id), loadEnvironment() {}, resolveConfig() { return f.config; }, configureDatabaseEnvironment() {} };
     return require(id);
   } };
@@ -225,9 +226,52 @@ test('有真实token和IPC但父进程未授权的子进程超时拒绝', async 
 });
 test('源码保护入口在迁移前拒绝已有锁；切换dataDir仍不执行编译入口', (t) => {
   const f = useFixture(t); const owner = acquireLock(f.config, { role: 'startup' }); t.after(() => owner.release());
+  const before = lockPaths(f.config).map(file => fs.readFileSync(path.join(file, 'owner.json'), 'utf8'));
   const result = spawnSync(process.execPath, [path.join(__dirname, 'maintenance-start.js')], { env: { ...environment(f.config), RIRICLOUD_DATA_DIR: path.join(f.root,'other-data') }, encoding: 'utf8', timeout: 10000 });
   assert.equal(result.status, 3); assert.match(result.stderr, /MAINTENANCE_LOCKED/);
-  assert.ok(lockPaths(f.config).every(file => fs.existsSync(file)));
+  assert.deepEqual(lockPaths(f.config).map(file => fs.readFileSync(path.join(file, 'owner.json'), 'utf8')), before);
+});
+
+test('真实 HTTP 端口冲突在关闭确认后释放所有锁，并允许同一双库重试', { timeout: 15000 }, async (t) => {
+  const f = useFixture(t);
+  const occupied = createServer();
+  occupied.listen(0, '127.0.0.1');
+  await once(occupied, 'listening');
+  t.after(() => occupied.close());
+  const build = path.join(f.root, 'build');
+  fs.mkdirSync(build);
+  fs.writeFileSync(path.join(build, 'main.js'), [
+    "const { createServer } = require('node:http');",
+    "const base = require('node:path').join(process.cwd(), 'prisma');",
+    "const { resolveConfig } = require(base + '/maintenance-config');",
+    "require(base + '/maintenance-lock').acquireStartupLock(resolveConfig()).then(lease => {",
+    "const listener = createServer();",
+    "listener.once('error', async error => { if (error.code !== 'EADDRINUSE') process.exit(1); await lease.release('http-bind-conflict'); process.exit(10); });",
+    "listener.listen(Number(process.env.FIXTURE_HTTP_PORT), '127.0.0.1', () => listener.close(async () => { await lease.release(); process.exit(0); }));",
+    "}).catch(() => process.exit(1));"
+  ].join('\n'));
+  let calls = 0;
+  const env = { ...environment(f.config), FIXTURE_HTTP_PORT: String(occupied.address().port) };
+  const context = { build, process: { ...process, env, on() {}, removeListener() {}, chdir() {} }, __dirname,
+    module: { exports: {} }, setInterval, clearInterval, require(id) {
+      if (id === 'node:child_process') return { spawn(...args) {
+        if (calls++ % 3 === 2) return spawn(...args);
+        const child = new EventEmitter(); setImmediate(() => child.emit('close', 0)); return child;
+      } };
+      if (id === './maintenance-config') return { ...require(id), loadEnvironment() {}, resolveConfig: () => f.config, configureDatabaseEnvironment() {} };
+      if (id === './maintenance-lock') return { ...require(id), acquireLock(config, options) {
+        const lease = acquireLock(config, options);
+        Object.assign(lease.childEnvironment, env, { FIXTURE_HTTP_PORT: env.FIXTURE_HTTP_PORT });
+        return lease;
+      } };
+      return require(id);
+    } };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'maintenance-start.js'), 'utf8'), context);
+  await assert.rejects(context.module.exports.start({ buildDir: build }), { code: 'MASTER_PORT_IN_USE', exitCode: 10 });
+  assert.equal(lockPaths(f.config).some(file => fs.existsSync(file)), false);
+  env.FIXTURE_HTTP_PORT = '0';
+  await context.module.exports.start({ buildDir: build });
+  assert.equal(lockPaths(f.config).some(file => fs.existsSync(file)), false);
 });
 
 test('Docker恢复隔离在任何迁移和服务拉起前拒绝', async (t) => {
@@ -239,12 +283,12 @@ test('Docker恢复隔离在任何迁移和服务拉起前拒绝', async (t) => {
   assert.equal(lockPaths(f.config).some(file => fs.existsSync(file)), false);
 });
 
-test('应用退出码为零但没有关闭确认仍失败并保留锁', async (t) => {
+test('绑定失败退出码没有关闭确认仍不得重试并保留锁', async (t) => {
   const f = useFixture(t); const build = path.join(f.root, 'build'); fs.mkdirSync(build); fs.writeFileSync(path.join(build, 'main.js'), '// fixture');
   let count = 0;
   const fakeProcess = { ...process, env: environment(f.config), on() {}, removeListener() {}, chdir() {} };
   const context = { build, process: fakeProcess, __dirname, module: { exports: {} }, console, setInterval, clearInterval, require(id) {
-    if (id === 'node:child_process') return { spawn() { count++; const child = new EventEmitter(); child.exitCode = null; child.kill = () => {}; setImmediate(() => child.emit('exit', 0)); return child; } };
+    if (id === 'node:child_process') return { spawn() { count++; const child = new EventEmitter(); child.exitCode = null; child.kill = () => {}; setImmediate(() => child.emit('close', count === 3 ? 10 : 0)); return child; } };
     if (id === './maintenance-config') return { ...require(id), loadEnvironment() {}, resolveConfig() { return f.config; }, configureDatabaseEnvironment() {} };
     return require(id);
   } };

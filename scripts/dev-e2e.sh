@@ -21,6 +21,26 @@ cd "$ROOT"
 source scripts/dev-env.sh >/dev/null 2>&1 || true
 source scripts/dev-e2e-server.sh
 
+SMOKE=0
+if [ "${1:-}" = "--smoke" ]; then
+  [ -n "${E2E_SMOKE_DIR:-}" ] && [ -d "$E2E_SMOKE_DIR" ] || { echo '请使用 pnpm test:e2e:local' >&2; exit 2; }
+  for existing in "$E2E_SMOKE_DIR/"{main.db,telemetry.db,data,logs,agent}; do
+    if [ -e "$existing" ] || [ -L "$existing" ]; then
+      echo '隔离验收拒绝使用已有数据目录' >&2
+      exit 2
+    fi
+  done
+  SMOKE=1
+  export E2E_DATABASE_URL="file:$E2E_SMOKE_DIR/main.db"
+  export E2E_TELEMETRY_DATABASE_URL="file:$E2E_SMOKE_DIR/telemetry.db"
+  SERVER_ENV_FILE="$E2E_SMOKE_DIR/no-env"
+  E2E_SYNC_RESOURCES=0
+  export AGENT_MODE=ws
+elif [ "$#" -ne 0 ]; then
+  echo 'Usage: bash scripts/dev-e2e.sh' >&2
+  exit 2
+fi
+
 read_dotenv_value() {
   local file="$1"
   local key="$2"
@@ -45,7 +65,8 @@ NODE
 
 SERVER_URL_OVERRIDE="${SERVER_URL:-}"
 SERVER_URL="${SERVER_URL:-http://localhost:30800}"
-WEB_URL="${WEB_URL:-http://localhost:5173}"
+WEB_URL_OVERRIDE="${WEB_URL:-}"
+WEB_URL="${WEB_URL:-http://127.0.0.1:5173}"
 SERVER_ENV_FILE="${SERVER_ENV_FILE:-$ROOT/apps/server/.env}"
 # 只有脚本默认专用库允许调整演示线路；外部 Master、指定凭据/数据库保持原契约。
 E2E_MANAGED_PORTS=0
@@ -62,6 +83,7 @@ E2E_TELEMETRY_DATABASE_URL="$(node apps/server/prisma/sqlite-url.js "${E2E_TELEM
 export TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL"
 # 不继承普通开发服务的 RIRICLOUD_DATA_DIR；每个双库实例独占且稳定复用运行资源。
 E2E_INSTANCE_DIR="$(node scripts/dev-e2e-storage.mjs "$ROOT" "$E2E_DATABASE_URL" "$E2E_TELEMETRY_DATABASE_URL" "${E2E_DATA_ROOT:-}")" || { printf '%s\n' '[dev-e2e] 无法定位隔离运行数据目录' >&2; exit 1; }
+[ "$SMOKE" = 0 ] || E2E_INSTANCE_DIR="$E2E_SMOKE_DIR"
 export RIRICLOUD_DATA_DIR="$E2E_INSTANCE_DIR/data"
 mkdir -p "$E2E_INSTANCE_DIR" "$RIRICLOUD_DATA_DIR"
 ADMIN_EMAIL="${ADMIN_EMAIL:-$(read_dotenv_value "$SERVER_ENV_FILE" ADMIN_EMAIL)}"
@@ -110,9 +132,14 @@ SINGBOX_CONF_DIR="$E2E_INSTANCE_DIR/agent"
 mkdir -p "$LOG_DIR" "$SINGBOX_CONF_DIR"
 COOKIE_JAR=""
 LOGIN_RESPONSE_FILE=""
+WEB_PORT=""
+SMOKE_LINE_PORT=""
 
 say() { printf '\033[1;36m[dev-e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[dev-e2e]\033[0m %s\n' "$*" >&2; exit 1; }
+check_cancel() {
+  if [ "$SMOKE" = 1 ] && [ -f "$E2E_SMOKE_DIR/cancel" ]; then exit 130; fi
+}
 
 if [ -z "${MIHOMO_BINARY_PATH:-}" ]; then
   say "准备本机 Mihomo 客户端拨测内核（固定版本/校验值）…"
@@ -145,6 +172,7 @@ say "E2E Agent 版本：$E2E_AGENT_VERSION（同步资源版本：$E2E_RESOURCE_
 
 SERVER_PID=""
 WEB_PID=""
+TAIL_PID=""
 AGENT_PID=""
 SERVER_TSCONFIG=""
 
@@ -214,19 +242,48 @@ stop_owned_server() {
   kill_process_tree "$SERVER_PID"
   wait "$SERVER_PID" 2>/dev/null || true
   SERVER_PID=""
+  return 1
 }
 
 cleanup() {
+  local result="$1" clean=0
+  trap - EXIT
+  trap '' INT TERM
+  set +e
+  kill_process_tree "$TAIL_PID"
+  [ -z "$TAIL_PID" ] || wait "$TAIL_PID" 2>/dev/null
   kill_process_tree "$AGENT_PID"
+  [ -z "$AGENT_PID" ] || wait "$AGENT_PID" 2>/dev/null
   # 只回收本次脚本启动的服务；已在运行的复用实例保持不动
-  stop_owned_server
+  stop_owned_server || clean=1
   kill_process_tree "$WEB_PID"
+  [ -z "$WEB_PID" ] || wait "$WEB_PID" 2>/dev/null
   # 先停止持有输出的进程，再仅清理本次隔离目录；不碰手动开发服务的 dist。
   [ -n "$SERVER_TSCONFIG" ] && rm -rf -- "$(dirname "$SERVER_TSCONFIG")"
   [ -n "$COOKIE_JAR" ] && rm -f -- "$COOKIE_JAR"
   [ -n "$LOGIN_RESPONSE_FILE" ] && rm -f -- "$LOGIN_RESPONSE_FILE"
+  if [ "$SMOKE" = 1 ]; then
+    local ports=("$WEB_PORT" "$SMOKE_LINE_PORT")
+    [ -z "$SMOKE_LINE_PORT" ] || ports+=("$SMOKE_LINE_PORT:udp")
+    if [ -n "$SERVER_TSCONFIG" ]; then ports+=("$SERVER_PORT"); fi
+    local managed
+    managed="$(node scripts/dev-e2e-smoke.mjs managed-ports "$SINGBOX_CONF_DIR/config.json")"
+    while IFS= read -r port; do [ -z "$port" ] || ports+=("$port"); done <<<"$managed"
+    node scripts/dev-e2e-readiness.mjs released "${ports[@]}" || clean=1
+    if [ "$clean" != 0 ]; then
+      printf '%s\n' '[dev-e2e] 停机、端口或维护锁检查失败' >&2
+      [ "$result" != 0 ] || result=1
+    elif [ "$result" = 0 ]; then
+      say '本地验收通过：进程已退出，端口与维护锁已释放'
+    fi
+    [ "$clean" != 0 ] || rm -f -- "$E2E_SMOKE_DIR/cleanup-pending"
+  fi
+  exit "$result"
 }
-trap cleanup EXIT INT TERM
+trap 'cleanup "$?"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+[ "$SMOKE" = 0 ] || touch "$E2E_SMOKE_DIR/cleanup-pending"
 
 # 从 stdin 的 JSON 提取顶层字段
 jsonget() {
@@ -262,7 +319,14 @@ master_agent_token() {
   )
 }
 
-server_up() { curl -fsS --max-time 2 "$SERVER_URL/api/v1/system/version" >/dev/null 2>&1; }
+server_up() {
+  if [ -n "${MASTER_INSTANCE:-}" ]; then
+    curl -fsS --max-time 2 -D - -o /dev/null "$SERVER_URL/api/v1/system/version" 2>/dev/null \
+      | tr -d '\r' | grep -iFx "X-Riricloud-E2e-Instance: $MASTER_INSTANCE" >/dev/null
+  else
+    curl -fsS --max-time 2 "$SERVER_URL/api/v1/system/version" >/dev/null 2>&1
+  fi
+}
 
 # URL 已在启动时以对应 schema 目录规范化为绝对路径，所有调用方复用同一 URL。
 e2e_database_path() {
@@ -490,7 +554,7 @@ if [ -f "$E2E_DATABASE_PATH" ]; then
   DB_WAS_PRESENT=1
 fi
 SERVER_ALREADY_UP=0
-if [ "$SERVER_REUSE_ALLOWED" = "1" ] && server_up; then
+if [ "$SMOKE" = 0 ] && [ "$SERVER_REUSE_ALLOWED" = "1" ] && server_up; then
   # 运行中的 Master 可能持有 SQLite WAL 写锁，迁移必须在启动服务前完成。
   SERVER_ALREADY_UP=1
   say "主控端已在 $SERVER_URL 运行，跳过数据库迁移并直接复用"
@@ -505,7 +569,7 @@ else
     SERVER_PORT_START="$SERVER_PORT"
     SERVER_PORT="$(pick_server_port "$SERVER_PORT_START")" \
       || die "未找到可用的主控端口（已从 $SERVER_PORT_START 开始探测 $SERVER_PORT_SCAN_LIMIT 个端口）；可通过 SERVER_PORT=xxxx 或 PORT=xxxx 指定"
-    SERVER_URL="http://localhost:$SERVER_PORT"
+    SERVER_URL="http://127.0.0.1:$SERVER_PORT"
     if [ "$SERVER_PORT" != "$SERVER_PORT_START" ]; then
       say "主控端默认端口 $SERVER_PORT_START 不可用，改用 $SERVER_URL"
     fi
@@ -535,22 +599,29 @@ else
   SERVER_ATTEMPTS="${SERVER_START_ATTEMPTS:-5}"
   SERVER_READY=0
   for attempt in $(seq 1 "$SERVER_ATTEMPTS"); do
+    check_cancel
     SERVER_TSCONFIG="$(node scripts/dev-e2e-server-build.mjs "$ROOT/apps/server")" || die "创建主控隔离编译配置失败"
     # Nest CLI 的 --path 使用工作区相对路径（绝对路径在当前 Windows CLI 下会被重复拼接）。
     SERVER_TSCONFIG_ARG=".cache/$(basename "$(dirname "$SERVER_TSCONFIG")")/tsconfig.json"
     say "启动主控端（端口 $SERVER_PORT，日志：$LOG_DIR/server.log）…"
     pnpm --filter @riricloud/server exec nest build --path "$SERVER_TSCONFIG_ARG" >"$LOG_DIR/server.log" 2>&1 || die "主控独立编译失败，请检查 $LOG_DIR/server.log"
-    PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" CLASH_API_LISTEN="${CLASH_API_LISTEN:-}" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" node apps/server/prisma/maintenance-start.js --build-dir "$(dirname "$SERVER_TSCONFIG")/dist" --seed-if-missing --stop-file "$SERVER_TSCONFIG.stop" >>"$LOG_DIR/server.log" 2>&1 &
+    MASTER_INSTANCE="$(node -e 'console.log(require("crypto").randomUUID())')"
+    RIRICLOUD_E2E_INSTANCE="$MASTER_INSTANCE" PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" CLASH_API_LISTEN="${CLASH_API_LISTEN:-}" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" node apps/server/prisma/maintenance-start.js --build-dir "$(dirname "$SERVER_TSCONFIG")/dist" --seed-if-missing --stop-file "$SERVER_TSCONFIG.stop" >>"$LOG_DIR/server.log" 2>&1 &
     SERVER_PID=$!
     SERVER_EADDRINUSE=0
     for _ in $(seq 1 60); do
+      check_cancel
       SERVER_START_STATE="$(e2e_server_start_state "$LOG_DIR/server.log" "$SERVER_PID")"
       case "$SERVER_START_STATE" in
         READY) SERVER_READY=1; break ;;
         PORT_CONFLICT) SERVER_EADDRINUSE=1; break ;;
+        LOCKED)
+          node scripts/dev-e2e-readiness.mjs locks
+          die '主控存储已锁定（MAINTENANCE_LOCKED）。确认所有相关写入进程停止后，按部署指南 §3.7 检查锁。'
+          ;;
         FAILED|EXITED)
           say "主控端启动失败，最近日志：" >&2
-          tail -n 40 "$LOG_DIR/server.log" >&2 || true
+          [ "$SMOKE" = 1 ] || tail -n 40 "$LOG_DIR/server.log" >&2 || true
           die "主控端未完成 HTTP 监听（$SERVER_START_STATE）"
           ;;
       esac
@@ -561,7 +632,7 @@ else
       break
     fi
     if [ "$SERVER_EADDRINUSE" = "1" ]; then
-      stop_owned_server
+    stop_owned_server || die "旧主控未能正常退出，停止重试"
       rm -rf -- "$(dirname "$SERVER_TSCONFIG")"
       SERVER_TSCONFIG=""
       if [ -n "$SERVER_PORT_OVERRIDE" ]; then
@@ -569,7 +640,7 @@ else
       fi
       SERVER_PORT="$(pick_server_port "$((SERVER_PORT + 1))")" \
         || die "主控端口被占用后未能在 $SERVER_PORT_SCAN_LIMIT 个端口内找到可用端口"
-      SERVER_URL="http://localhost:$SERVER_PORT"
+      SERVER_URL="http://127.0.0.1:$SERVER_PORT"
       say "端口被占用，改用 $SERVER_URL 重试（第 $attempt/$SERVER_ATTEMPTS 次）"
       continue
     fi
@@ -588,22 +659,38 @@ fi
 # ---------- 3. Web 面板（可选） ----------
 if [ "${SKIP_WEB:-0}" = "1" ]; then
   say "SKIP_WEB=1，跳过 Web 面板"
-elif web_up; then
+elif [ "$SMOKE" = 0 ] && node scripts/dev-e2e-readiness.mjs web "$WEB_URL" "$SERVER_URL"; then
   say "Web 面板已在 $WEB_URL 运行，直接复用"
 else
+  if [ -n "$WEB_URL_OVERRIDE" ]; then
+    WEB_PORT="$(node -e 'const u=new URL(process.argv[1]); if(u.protocol!=="http:"||!["127.0.0.1","localhost"].includes(u.hostname)||!u.port||u.pathname!=="/"||u.search||u.hash||u.username||u.password) process.exit(1); console.log(u.port)' "$WEB_URL")" \
+      || die "自启 Web 需要本机 HTTP 地址和明确端口"
+    port_available "$WEB_PORT" || die "Web 端口已被占用，且已有服务无法证明指向当前主控"
+  else
+    WEB_PORT="$(pick_server_port 5173)" || die "未找到可用 Web 端口"
+  fi
+  WEB_URL="http://127.0.0.1:$WEB_PORT"
   say "启动 Web 面板（日志：$LOG_DIR/web.log）…"
-  VITE_API_PROXY_TARGET="$SERVER_URL" pnpm dev:web >"$LOG_DIR/web.log" 2>&1 &
+  (cd apps/web && VITE_API_PROXY_TARGET="$SERVER_URL" exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port "$WEB_PORT" --strictPort) >"$LOG_DIR/web.log" 2>&1 &
   WEB_PID=$!
+  WEB_READY=0
+  for _ in $(seq 1 30); do
+    check_cancel
+    kill -0 "$WEB_PID" 2>/dev/null || break
+    if node scripts/dev-e2e-readiness.mjs web "$WEB_URL" "$SERVER_URL" owned; then WEB_READY=1; break; fi
+    sleep 1
+  done
+  [ "$WEB_READY" = 1 ] || die "Web 首页或 API 代理未就绪"
 fi
 
 # ---------- 4. 登录管理员并准备联调节点 ----------
-COOKIE_JAR="$(mktemp "$ROOT/.cache/dev-e2e-cookie.XXXXXX")"
+COOKIE_JAR="$(mktemp "$E2E_INSTANCE_DIR/cookie.XXXXXX")"
 chmod 600 "$COOKIE_JAR"
-LOGIN_RESPONSE_FILE="$(mktemp "$ROOT/.cache/dev-e2e-login.XXXXXX")"
+LOGIN_RESPONSE_FILE="$(mktemp "$E2E_INSTANCE_DIR/login.XXXXXX")"
 chmod 600 "$LOGIN_RESPONSE_FILE"
-LOGIN_BODY=$(printf '{"email":"%s","password":"%s"}' "$ADMIN_EMAIL" "$ADMIN_PASSWORD")
-LOGIN_STATUS="$(curl -sS --max-time 5 -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-  -H 'Content-Type: application/json' -d "$LOGIN_BODY" \
+LOGIN_BODY="$(ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" node -e 'console.log(JSON.stringify({email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD}))')"
+LOGIN_STATUS="$(printf '%s' "$LOGIN_BODY" | curl -sS --max-time 5 -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -H 'Content-Type: application/json' --data-binary @- \
   -o "$LOGIN_RESPONSE_FILE" -w '%{http_code}' "$SERVER_URL/api/v1/auth/login")" \
   || die "管理员登录请求失败：无法访问 $SERVER_URL/api/v1/auth/login"
 LOGIN_RESULT="$(<"$LOGIN_RESPONSE_FILE")"
@@ -619,8 +706,13 @@ ADMIN_AUTHENTICATED="$(printf '%s' "$LOGIN_RESULT" | jsonget authenticated)"
 
 AUTH=(-b "$COOKIE_JAR")
 AGENT_TOKEN="${AGENT_TOKEN:-}"
+if [ "$SMOKE" = 1 ]; then
+  say "验证管理员会话并准备回环 Shadowsocks 线路…"
+  SMOKE_LINE_PORT="$(RIRICLOUD_ADMIN_COOKIE_FILE="$COOKIE_JAR" node scripts/dev-e2e-smoke.mjs prepare "$WEB_URL" "$E2E_SMOKE_DIR")" || die "本地线路准备失败"
+  AGENT_TOKEN="$(master_agent_token)" || die "本地 Agent 凭据初始化失败"
+fi
 if [ -n "$AGENT_TOKEN" ]; then
-  say "使用环境变量指定的 AGENT_TOKEN"
+  [ "$SMOKE" = 1 ] || say "使用环境变量指定的 AGENT_TOKEN"
 else
   # 默认复用 seed 预置的 Master-Local，保证面板中的本机节点与本地 Agent 是同一个实体。
   # USE_MASTER_LOCAL=0 时按地址查找独立联调节点（避免中文名经 Windows 控制台的编码问题）。
@@ -708,14 +800,16 @@ for attempt in $(seq 1 "$KERNEL_ATTEMPTS"); do
   (
     RIRICLOUD_NON_INTERACTIVE=1 \
       AGENT_TOKEN="$AGENT_TOKEN" MASTER_WS_URL="$MASTER_WS_URL" \
+      RIRICLOUD_DATA_DIR="$SINGBOX_CONF_DIR" RIRICLOUD_CONFIG_PATH="${RIRICLOUD_CONFIG_PATH:-$SINGBOX_CONF_DIR/config.yaml}" \
       SINGBOX_BINARY_PATH="$SINGBOX_BIN" SINGBOX_CONFIG_PATH="$SINGBOX_CONF_DIR/config.json" \
-      "$AGENT_BIN" >"$LOG_DIR/agent.log" 2>&1
+      exec "$AGENT_BIN" >"$LOG_DIR/agent.log" 2>&1
   ) &
   AGENT_PID=$!
   KERNEL_STATE="WAIT"
   FAILED_PORT=""
   for _ in $(seq 1 40); do
     kill -0 "$AGENT_PID" 2>/dev/null || { KERNEL_STATE="EXITED"; break; }
+    check_cancel
     read -r KERNEL_STATE FAILED_PORT <<<"$(node scripts/dev-e2e-kernel.mjs "$LOG_DIR/agent.log" "$SINGBOX_CONF_DIR/config.json")"
     case "$KERNEL_STATE" in
       READY) KERNEL_UP=1; break ;;
@@ -734,17 +828,27 @@ for attempt in $(seq 1 "$KERNEL_ATTEMPTS"); do
     prepare_line_ports "$FAILED_PORT"
     continue
   fi
-  tail -n 30 "$LOG_DIR/agent.log" >&2 || true
+  [ "$SMOKE" = 1 ] || tail -n 30 "$LOG_DIR/agent.log" >&2 || true
   die "内核未就绪（$KERNEL_STATE）：请检查 $LOG_DIR/agent.log"
 done
 [ "$KERNEL_UP" = "1" ] || die "内核启动重试耗尽"
 
+if [ "$SMOKE" = 1 ]; then
+  say "验证真实 Agent、订阅与 TCP/UDP 转发…"
+  RIRICLOUD_ADMIN_COOKIE_FILE="$COOKIE_JAR" SEED_USER_EMAIL="$SEED_USER_EMAIL" SEED_USER_PASSWORD="$SEED_USER_PASSWORD" \
+    SINGBOX_BINARY_PATH="$SINGBOX_BIN" node scripts/dev-e2e-smoke.mjs traffic "$WEB_URL" "$E2E_SMOKE_DIR" \
+    || die "本地流量验收失败"
+  exit 0
+fi
+
 say "---------------- 就绪 ----------------"
-say "Web 面板     ：$WEB_URL（admin@riricloud.local / RiriCloud-Admin-2026!）"
+[ "${SKIP_WEB:-0}" = 1 ] || say "Web 面板     ：$WEB_URL"
 say "节点状态     ：面板「节点管理」页观察在线状态与遥测"
 say "内核监听     ：$NODE_HOST:$NODE_PORT（config：$SINGBOX_CONF_DIR/config.json）"
 say "内核状态     ：本次内核稳定存活，管理 API 与 TCP 入站可达 ✔"
 say "跟踪 Agent 日志中，Ctrl+C 退出并回收 Agent 进程…"
 say "--------------------------------------"
 
-tail -n 30 -f "$LOG_DIR/agent.log"
+tail -n 30 -f "$LOG_DIR/agent.log" &
+TAIL_PID=$!
+wait "$TAIL_PID"

@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
-type Lease = { release(): void | Promise<void>; onParentLost?(handler: () => void): void };
+type Lease = { release(reason?: 'http-bind-conflict'): void | Promise<void>; onParentLost?(handler: () => void): void };
 type StorageConfig = { main: string; telemetry: string; dataDir: string };
 type ConfigModule = {
   loadEnvironment(): void;
@@ -31,16 +31,16 @@ export async function acquireMasterMaintenanceLock(): Promise<Lease> {
   return lease;
 }
 
-export function registerMaintenanceShutdown(app: { close(): Promise<void> }, lease: Lease): void {
+export function registerMaintenanceShutdown(app: { close(): Promise<void> }, lease: Lease) {
   let stopping = false;
-  const shutdown = async () => {
+  const shutdown = async (reason?: 'http-bind-conflict') => {
     if (stopping) return;
     stopping = true;
     try {
       // Nest close 先运行所有模块关闭钩子，刷新账务并断开双库，再允许冷备。
       await app.close();
-      await lease.release();
-      process.exit(0);
+      await lease.release(reason);
+      process.exit(reason ? 10 : 0);
     } catch {
       console.error('Master shutdown failed; maintenance lock retained for inspection.');
       process.exit(1);
@@ -49,4 +49,5 @@ export function registerMaintenanceShutdown(app: { close(): Promise<void> }, lea
   lease.onParentLost?.(() => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });
   process.on('SIGINT', () => { void shutdown(); });
+  return shutdown;
 }

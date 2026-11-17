@@ -133,7 +133,7 @@ function networkErrorCodes(error) {
   return codes.size ? [...codes] : ['NETWORK_ERROR'];
 }
 
-async function readAdminCookie() {
+export async function readAdminCookie() {
   const direct = String(process.env.RIRICLOUD_ADMIN_COOKIE ?? '').trim();
   if (direct) return direct;
   const cookieFile = String(process.env.RIRICLOUD_ADMIN_COOKIE_FILE ?? '').trim();
