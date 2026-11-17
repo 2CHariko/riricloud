@@ -446,7 +446,7 @@ pnpm test:scripts  # 自动发现 scripts 下全部 .test.mjs / .test.cjs 回归
 - [x] **Phase 4: Go 边缘 Agent 基线与生命周期** (WSS/HTTP 双通信 / 指数退避重连 / Sing-box 内核进程守护 / 动态配置原子落盘 / 用户流量统计采集)
 - [x] **Phase 5: Agent 现代化 CLI 与 TUI** (Cobra 命令行 / Bubble Tea 全屏控制台 TUI / 跨平台系统服务适配 / Doctor 环境诊断 / 日志跟踪)
 - [x] **Phase 6: 部署套件与升级分发** (Master Docker Compose 编排 / 离线镜像双标签导出 / 探针快照与自包含升级分发 / 管理员引导与安全重置)
-- [ ] **Phase 7: 进阶演进与验收**：Mihomo / Sing-box 客户端编译、原生配置检查和真实代理请求回归已实现；五平台完整原生验收证据、生产网络验证、规则集动态更新及支付网关仍需完成。本轮 Windows amd64 原生入口已通过，其余平台须补实际运行证据。既有 Windows / WSL Linux amd64 测试证据及能力边界见 [技术栈能力矩阵](./docs/TECH_STACK.md#61-能力与验证证据矩阵)，各专项收尾见 [路线图](./docs/ROADMAP.md) 与 [计划台账](./docs/plans/README.md)。
+- [ ] **Phase 7: 进阶演进与验收**：Mihomo / Sing-box客户端编译、原生配置检查、真实代理请求及五平台原生CI均已通过（2026-11-17，最终提交0360c9e）；Linux amd64/arm64各117项、Windows amd64/macOS amd64/arm64各102项，每平台另7项原生脚本通过。生产网络验证、规则集动态更新及支付网关仍待完成。证据及能力边界见[技术栈能力矩阵](./docs/TECH_STACK.md#61-能力与验证证据矩阵)，各专项见[路线图](./docs/ROADMAP.md)与[计划台账](./docs/plans/README.md)。
 
 ---
 

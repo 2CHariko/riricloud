@@ -1,12 +1,13 @@
 ---
-title: "全量安全整改与工程收尾"
+title: 全量安全整改与工程收尾
 type: plan
-status: active
-target_version: "Unreleased"
+status: completed
+pr: "#269"
+target_version: Unreleased
 created_at: "2026-11-17"
 author: "Codex & Maintainers"
+archived_at: "2026-11-17"
 ---
-
 # 全量安全整改与工程收尾
 
 ## 已确认的交付边界
@@ -52,19 +53,20 @@ author: "Codex & Maintainers"
 - [x] 本地完整门禁、脚本回归、维护测试及隔离恢复验收；以gate-submission与维护报告为准。
 - [x] 本轮既定安全门禁通过：pnpm audit high已通过（主代理确认），Go 1.26.11的Windows amd64及Linux amd64/arm64源码可达性扫描均无可达漏洞、exit 0。二进制3项保守告警保留为明确边界，不等同本次门禁失败，不追加全部第三方advisory清零或范围外依赖升级要求。
 - [x] Node 22.23.5全量隔离smoke复跑通过：15阶段全通过、总测试16/16；普通详情/list无Token，轮换一次性新Token及旧401/新201、日志脱敏与停机解锁均通过。
-- [ ] 五平台真实执行证据与CI全绿。
-- [ ] 原子提交、PR、自查及合并；完成后机械归档本计划。
+- [x] 五平台真实执行证据与CI全绿：最终提交0360c9e、run44055792504共11项检查全部通过。
+- [x] 原子提交、自查与PR #269合并完成；随后以独立文档PR记录实绩并机械归档本计划。
 
 ## 验收记录
 
 - 实施基线：main 63e3c05，Master v0.9.19 / Agent v0.8.7；本轮仅维护两端Unreleased，不发版。
-- 实施提交：f982646工具链、38b1d6f主实现、000eb91原生就绪、2ddf895拒绝计数及Header鉴权、82c163e拨测计量/节点关系脱敏与真实两跳。
+- 实施提交：f982646工具链、38b1d6f主实现、000eb91原生就绪、2ddf895拒绝计数及Header鉴权、82c163e拨测计量/节点关系脱敏与真实两跳；0360c9e为最终夹具清理/台账提交。
 - 本地完整门禁：gate-final-ready.log退出0。Server126套件1766项通过，12套件113项native独立执行；Web145；脚本107通过、4项按条件默认跳过；维护33。英日各4246/4246，lint/build/Go全部通过。前一轮端口及夹具启动失败日志保留，原样完整重跑通过，不把失败计为成功。
 - 完整Master隔离smoke：Node22.23.5，15阶段、16/16；真实AppModule/双库全量迁移、Cookie、WS/HTTP、维护轮换、重启、失败重试、旧凭据拒绝、Header200/Query401、拒绝计数去重、共享SS执行前UNSUPPORTED、节点关系脱敏、停机解锁。Agent内核执行在此smoke为模拟端，真实内核另有native验收。
 - 原生证明：Windows中继认证37、订阅账务4、VMess PROTOCOL_PROXY/TARGET_LINE真实两跳8项分别通过。82c163e候选五平台均完成两跳各8/8与账务各4/4；Linux arm64原生117、Windows/macOS各102项全通过。Linuxamd64另有一次Trojan临时端口重绑定清理失败，后续修复及最终CI另记，不能把候选整轮称为成功。
 - 维护：33项冷备/校验/恢复回归，含双库/WAL/SHM、错误密钥/损坏/目录越界/符号链接/硬链接、互斥及隔离；maintenance-review/run-9dlnWM/report.json实际发行包迁移、HTTP200、冷备→校验→恢复隔离ok:true。Docker接线由回归覆盖，不声称本轮实际启动生产镜像。
 - 安全：等价人工静态审查覆盖生产调用链，两个原始固定身份发现关闭；补修安装器URL Token和节点关联paramsJson泄漏，并明确共享SS无逐用户计量能力时不执行。security-review-final.md/json及node-relation-red-green.json记录范围、快照和复现；未冒称运行Codex Security产品。Go1.26.11源码可达性扫描及pnpm high门禁通过；二进制仍有3项第三方保守告警，未新增忽略。
-- 交付：草稿PR #269已挂接，五平台最终CI及合并仍待当前剩余清理回归闭合。镜像代码计划已机械归档；生产账务观察、外部节点部署验收及NAT/WireGuard待办保持独立未完成。
+- 最终CI：run44055792504绑定0360c9ebebfd86bcef5a9f010f693a15d285cdb5，11项检查全部SUCCESS。Server126套件1775项、Web145、脚本107及维护33项通过；Linux amd64/arm64各13套件117项，Windows amd64/macOS amd64/arm64各11套件102项，各平台另有7项原生脚本通过。Naive/Cronet仅Linux两平台执行，无非许可跳过；逐平台job及内核资产见[双内核验收记录](./2026-11-17-mihomo-client-probe-separation.md)。
+- 交付：PR #269于2026-11-17T09:38:17Z（北京时间17:38:17）合并，merge commit为98dcf4a1b66569127166ef9b65f96a1413dcb610；git diff确认与最终CI提交文件内容一致。镜像代码计划已机械归档，本计划与两份专项计划随后机械归档；生产账务观察、外部节点部署验收及NAT/WireGuard待办保持独立未完成。
 
 ## 并行分工
 
