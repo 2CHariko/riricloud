@@ -8,6 +8,7 @@ import { ClientKernelsService, type ResolvedClientKernel } from '../client-kerne
 import { KernelExecutionError, ManagedKernelProcess } from '../client-kernels/kernel-process';
 import { buildServerInbounds, formatAuthUserName, type InboundUserCredential } from '../common/inbound';
 import type { ProxyConnection } from '../common/proxy-connection';
+import { KernelReadiness } from '../probe/executors/kernel-readiness';
 import { portReady } from '../probe/executors/mihomo.executor';
 import { proxyHttpDelay, reserveLoopbackPort, waitForKernel } from '../probe/executors/proxy-http';
 import { testCertificate } from '../probe/executors/test-certificate';
@@ -56,6 +57,12 @@ async function freePort(udp: boolean): Promise<Port> {
     });
   });
 }
+async function freeTcpPort(excluded: Port[]): Promise<Port> {
+  let port: Port;
+  do { port = await freePort(false); }
+  while (excluded.some(existing => !existing.udp && existing.number === port.number));
+  return port;
+}
 async function assertReleased(port: Port): Promise<void> {
   for (let attempt = 0; attempt < 30; attempt++) {
     if (await bindPort(port)) return;
@@ -89,6 +96,7 @@ export class RelayNativeFixture {
   private targetPort = 0;
   private ports: Port[] = [];
   private server?: ManagedKernelProcess;
+  private serverReadinessPort?: Port;
   private serverKernel?: ResolvedClientKernel;
   private clientKernel?: ResolvedClientKernel;
   private targetStatus = 204;
@@ -137,20 +145,32 @@ export class RelayNativeFixture {
       type: this.protocol, tag: 'relay-in-' + index, listen: LOOPBACK, port: port.number,
       lineId: index === 0 ? this.lineId : this.otherLineId, params, users: [identities[index]]
     }));
-    const content = JSON.stringify({
-      log: { disabled: true }, inbounds, outbounds: [{ type: 'direct', tag: 'controlled-target' }],
-      // 即使认证通过也只能访问本测试的回环 HTTP 服务。
-      route: { rules: [
-        { ip_cidr: ['127.0.0.1/32'], port: [this.targetPort], action: 'route', outbound: 'controlled-target' },
-        { action: 'reject' }
-      ] }
-    });
-    await this.validate('SINGBOX', content);
-    this.server = await ManagedKernelProcess.start(this.serverKernel!.path,
-      (file, directory) => ['run', '-D', directory, '-c', file], content, undefined, 180_000);
-    await waitForKernel(this.server, async () => this.udp
-      ? (await Promise.all(this.ports.map(bindPort))).every(released => !released)
-      : (await Promise.all(this.ports.map(port => portReady(port.number)))).every(Boolean));
+    const readiness = new KernelReadiness();
+    try {
+      await readiness.listen();
+      const readinessPort = await freeTcpPort(this.ports);
+      const content = JSON.stringify({
+        log: { disabled: true },
+        inbounds: [...inbounds, { type: 'mixed', tag: 'kernel-readiness', listen: LOOPBACK, listen_port: readinessPort.number }],
+        outbounds: [{ type: 'direct', tag: 'controlled-target' }],
+        route: { rules: [
+          // 自检仅经独立 listener；业务入站仍只能访问本测试的 HTTP 目标。
+          { inbound: ['kernel-readiness'], ip_cidr: [LOOPBACK + '/32'], action: 'route', outbound: 'controlled-target' },
+          { ip_cidr: [LOOPBACK + '/32'], port: [this.targetPort], action: 'route', outbound: 'controlled-target' },
+          { action: 'reject' }
+        ] }
+      });
+      await this.validate('SINGBOX', content);
+      this.server = await ManagedKernelProcess.start(this.serverKernel!.path,
+        (file, directory) => ['run', '-D', directory, '-c', file], content, undefined, 180_000);
+      this.serverReadinessPort = readinessPort;
+      await waitForKernel(this.server, async () => {
+        const listenersReady = this.udp
+          ? (await Promise.all(this.ports.map(bindPort))).every(released => !released)
+          : (await Promise.all(this.ports.map(port => portReady(port.number)))).every(Boolean);
+        return listenersReady && await readiness.ready(readinessPort.number);
+      });
+    } finally { await readiness.close(); }
   }
   private connection(identity: InboundUserCredential, index: number, rawUsername = false, identityLineId?: string): ProxyConnection {
     const params: Record<string, unknown> = {
@@ -173,30 +193,44 @@ export class RelayNativeFixture {
   private async withClient(candidate: InboundUserCredential, run: (ports: Port[]) => Promise<void>, rawUsername = false, identityLineId?: string): Promise<void> {
     const connections = [this.connection(this.current, 0), this.connection(this.other, 1), this.connection(candidate, 0, rawUsername, identityLineId)];
     const ports: Port[] = [];
-    while (ports.length < connections.length) {
-      const port = await freePort(false);
-      if (!ports.some(existing => existing.number === port.number) && !this.ports.some(existing => !existing.udp && existing.number === port.number)) ports.push(port);
-    }
+    while (ports.length < connections.length) ports.push(await freeTcpPort([...ports, ...this.ports]));
     const naive = this.protocol === 'NAIVE';
-    const content = JSON.stringify(naive ? {
-      log: { disabled: true },
-      inbounds: ports.map((port, index) => ({ type: 'mixed', tag: 'client-in-' + index, listen: LOOPBACK, listen_port: port.number })),
-      outbounds: connections.map((connection, index) => compileSingboxClient(connection, 'relay-' + index)),
-      route: { rules: connections.map((_, index) => ({ inbound: ['client-in-' + index], action: 'route', outbound: 'relay-' + index })) }
-    } : {
-      'allow-lan': false, 'bind-address': LOOPBACK, mode: 'rule', 'log-level': 'silent',
-      'geodata-mode': false, 'geo-auto-update': false, tun: { enable: false }, dns: { enable: false },
-      proxies: connections.map((connection, index) => compileMihomoProxy(connection, 'relay-' + index)),
-      listeners: ports.map((port, index) => ({ name: 'client-in-' + index, type: 'mixed', listen: LOOPBACK, port: port.number, udp: false, proxy: 'relay-' + index })),
-      rules: ['MATCH,REJECT']
-    });
-    await this.validate(naive ? 'SINGBOX' : 'MIHOMO', content);
-    const child = await ManagedKernelProcess.start(this.clientKernel!.path,
-      (file, directory) => naive ? ['run', '-D', directory, '-c', file] : ['-d', directory, '-f', file], content, undefined, 25_000);
+    const readiness = new KernelReadiness();
     try {
-      await waitForKernel(child, async () => (await Promise.all(ports.map(port => portReady(port.number)))).every(Boolean));
-      await run(ports);
-    } finally { await stopKernel(child, ports); }
+      await readiness.listen();
+      const readinessPort = await freeTcpPort([...ports, ...this.ports]);
+      const content = JSON.stringify(naive ? {
+        log: { disabled: true },
+        inbounds: [
+          ...ports.map((port, index) => ({ type: 'mixed', tag: 'client-in-' + index, listen: LOOPBACK, listen_port: port.number })),
+          { type: 'mixed', tag: 'kernel-readiness', listen: LOOPBACK, listen_port: readinessPort.number }
+        ],
+        outbounds: [...connections.map((connection, index) => compileSingboxClient(connection, 'relay-' + index)), { type: 'direct', tag: 'kernel-readiness-direct' }],
+        route: { rules: [
+          { inbound: ['kernel-readiness'], ip_cidr: [LOOPBACK + '/32'], action: 'route', outbound: 'kernel-readiness-direct' },
+          ...connections.map((_, index) => ({ inbound: ['client-in-' + index], action: 'route', outbound: 'relay-' + index })),
+          { action: 'reject' }
+        ] }
+      } : {
+        'allow-lan': false, 'bind-address': LOOPBACK, mode: 'rule', 'log-level': 'silent',
+        'geodata-mode': false, 'geo-auto-update': false, tun: { enable: false }, dns: { enable: false },
+        proxies: connections.map((connection, index) => compileMihomoProxy(connection, 'relay-' + index)),
+        // 业务 listener 固定绑定代理；DIRECT 仅供独立的启动屏障使用。
+        listeners: [
+          ...ports.map((port, index) => ({ name: 'client-in-' + index, type: 'mixed', listen: LOOPBACK, port: port.number, udp: false, proxy: 'relay-' + index })),
+          { name: 'kernel-readiness', type: 'mixed', listen: LOOPBACK, port: readinessPort.number, udp: false, proxy: 'DIRECT' }
+        ],
+        rules: ['MATCH,REJECT']
+      });
+      await this.validate(naive ? 'SINGBOX' : 'MIHOMO', content);
+      const child = await ManagedKernelProcess.start(this.clientKernel!.path,
+        (file, directory) => naive ? ['run', '-D', directory, '-c', file] : ['-d', directory, '-f', file], content, undefined, 25_000);
+      try {
+        await waitForKernel(child, async () => (await Promise.all(ports.map(port => portReady(port.number)))).every(Boolean)
+          && await readiness.ready(readinessPort.number));
+        await run(ports);
+      } finally { await stopKernel(child, [...ports, readinessPort]); }
+    } finally { await readiness.close(); }
   }
   private async exchange(port: number): Promise<{ status: 'HTTP_204' | 'DIAL_FAILED' | 'NETWORK_TIMEOUT' | 'UNEXPECTED_HTTP_STATUS' | 'OTHER_FAILURE'; requests: number }> {
     const path = '/204/' + randomBytes(12).toString('hex');
@@ -245,7 +279,9 @@ export class RelayNativeFixture {
   private async stopServer(): Promise<void> {
     if (!this.server) return;
     const server = this.server; this.server = undefined;
-    await stopKernel(server, this.ports);
+    const ports = this.serverReadinessPort ? [...this.ports, this.serverReadinessPort] : this.ports;
+    this.serverReadinessPort = undefined;
+    await stopKernel(server, ports);
   }
   async close(): Promise<void> {
     const results = await Promise.allSettled([

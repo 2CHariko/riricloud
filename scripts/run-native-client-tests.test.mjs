@@ -89,3 +89,14 @@ test('CI 接入 i18n、全部脚本及五个原生 runner，无交叉编译替�
   assert.ok(native.steps.some(step => step.with?.['node-version'] === 22));
   assert.ok(native.steps.some(step => step.with?.['go-version-file'] === 'apps/agent/go.mod'));
 });
+
+test('macOS 原生 URLTest 同端口双地址对照在执行前显式配置回环别名', async () => {
+  const require = createRequire(path.join(repository, 'apps/server/package.json'));
+  const workflow = require('yaml').parse(await fs.readFile(path.join(repository, '.github/workflows/ci.yml'), 'utf8'));
+  const steps = workflow.jobs['native-kernels'].steps;
+  const alias = steps.findIndex(step => step.run === 'sudo ifconfig lo0 alias 127.0.0.2 up');
+  const native = steps.findIndex(step => step.run?.startsWith('node scripts/run-native-client-tests.mjs --target '));
+  assert.ok(alias >= 0 && alias < native, 'Darwin loopback alias must be configured before native acceptance');
+  assert.equal(steps[alias].if, "runner.os == 'macOS'");
+  assert.notEqual(steps[alias]['continue-on-error'], true);
+});

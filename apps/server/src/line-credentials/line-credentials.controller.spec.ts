@@ -4,7 +4,7 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { LineCredentialsController } from './line-credentials.controller';
 import { LineCredentialsService } from './line-credentials.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,8 +21,12 @@ describe('administrator relay credential HTTP authorization', () => {
   const safe = { lineId: id, operationId: randomUUID(), state: 'STOPPING_ENTRY', activeVersion: 1, targetVersion: 2, accepted: false };
   const rotate = jest.fn(async () => safe);
   const status = jest.fn(async () => safe);
-  const jwt = new JwtService({ secret: getJwtSecret() });
+  const originalJwtSecret = process.env.JWT_SECRET;
+  let jwt: JwtService;
   beforeAll(async () => {
+    // 使用本套件的随机密钥验证真实策略，不依赖开发者 .env 或 CI 机密。
+    process.env.JWT_SECRET = randomBytes(32).toString('hex');
+    jwt = new JwtService({ secret: getJwtSecret() });
     const module = await Test.createTestingModule({ controllers: [LineCredentialsController], providers: [JwtStrategy, { provide: PrismaService, useValue: { user: { findUnique: async ({ where }: { where: { id: string } }) => records.get(where.id) ?? null } } }, { provide: LineCredentialsService, useValue: { rotate, status } }] }).compile();
     app = module.createNestApplication();
     app.useGlobalGuards(new JwtAuthGuard(app.get(Reflector)));
@@ -31,7 +35,12 @@ describe('administrator relay credential HTTP authorization', () => {
     port = (app.getHttpServer().address() as AddressInfo).port;
   });
   beforeEach(() => { rotate.mockClear(); status.mockClear(); });
-  afterAll(async () => app?.close());
+  afterAll(async () => {
+    try { await app?.close(); } finally {
+      if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = originalJwtSecret;
+    }
+  });
   const token = (sub: string, sessionVersion = 1) => jwt.sign({ sub, role: 'ADMIN', sessionVersion });
   async function request(method: string, resource: string, auth?: string) {
     return new Promise<{ code: number; body: string }>((resolve, reject) => {

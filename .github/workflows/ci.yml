@@ -172,6 +172,9 @@ jobs:
         with:
           path: artifacts/native-downloads
           key: native-assets-${{ matrix.target }}-${{ hashFiles('Dockerfile', 'Dockerfile.agent', 'scripts/client-kernel-assets.json') }}
+      - name: 配置 macOS 双回环地址原生夹具
+        if: runner.os == 'macOS'
+        run: sudo ifconfig lo0 alias 127.0.0.2 up
       - name: 原生构建、校验并串行执行真实内核套件
         run: node scripts/run-native-client-tests.mjs --target ${{ matrix.target }}
       - name: 保存平台、内核版本与执行证据
