@@ -105,7 +105,7 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
         if (task.controller.signal.aborted) return;
         if (snapshot) snapshots.set(id, snapshot);
         else task.results.set(id, this.localResult(task, id, 'SKIPPED', 'RESOURCE_UNAVAILABLE'));
-      } catch (error) { if (!task.controller.signal.aborted) task.results.set(id, error instanceof ProbeSubscriptionError ? { ...this.localResult(task, id, 'SKIPPED', error.code), message: error.message } : this.localResult(task, id, 'ERROR', 'RESOURCE_INVALID')); }
+      } catch (error) { if (!task.controller.signal.aborted) task.results.set(id, error instanceof ProbeSubscriptionError ? { ...this.localResult(task, id, error.code === 'SPEEDTEST_LINE_UNMETERED' ? 'UNSUPPORTED' : 'SKIPPED', error.code), message: error.message } : this.localResult(task, id, 'ERROR', 'RESOURCE_INVALID')); }
     }
     if (task.controller.signal.aborted) return;
     task.phase = 'EXECUTE';

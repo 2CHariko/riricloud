@@ -3508,6 +3508,7 @@ const admin = {
       userSearchHint: 'Only eligible accounts on the current search page are shown. Narrow your search to find other accounts.',
     },
     accountErrors: {
+      SPEEDTEST_LINE_UNMETERED: "This line uses shared authentication and cannot meter traffic per test account. Use a line mode with per-user accounting.",
       SPEEDTEST_USER_NOT_CONFIGURED: 'Set a subscription account for latency tests in System Settings first.',
       SPEEDTEST_USER_UNAVAILABLE: 'The test account is unavailable. Check its account status, email verification, subscription validity, and quota.',
       SPEEDTEST_LINE_UNAUTHORIZED: 'The test account is not authorized to access this line.',

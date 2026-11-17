@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { cva } from 'class-variance-authority';
 import ts from 'typescript';
 
-const codes = ['SPEEDTEST_USER_NOT_CONFIGURED', 'SPEEDTEST_USER_UNAVAILABLE', 'SPEEDTEST_LINE_UNAUTHORIZED', 'SPEEDTEST_IDENTITY_CHANGED'];
+const codes = ['SPEEDTEST_LINE_UNMETERED', 'SPEEDTEST_USER_NOT_CONFIGURED', 'SPEEDTEST_USER_UNAVAILABLE', 'SPEEDTEST_LINE_UNAUTHORIZED', 'SPEEDTEST_IDENTITY_CHANGED'];
 const text = new Map(codes.map((code, i) => ['latencyTest.accountErrors.' + code, 'Localized account reason ' + i]));
 const translations = [];
 function load(file, modules = {}) {
@@ -42,7 +42,7 @@ function components() {
   return view;
 }
 function result(errorCode) {
-  return { schemaVersion: 2, subjectType: 'LINE', subjectId: 'line', status: 'SKIPPED', errorCode, message: 'private-user@example.invalid:SECRET-RAW-MESSAGE', engine: null, engineVersion: null, fallbackReason: null, mihomoCompatibility: 'UNSUPPORTED', measurement: 'MIHOMO_URL_TEST', perspective: 'MASTER', routeKind: 'MANAGED_DIRECT', targetId: 'target', targetHost: 'example.invalid', testedAt: '2026-11-17T00:00:00Z', durationMs: 0, latencyMs: null, stage: 'VALIDATE', configHash: '', applied: false };
+  return { schemaVersion: 2, subjectType: 'LINE', subjectId: 'line', status: errorCode === 'SPEEDTEST_LINE_UNMETERED' ? 'UNSUPPORTED' : 'SKIPPED', errorCode, message: 'private-user@example.invalid:SECRET-RAW-MESSAGE', engine: null, engineVersion: null, fallbackReason: null, mihomoCompatibility: 'UNSUPPORTED', measurement: 'MIHOMO_URL_TEST', perspective: 'MASTER', routeKind: 'MANAGED_DIRECT', targetId: 'target', targetHost: 'example.invalid', testedAt: '2026-11-17T00:00:00Z', durationMs: 0, latencyMs: null, stage: 'VALIDATE', configHash: '', applied: false };
 }
 for (const code of codes) {
   test(code + ' renders its allowlisted localization in result and tooltip', () => {

@@ -243,6 +243,7 @@ const admin = {
   },
   latencyTest: {
     accountErrors: {
+      SPEEDTEST_LINE_UNMETERED: "この回線は共有認証のため、テスト用アカウント別に通信量を計測できません。ユーザー別に計測できる回線モードを使用してください。",
       SPEEDTEST_USER_NOT_CONFIGURED: '先にシステム設定で、テストに使用するサブスクリプションアカウントを指定してください。',
       SPEEDTEST_USER_UNAVAILABLE: 'テスト用アカウントを利用できません。アカウント状態、メール認証、サブスクリプションの有効期限、残りの通信量を確認してください。',
       SPEEDTEST_LINE_UNAUTHORIZED: 'テスト用アカウントには、この回線へのアクセス権限がありません。',

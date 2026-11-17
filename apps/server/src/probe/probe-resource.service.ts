@@ -118,7 +118,13 @@ export class ProbeResourceService {
   }
   private managedConnection(line: ProbeLine, user: { uuid: string; email: string; credential: string }): UpstreamConnection {
     const params = sanitizeInboundParams(JSON.parse(line.paramsJson) as Record<string, unknown>);
-    // 旧线路残留的单用户字段不能绕过专用订阅身份；共享密钥协议仍由订阅编译器处理。
+    // 共享密码无法携带账号身份，不能把无法逐用户结算的请求当作正常订阅拨测。
+    if (line.protocolType === 'SHADOWSOCKS' && (params.mode !== 'multi-user' || typeof params.method !== 'string' || !params.method.startsWith('2022-'))) {
+      throw new ProbeSubscriptionError('SPEEDTEST_LINE_UNMETERED');
+    }
+    // 普通托管密码入口与网关统一强制认证，兼容表单旧的关闭鉴权字段。
+    if (line.relayMode !== 'UPSTREAM_NODE' && ['MIXED', 'SOCKS', 'HTTP'].includes(line.protocolType)) params.usersEnabled = true;
+    // 旧线路残留的单用户字段不能绕过专用订阅身份；多用户 SS 由订阅编译器绑定身份。
     if (['VLESS', 'VLESS_REALITY', 'VMESS', 'TUIC'].includes(line.protocolType)) params.uuid = user.uuid;
     if (['TROJAN', 'HYSTERIA2', 'TUIC'].includes(line.protocolType)) params.password = user.credential;
     return bindManagedConnection({ protocolType: line.protocolType, params, lineId: line.id,

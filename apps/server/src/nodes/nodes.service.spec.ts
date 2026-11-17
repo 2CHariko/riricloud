@@ -66,6 +66,25 @@ describe('NodesService', () => {
     prisma.line.findFirst.mockResolvedValue(null);
   });
 
+  it('节点详情与列表的线路关系不返回原始 paramsJson 或线路认证凭据', async () => {
+    const password = 'private-shared-ss-password';
+    const privateKey = 'private-transport-key';
+    const targetLine = { id: 'target', paramsJson: JSON.stringify({ password, tls: { key: privateKey } }), egressProxyJson: null, lastDebugProbeJson: null };
+    const line = { id: 'line', type: 'DIRECT', entryPort: 24443, paramsJson: JSON.stringify({ password, tls: { key: privateKey } }), egressProxyJson: null, lastDebugProbeJson: null, targetLine, tagsJson: '[]' };
+    const stored = { ...nodeWithLines, entryLines: [line], landingLines: [line] };
+    prisma.node.findUnique.mockResolvedValue(stored);
+    prisma.node.findMany.mockResolvedValue([stored]);
+
+    const detail = await service.detail(baseNode.id, 'https://panel.example.com');
+    const list = await service.list();
+    for (const output of [detail, list]) {
+      const serialized = JSON.stringify(output);
+      expect(serialized).not.toContain(password);
+      expect(serialized).not.toContain(privateKey);
+      expect(serialized).not.toContain('paramsJson');
+    }
+  });
+
   it('节点只读线路关联与派生 targetLine 不公开严格拨测历史', async () => {
     const targetLine = { id: 'target', lastDebugProbeJson: 'private-target-debug' };
     const line = { id: 'line', type: 'DIRECT', entryPort: 24443, lastDebugProbeJson: 'private-debug', targetLine, tagsJson: '[]' };

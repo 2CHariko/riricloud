@@ -656,7 +656,7 @@ export class NodesService {
 
   private sanitize(node: NodeWithLines): Record<string, unknown> {
     const { entryLines, landingLines, lastProbeResult, capabilitiesJson, agentToken: _agentToken, agentTokenHash: _agentTokenHash, ...rest } = node;
-    const safeRelation = (line: (typeof entryLines)[number] | (typeof landingLines)[number]) => ({ ...line, egressProxyJson: undefined, lastDebugProbeJson: undefined, ...('targetLine' in line ? { targetLine: line.targetLine ? { ...line.targetLine, egressProxyJson: undefined, lastDebugProbeJson: undefined } : null } : {}) });
+    const safeRelation = (line: (typeof entryLines)[number] | (typeof landingLines)[number]) => ({ ...line, paramsJson: undefined, egressProxyJson: undefined, lastDebugProbeJson: undefined, ...('targetLine' in line ? { targetLine: line.targetLine ? { ...line.targetLine, paramsJson: undefined, egressProxyJson: undefined, lastDebugProbeJson: undefined } : null } : {}) });
     const toLine = (line: (typeof entryLines)[number] | (typeof landingLines)[number], role: 'DIRECT' | 'TRANSIT' | 'LANDING') => ({
       id: line.id,
       name: line.name,
@@ -682,7 +682,7 @@ export class NodesService {
       role,
       entryNode: 'entryNode' in line ? line.entryNode : undefined,
       landingNode: 'landingNode' in line ? line.landingNode : undefined,
-      targetLine: 'targetLine' in line && line.targetLine ? { ...line.targetLine, egressProxyJson: undefined, lastDebugProbeJson: undefined } : undefined
+      targetLine: 'targetLine' in line && line.targetLine ? { ...line.targetLine, paramsJson: undefined, egressProxyJson: undefined, lastDebugProbeJson: undefined } : undefined
     });
 
     const linesMap = new Map<string, ReturnType<typeof toLine>>();

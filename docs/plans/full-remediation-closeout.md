@@ -78,3 +78,5 @@ author: "Codex & Maintainers"
 - 提交进展：工具链 f982646、主实现38b1d6f已通过钩子提交并推送草稿PR #269。首次CI治理/Web/Agent/安全/脚本及linux-amd64 native成功；Server鉴权夹具依赖本地JWT密钥已复现修复，其余平台原生就绪与macOS回环地址失败正在修正，不以首次失败计完成。新增拒绝计数定向161项及Node22完整Master smoke14阶段/15测试通过。
 
 - 安全增量最终本地gate-closeout.log退出0：Server126套件1757项通过（另11套件105项native单独执行），Web144、脚本107/默认跳过4、维护33全部通过。安装器Header-only回归先7项失败后37/37通过，完整Master smoke真实验证Header下载200与Query/混合凭据401。
+
+- 最终本地集成gate-final-ready.log退出0：Server126套件1766项通过，12套件113项native独立执行；Web145、脚本107/默认跳过4、维护33全部通过。英日各4246/4246。此前gate-final-integration的一次端口/子进程启动失败如实保留，不计通过；当前原样完整重跑已通过。最终Master smoke15阶段16/16；节点原始paramsJson泄漏、Header-only安装器、共享SS不可计量、落地拒绝计数均覆盖。

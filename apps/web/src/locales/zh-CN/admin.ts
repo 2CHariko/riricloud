@@ -132,6 +132,7 @@ const admin = {
   },
   latencyTest: {
     accountErrors: {
+      SPEEDTEST_LINE_UNMETERED: "此线路使用共享认证，无法按拨测账号计量。请改用支持逐用户计量的线路模式。",
       SPEEDTEST_USER_NOT_CONFIGURED: '请先在系统设置中指定拨测订阅账号。',
       SPEEDTEST_USER_UNAVAILABLE: '拨测账号不可用，请检查账号状态、邮箱验证、订阅有效期和配额。',
       SPEEDTEST_LINE_UNAUTHORIZED: '拨测账号无权访问此线路。',

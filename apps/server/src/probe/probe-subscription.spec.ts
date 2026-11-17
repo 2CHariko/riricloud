@@ -37,6 +37,23 @@ describe('专用订阅拨测身份', () => {
     const f = setup(); const snapshot = (await f.snapshot())!;
     expect(snapshot.request.connection.params.uuid).toBe('legal-user-uuid');
   });
+  it.each([undefined, 'shared'])('共享 Shadowsocks 模式 %s 无逐用户统计，不能创建合法账号拨测连接', async mode => {
+    const f = setup(); f.line.protocolType = 'SHADOWSOCKS'; f.line.paramsJson = JSON.stringify({ method: 'aes-128-gcm', password: 'synthetic-shared-line-key', ...(mode ? { mode } : {}) });
+    await expect(f.snapshot()).rejects.toMatchObject({ code: 'SPEEDTEST_LINE_UNMETERED' });
+  });
+  it('SS2022 多用户拨测实际绑定所选账号，不被共享模式限制误拒绝', async () => {
+    const f = setup(); f.line.protocolType = 'SHADOWSOCKS'; f.line.paramsJson = JSON.stringify({ method: '2022-blake3-aes-128-gcm', mode: 'multi-user', password: Buffer.alloc(16, 1).toString('base64') });
+    const first = (await f.snapshot())!.request.connection.params.password;
+    f.subscription.user.uuid = 'another-legal-user-uuid'; f.subscription.user.password = 'another-legal-user-password';
+    const second = (await f.snapshot())!.request.connection.params.password;
+    expect(first).not.toBe(second);
+  });
+  it.each(['SOCKS', 'HTTP', 'MIXED'])('%s 历史 usersEnabled=false 与网关强制用户鉴权保持一致', async protocolType => {
+    const f = setup(); f.line.protocolType = protocolType; f.line.paramsJson = JSON.stringify({ usersEnabled: false });
+    const connection = (await f.snapshot())!.request.connection;
+    expect(connection.params.password).toBe(f.subscription.user.password);
+    expect(connection.params.username).toEqual(expect.any(String));
+  });
   it('执行期间撤销订阅后禁止写入成功结果', async () => {
     const f = setup(); const snapshot = (await f.snapshot())!; f.subscription.status = 'REVOKED';
     await expect(f.service.persist(snapshot, measured(snapshot.request.configHash), new AbortController().signal)).resolves.toBe(false);
@@ -106,6 +123,17 @@ function taskSetup(f: ReturnType<typeof setup>, beforeResult = () => {}) {
 }
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 describe('手动与定时拨测异步流程', () => {
+  it.each(['MIHOMO_URL_TEST', 'PROXY_HTTP_DELAY'] as const)('共享 Shadowsocks 在 %s 拨号前返回明确不可计量结果', async measurement => {
+    const f = setup(); f.line.protocolType = 'SHADOWSOCKS'; f.line.paramsJson = JSON.stringify({ method: 'aes-128-gcm', mode: 'shared', password: 'synthetic-shared-line-key' });
+    const { tasks, engine } = taskSetup(f);
+    try {
+      const receipt = await tasks.start('admin', 'LINE', { id: 'line' }, 'MIHOMO_ONLY', measurement);
+      await tick();
+      expect(tasks.results(receipt.taskId).data[0]).toMatchObject({ status: 'UNSUPPORTED', errorCode: 'SPEEDTEST_LINE_UNMETERED', applied: false, latencyMs: null });
+      expect(engine.executeBatch).not.toHaveBeenCalled();
+      expect(f.prisma.line.updateMany).not.toHaveBeenCalled();
+    } finally { tasks.onModuleDestroy(); }
+  });
   it.each(['admin', 'SYSTEM_LINE_SCHEDULER'])('%s 使用同一真实订阅资格和 Mihomo 流程', async (owner) => {
     const f = setup(); const { tasks, engine } = taskSetup(f);
     try {

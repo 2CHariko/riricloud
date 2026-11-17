@@ -1,6 +1,7 @@
 import type { ProbeResult } from '@/lib/probe-types';
 
 const accountErrorKeys = {
+  SPEEDTEST_LINE_UNMETERED: 'admin:latencyTest.accountErrors.SPEEDTEST_LINE_UNMETERED',
   SPEEDTEST_USER_NOT_CONFIGURED: 'admin:latencyTest.accountErrors.SPEEDTEST_USER_NOT_CONFIGURED',
   SPEEDTEST_USER_UNAVAILABLE: 'admin:latencyTest.accountErrors.SPEEDTEST_USER_UNAVAILABLE',
   SPEEDTEST_LINE_UNAUTHORIZED: 'admin:latencyTest.accountErrors.SPEEDTEST_LINE_UNAUTHORIZED',

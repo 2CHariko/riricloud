@@ -93,7 +93,7 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 #### 节点管理
 - `GET /downloads/agent-installer`：仅通过 `X-Agent-Token` Header 鉴权，按 `platform/mode/format` 渲染预配置安装脚本并返回 `Cache-Control: no-store`；存在 `token` query 时直接返回 `401`，即使同时带有效 Header 也拒绝，避免凭据进入 URL、历史与访问日志。创建/轮换响应中的原生一键命令使用 Header 下载，保留免交互预配置功能。
 - `GET /admin/nodes`：获取所有节点详情（不返回 AgentToken，包含遥测状态、承载线路摘要与派生端口）。返回字段包含网络可达性 `reachability`（`PUBLIC` | `NAT`）。启动 bootstrap 会自动创建 `isLocal=true` 的 `Master-Local` 系统节点；Docker/发行包默认由 Master 内置 Agent 自动上线。⭐
-- `GET /admin/nodes/:id`：获取单个节点详情（含承载线路、入口/出口角色、派生端口、安装命令、Agent/内核版本画像与最近探针快照）。⭐ 响应节点对象包含加性字段 `pendingVersionConfirm`（可选，向后兼容）：升级任务完成但心跳上报的 `agentVersion` 尚未达到目标版本时的待确认信息 `{ taskId, expectedVersion, completedAt }`，用于提示“Agent 重启可能失败”；版本对账窗口为主控侧 15 分钟，确认或超时后字段回到 `null`。同时返回 `singboxLogMode`（`NORMAL`/`INFO`/`DEBUG`，已过期诊断会折算为 `NORMAL`）、`singboxLogModeUntil`、`supportsSingboxLogCapture` 与 `supportsAgentLogRotation`。WS 协议契约本身无变更。普通详情与列表不返回 AgentToken 明文、密文或哈希，详情安装命令使用终端输入凭据，保留独立且需管理员鉴权的预配置脚本/离线包下载入口。安装命令的公开地址优先使用系统设置 `publicBaseUrl`，其次使用 `RIRICLOUD_PUBLIC_URL`，最后使用当前请求的 `X-Forwarded-Proto` + `X-Forwarded-Host`/`Host` 自动匹配。
+- `GET /admin/nodes/:id`：获取单个节点详情（含承载线路、入口/出口角色、派生端口、安装命令、Agent/内核版本画像与最近探针快照）。⭐ 响应节点对象包含加性字段 `pendingVersionConfirm`（可选，向后兼容）：升级任务完成但心跳上报的 `agentVersion` 尚未达到目标版本时的待确认信息 `{ taskId, expectedVersion, completedAt }`，用于提示“Agent 重启可能失败”；版本对账窗口为主控侧 15 分钟，确认或超时后字段回到 `null`。同时返回 `singboxLogMode`（`NORMAL`/`INFO`/`DEBUG`，已过期诊断会折算为 `NORMAL`）、`singboxLogModeUntil`、`supportsSingboxLogCapture` 与 `supportsAgentLogRotation`。WS 协议契约本身无变更。普通详情与列表不返回 AgentToken 明文、密文或哈希，也不返回关联入口/落地/目标线路的原始 `paramsJson`（避免共享密码和传输私钥随关系展开），详情安装命令使用终端输入凭据，保留独立且需管理员鉴权的预配置脚本/离线包下载入口。安装命令的公开地址优先使用系统设置 `publicBaseUrl`，其次使用 `RIRICLOUD_PUBLIC_URL`，最后使用当前请求的 `X-Forwarded-Proto` + `X-Forwarded-Host`/`Host` 自动匹配。
 - `GET /admin/nodes/:id/offline-package?platform=<os-arch>`：管理员下载指定节点的完整 Agent 离线安装包（流式压缩包：Windows `.zip`，Linux/macOS `.tar.gz`）。⭐ 需管理员 JWT 鉴权；内嵌该节点预配置的 `config.yaml`、平台二进制与全自动化免交互安装/卸载脚本。
 - `GET /admin/nodes/:id/install-script?platform=<os-arch>&format=bat|sh|ps1`：管理员下载指定节点的预编排免交互安装脚本（Windows 默认为 `.bat`，Linux/macOS 为 `.sh`）。⭐ 需管理员 JWT 鉴权；内嵌固化该节点的 AgentToken 与 MasterUrl，响应附加 `Content-Disposition: attachment` 供浏览器或脚本一键下载。
 - `POST /admin/nodes`：创建节点基础信息（生成 AgentToken 与多目标安装命令）。⭐ 请求 `{ name?, serverHost?, reachability?: "PUBLIC"|"NAT", communicationMode?: "WS"|"HTTP" }`；`reachability` 默认为 `PUBLIC`，当为 `NAT` 时 `serverHost` 可选（默认回退为 `127.0.0.1`）；NAT 节点仅可作为中继落地出口节点，禁止作为直连入站或中继入口节点。线路通过 `/admin/lines` 独立管理，创建后响应 `{ node, agentToken, installCommand, installCommands, uninstallCommand, windowsUninstallCommand }`，其中 AgentToken 仅在本次创建响应中返回一次。命令中的下载 URL、HTTP 轮询地址和 WS/WSS 地址使用同一公开地址解析结果。`installCommands` 结构：`{ ws, http, dockerWs, dockerHttp, adminScriptUrl, native: { linux, macos, windows }, portable: { linux, macos, windows }, offline: { packageDownloadUrl, adminPackageUrl, windows, linux } }`（每项均为 `{ ws, http }` 命令对，`adminScriptUrl` 为专属免交互脚本下载路径）：`ws/http` 为兼容保留的 POSIX 原生安装键；`native.windows` 为 Windows CMD 与 PowerShell 跨终端通用的免交互安装命令（拉取并执行预编排自提权 `.bat` 批处理，支持直接双击运行）；`native.linux` / `native.macos` 为预编排免交互 shell 命令（`curl | sudo sh`）；`portable.*` 为免安装直接运行命令；`offline.*` 包含各操作系统终端一键 curl/unzip/install 离线部署命令。`windowsUninstallCommand` 为 Windows 管理员 PowerShell 卸载命令。
@@ -943,7 +943,9 @@ Master同时最多16个活动任务，每节点最多4个；异步查询开始�
 
 管理员设置增加 lineSpeedtestUserId: string | null（默认 null）；该字段不进入公开设置。通过既有用户查询选择实际 User.id，不能填写代理 UUID。保存与每次执行分别验证账号启用、当前邮箱策略、ACTIVE/CANCELED 剩余订阅权益、有效期、配额及线路授权，正常使用计划快照和额外线路授权。自建线路以真实用户 UUID/认证材料执行 Master 端 Mihomo URLTest，流量经过既有用户/订阅账务；不再生成隐藏系统测速用户，不自动借用其他账号。上游节点和 EXTERNAL 维持原有上游凭据。
 
-手动、批量、定时仍使用异步202任务与 MASTER / MIHOMO_URL_TEST 口径。固定错误码为 SPEEDTEST_USER_NOT_CONFIGURED、SPEEDTEST_USER_UNAVAILABLE、SPEEDTEST_LINE_UNAUTHORIZED、SPEEDTEST_IDENTITY_CHANGED。前端只映射白名单本地化文案，不展示原始错误。排队快照绑定选择的身份；写回事务重验权益及认证材料，变更后不写成成功。正常流量增长不会使有效快照失效，耗尽配额则拒绝。
+手动、批量、定时仍使用异步202任务与 MASTER / MIHOMO_URL_TEST 口径。固定错误码为 SPEEDTEST_USER_NOT_CONFIGURED、SPEEDTEST_USER_UNAVAILABLE、SPEEDTEST_LINE_UNAUTHORIZED、SPEEDTEST_IDENTITY_CHANGED、SPEEDTEST_LINE_UNMETERED。前端只映射白名单本地化文案，不展示原始错误。排队快照绑定选择的身份；写回事务重验权益及认证材料，变更后不写成成功。正常流量增长不会使有效快照失效，耗尽配额则拒绝。
+
+自建 Shadowsocks 共享模式没有逐用户统计身份，拨号前返回 `UNSUPPORTED / SPEEDTEST_LINE_UNMETERED`，不启动内核、不保存成功或伪造账号扣量；SS2022 multi-user 模式仍以所选账号派生身份正常测试。外部/上游资源直接测试仍使用其既有凭据，该限制针对自建入口的账号计量。普通托管 HTTP/SOCKS/MIXED 拨测与网关统一强制用户认证，不能因历史 `usersEnabled=false` 省略所选账号。
 
 ### 6.2 凭据维护接口
 
@@ -971,3 +973,7 @@ Master同时最多16个活动任务，每节点最多4个；异步查询开始�
 已知 SINGBOX WARN/ERROR 拒绝分支（VLESS 未知 UUID、VMess 认证首包 bad request、Trojan 无回退认证首包、TUIC 未知用户/令牌不符、Naive authorization failed、SS2022 invalid request）只生成固定 SERVER/WARN/LineCredentialAuth 摘要。摘要含 event=relay_landing_auth_rejected、nodeId、lineId、port、protocol、configVersion、count 和 windowStartedAt/windowEndedAt；不保存原始错误、尝试的 UUID/密码、来源 IP 或 URL。首次拒绝立即告警，之后30秒合并增量，5秒维护扫描刷出到期窗口，停机强制刷出；最多1024桶，容量淘汰先结算未发增量。
 
 计数要求 Agent 提供 agentInstanceId/sequence，按进程内最多4096事件、2分钟窗口去重。未知配置、不匹配入站、普通网络/TLS/超时错误、缺失事件身份均不计数。现有内核 Hysteria2 认证失败可走静默 HTTP/3 伪装分支，无法从日志准确统计；没有告警不表示没有拒绝。该观测沿用日志采集/队列的有限容量和尽力投递，不承诺跨 Master 重启或日志丢失后的精确审计账本。
+
+### 6.5 真实两跳验收范围
+
+`relay-path.native.spec.ts` 以 VMess 为代表，对 PROTOCOL_PROXY 与 TARGET_LINE 各运行真实 Sing-box entry/landing 两个进程及真实 Mihomo。业务配置由实际 SubscriptionService、AgentService、LineCredentialsService 和全量迁移的临时双库生成，仅隔离统计 API 端口；业务认证及路由保持原样。覆盖真实 HTTP 204、入口撤权、跨线错配、轮换后旧入口拒绝和无 DIRECT 回退；独立合法订阅控制流在失败前后证明两端仍就绪。其它协议认证由独立落地 native 套件验证，不把一跳认证宣称为全部协议两跳已逐项实测。

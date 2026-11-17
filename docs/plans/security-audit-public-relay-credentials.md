@@ -110,3 +110,5 @@ author: "Codex Security & Maintainers"
 本计划仍有代码证据缺口、原生/CI 和安全审查未闭合，**当前不在可直接归档清单中**。主代理完成所有本轮验收并记录最终提交后，才能执行 `pnpm plan:archive security-audit-public-relay-credentials.md`；本次不触碰总计划或索引。
 
 - 追加验证：拒绝计数纯helper138项、Gateway/SQLite集成11项、日志mask7项、Cookie管理员API5项共161项通过。Node22完整Master smoke扩为14阶段、总测试15/15，持久化拒绝增量2且日志无秘密、优雅解锁。安装器Query Token红线正在补Header-only修复，最终静态复审及CI仍待闭合。
+
+- 最终增量：等价静态复审识别共享SS拨测的逐账号计量能力限制，现拨号前返回UNSUPPORTED/SPEEDTEST_LINE_UNMETERED；SS2022 multi-user正常，HTTP/SOCKS/MIXED与网关强制认证一致。复现7失败后59/59通过。真实Master smoke再发现节点关联paramsJson泄漏，已移除入口/落地/目标原始参数并补51/51单测；最终smoke15阶段16/16，含共享SS真实API无执行/无伪计费。新VMess生产配置两跳native在Windows两模式8/8通过，最终五平台仍等待新提交CI。

@@ -155,3 +155,5 @@ Docker 与发行包中的 Sing-box 使用 `with_v2ray_api,with_utls,with_quic,wi
 ### 6.3 Go 标准库安全补丁基线
 
 Agent最低Go补丁基线为1.26.11，两个Dockerfile的Sing-box/Agent构建阶段统一锁定官方1.26.11-bookworm及相同多架构digest，CI的编译和安全扫描均读取go.mod。本轮只更新工具链补丁，不改第三方依赖或Sing-box/Cronet版本。旧Windows便携Go1.27.0仍可能被dev-env选中；本轮验证显式使用独立校验安装的Go1.26.11，系统工具链不被覆盖。源码govulncheck以可达路径为门禁，模块/二进制保守告警单独留证，不能称为完全没有第三方advisory。
+
+自建线路的专用账号拨测另要求逐用户计量：SS 共享模式在执行前返回明确不可计量结果，SS2022 multi-user 继续由真实账号派生认证；这不改变外部资源的客户端编译能力。原生验收另外使用 VMess 对两种自建中继做真实 entry/landing 两进程测试，配置来自生产网关和订阅编译器，不以单跳认证替代路由证据。

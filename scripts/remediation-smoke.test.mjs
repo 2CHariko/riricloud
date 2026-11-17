@@ -136,7 +136,7 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       for (const user of object.users || []) for (const key of ['uuid', 'password', 'username', 'name']) if (typeof user[key] === 'string') secrets.add(user[key]);
     }
   };
-  const verifyNoSecrets = value => { const text = JSON.stringify(value); for (const value of secrets) if (value.length > 7) check(!text.includes(value), 'Sensitive material appeared in an administrative response or server log'); };
+  const verifyNoSecrets = (value, label = 'value') => { const text = JSON.stringify(value); for (const value of secrets) if (value.length > 7 && text.includes(value)) throw new Error('Sensitive material appeared at ' + label + '; length=' + value.length + '; fingerprint=' + createHash('sha256').update(value).digest('hex').slice(0, 12)); };
   const finishLandingAndEntry = async () => {
     await waitRow('APPLYING_LANDING');
     const payload = await poll(); rememberConfigSecrets(payload.singboxConfig);
@@ -170,7 +170,7 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       const schema = await readFile(join(server, 'prisma/schema.prisma'), 'utf8');
       const migration = await readFile(join(server, 'prisma/migrations/20261117040000_line_credentials/migration.sql'), 'utf8');
       check(schema.includes('landingCredentialVersion') && migration.includes('landingCredentialVersion'), 'Final rotation migration is not available yet');
-      const sourceFiles = ['prisma/schema.prisma', 'prisma/migrations/20261117040000_line_credentials/migration.sql', 'src/line-credentials/line-credentials.service.ts', 'src/agent-gateway/agent-gateway.service.ts', 'src/nodes/nodes.service.ts', 'src/binaries/binaries.controller.ts', 'src/line-credentials/line-auth-rejections.ts', 'src/system-logs/masking.util.ts'];
+      const sourceFiles = ['prisma/schema.prisma', 'prisma/migrations/20261117040000_line_credentials/migration.sql', 'src/line-credentials/line-credentials.service.ts', 'src/agent-gateway/agent-gateway.service.ts', 'src/nodes/nodes.service.ts', 'src/binaries/binaries.controller.ts', 'src/line-credentials/line-auth-rejections.ts', 'src/system-logs/masking.util.ts', 'src/probe/probe-resource.service.ts', 'src/probe/probe-task.service.ts', 'src/probe/probe-subscription.ts'];
       const fingerprint = async () => Object.fromEntries(await Promise.all(sourceFiles.map(async file => [file, createHash('sha256').update(await readFile(join(server, file))).digest('hex')])));
       evidence.sourceBeforeBuild = await fingerprint();
       const config = await createServerBuild(server); buildDirectory = dirname(config);
@@ -315,6 +315,17 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       await poll(config.version, true, { logs: [rejection, rejection, { ...rejection, sequence: 2 }] });
       evidence.authRejections = { lineId: line.id, configVersion: config.version, reported: 3, expectedUnique: 2 };
     });
+    await step('共享 SS 拨测在真实 API 拨号前返回不可计量而非成功', async () => {
+      const password = secret();
+      const created = (await request('/admin/lines', { method: 'POST', status: 201, body: { name: 'unmetered shared SS', type: 'DIRECT', protocolType: 'SHADOWSOCKS', entryNodeId: entry.node.id, entryPort: 23457, isPublic: true, params: { mode: 'shared', method: 'aes-128-gcm', password } } })).body.line;
+      const before = await client.subscription.findUniqueOrThrow({ where: { userId: account.id } });
+      const task = (await request('/admin/lines/' + created.id + '/speedtest', { method: 'POST', body: {}, status: 202 })).body;
+      const result = await waitFor(async () => (await request('/admin/probe-tasks/' + task.taskId + '/results')).body.data[0], 'Shared SS task did not produce a terminal result');
+      check(result.status === 'UNSUPPORTED' && result.errorCode === 'SPEEDTEST_LINE_UNMETERED' && result.applied === false && result.latencyMs === null && result.engine === null, 'Unmetered shared SS was executed or recorded as successful');
+      check((await client.subscription.findUniqueOrThrow({ where: { userId: account.id } })).trafficUsedBytes === before.trafficUsedBytes, 'Rejected unmetered request must not invent account billing');
+      verifyNoSecrets(result);
+      evidence.unmeteredSharedProbeRejected = true;
+    });
     await step('节点详情 API 不在安装命令中重新暴露一次性 Agent Token', async () => {
       const detail = (await request('/admin/nodes/' + landing.node.id)).body;
       const exposedPaths = [];
@@ -325,13 +336,13 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       visit(detail);
       if (exposedPaths.length) evidence.findings = [...(evidence.findings || []), { code: 'NODE_DETAIL_AGENT_TOKEN_DISCLOSURE', endpoint: 'GET /api/v1/admin/nodes/:id', paths: exposedPaths, reproduction: 'Create node, retain one-time agentToken in memory, GET node detail and compare installation command strings. No token value is logged.' }];
       check(exposedPaths.length === 0, 'Agent token reappeared at: ' + exposedPaths.join(', '));
-      verifyNoSecrets((await request('/admin/nodes')).body);
+      verifyNoSecrets((await request('/admin/nodes')).body, 'node list before rotate');
       const previousToken = landing.agentToken;
       const rotated = (await request('/admin/nodes/' + landing.node.id + '/rotate-token', { method: 'POST', status: 201 })).body;
       check(typeof rotated.agentToken === 'string' && rotated.agentToken !== previousToken, 'Rotation must return a fresh one-time token');
       secrets.add(rotated.agentToken);
-      verifyNoSecrets((await request('/admin/nodes/' + landing.node.id)).body);
-      verifyNoSecrets((await request('/admin/nodes')).body);
+      verifyNoSecrets((await request('/admin/nodes/' + landing.node.id)).body, 'node detail after rotate');
+      verifyNoSecrets((await request('/admin/nodes')).body, 'node list after rotate');
       await request('/agent/poll', { method: 'POST', body: heartbeat(), auth: null, headers: { 'X-Agent-Token': previousToken }, status: 401 });
       landing.agentToken = rotated.agentToken;
       await poll();
