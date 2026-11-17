@@ -4,11 +4,12 @@ import { SettingsService } from '../system/settings.service';
 import { ProbeService } from './probe.service';
 import { ProbeResourceService, probeHash, type ProbeSelection, type ResourceSnapshot } from './probe-resource.service';
 import { safeProbeResult } from './probe-result';
+import { ProbeSubscriptionError } from './probe-subscription';
 import type { ProbeMeasurement, ProbePolicy, ProbeResult, ProbeSubjectType, ProbeTarget } from './probe.types';
 
 export type ProbeTaskState = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELED' | 'FAILED';
 interface Task {
-  taskId: string; ownerId: string; subjectType: ProbeSubjectType; ids: string[]; sequence: number; key: string;
+  speedtestUserId: string | null; taskId: string; ownerId: string; subjectType: ProbeSubjectType; ids: string[]; sequence: number; key: string;
   policy: ProbePolicy; executionPolicy: ProbePolicy; measurement: ProbeMeasurement; target: ProbeTarget; timeoutMs: number; state: ProbeTaskState;
   phase: string; createdAt: string; expiresAt: string; startedAt: string | null; finishedAt: string | null;
   results: Map<string, ProbeResult>; controller: AbortController; cursor: number; deadline?: NodeJS.Timeout;
@@ -47,13 +48,14 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     this.sweep();
     const executionPolicy: ProbePolicy = measurement === 'MIHOMO_URL_TEST' || settings.probeSingboxFallbackEnabled === false ? 'MIHOMO_ONLY' : policy;
     const timeoutMs = Math.min(30000, Math.max(500, settings.lineSpeedtestTimeoutMs));
-    const key = probeHash([subjectType, ids, target, executionPolicy, timeoutMs, measurement]);
+    const speedtestUserId = settings.lineSpeedtestUserId ?? null;
+    const key = probeHash([subjectType, ids, target, executionPolicy, timeoutMs, measurement, subjectType === 'LINE' ? speedtestUserId : null]);
     const duplicate = [...this.tasks.values()].find((task) => !terminal(task.state) && task.key === key && task.ownerId === ownerId);
     if (duplicate) return this.receipt(duplicate);
     if ([...this.tasks.values()].filter((task) => task.ownerId === ownerId && !terminal(task.state)).length >= 2) throw new HttpException('每位管理员最多同时运行两个探针任务', 429);
     if ([...this.tasks.values()].filter((task) => !terminal(task.state)).length >= 20) throw new HttpException('探针队列已满', 429);
     const now = Date.now();
-    const task: Task = { taskId: randomUUID(), ownerId, subjectType, ids, sequence: this.resources.reserve(subjectType, ids, measurement), key, policy: executionPolicy, executionPolicy, measurement, target, timeoutMs, state: 'QUEUED', phase: 'QUEUED', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + DEADLINE).toISOString(), startedAt: null, finishedAt: null, results: new Map(), controller: new AbortController(), cursor: 0 };
+    const task: Task = { speedtestUserId, taskId: randomUUID(), ownerId, subjectType, ids, sequence: this.resources.reserve(subjectType, ids, measurement), key, policy: executionPolicy, executionPolicy, measurement, target, timeoutMs, state: 'QUEUED', phase: 'QUEUED', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + DEADLINE).toISOString(), startedAt: null, finishedAt: null, results: new Map(), controller: new AbortController(), cursor: 0 };
     task.deadline = setTimeout(() => { if (!terminal(task.state)) this.finish(task, 'FAILED', 'TASK_DEADLINE'); }, DEADLINE); task.deadline.unref();
     this.tasks.set(task.taskId, task); this.queue.push(task);
     setImmediate(() => this.pump());
@@ -99,11 +101,11 @@ export class ProbeTaskService implements OnModuleInit, OnModuleDestroy {
     for (const id of ids) {
       if (task.controller.signal.aborted) return;
       try {
-        const snapshot = await this.resources.snapshot(task.subjectType, id, task.sequence, undefined, task.measurement);
+        const snapshot = await this.resources.snapshot(task.subjectType, id, task.sequence, undefined, task.measurement, task.speedtestUserId);
         if (task.controller.signal.aborted) return;
         if (snapshot) snapshots.set(id, snapshot);
         else task.results.set(id, this.localResult(task, id, 'SKIPPED', 'RESOURCE_UNAVAILABLE'));
-      } catch { if (!task.controller.signal.aborted) task.results.set(id, this.localResult(task, id, 'ERROR', 'RESOURCE_INVALID')); }
+      } catch (error) { if (!task.controller.signal.aborted) task.results.set(id, error instanceof ProbeSubscriptionError ? { ...this.localResult(task, id, error.code === 'SPEEDTEST_LINE_UNMETERED' ? 'UNSUPPORTED' : 'SKIPPED', error.code), message: error.message } : this.localResult(task, id, 'ERROR', 'RESOURCE_INVALID')); }
     }
     if (task.controller.signal.aborted) return;
     task.phase = 'EXECUTE';

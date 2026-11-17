@@ -4,10 +4,14 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { URL, URLSearchParams } from 'node:url';
 import ts from 'typescript';
+import * as jsxRuntime from 'react/jsx-runtime';
 const source = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
-const load = (path) => {
+const load = (path, modules = {}) => {
   const exports = {};
-  runInNewContext(ts.transpileModule(source(path), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports, URL, URLSearchParams });
+  runInNewContext(ts.transpileModule(source(path), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports, URL, URLSearchParams, require: (name) => {
+    if (!(name in modules)) throw new Error(`Unexpected test import: ${name}`);
+    return modules[name];
+  } });
   return exports;
 };
 const contract = load('./proxy-pool-contract.ts');
@@ -52,7 +56,86 @@ test('UI uses per-key queries, invalidation-safe checkboxes and no raw key snipp
   assert.doesNotMatch(hook, /currentKey\.(username|password)|localStorage|sessionStorage/);
   assert.match(hook, /reconcileSelection/);
   assert.match(source('./use-proxy-pool.ts'), /ENDPOINTS_QUERY_KEY, keyId/);
-  assert.match(source('./components/proxy-endpoint-selection.tsx'), /disabled=\{endpoint.status !== 'AVAILABLE'\}/);
+  const endpoints = [endpoint('online', { online: true }), endpoint('offline', { online: false }), endpoint('full', { status: 'CAPACITY_EXCLUDED' })];
+  const h = endpointSelectionHarness(endpoints);
+  for (const item of endpoints) {
+    const checkbox = h.nodes.find((node) => node.type === 'Checkbox' && node.props.id === 'endpoint-' + item.lineId);
+    assert.ok(checkbox);
+    assert.equal(checkbox.props.disabled, item.status !== 'AVAILABLE');
+    const card = h.nodes.find((node) => node.key === item.lineId);
+    card.props.onClick();
+  }
+  assert.deepEqual(h.toggles, [['online', true], ['offline', true]]);
+});
+
+function endpointSelectionHarness(endpoints, selectedLineIds = [], pending = false) {
+  const toggles = [], selections = [];
+  const { ProxyEndpointSelection } = load('./components/proxy-endpoint-selection.tsx', {
+    'react/jsx-runtime': jsxRuntime,
+    'react-i18next': { useTranslation: () => ({ t: (key) => key }) },
+    '@/components/ui/button': { Button: 'Button' },
+    '@/components/ui/checkbox': { Checkbox: 'Checkbox' },
+    '@/components/ui/badge': { Badge: 'Badge' },
+    '@/components/ui/card': Object.fromEntries(['Card', 'CardContent', 'CardHeader', 'CardTitle'].map((name) => [name, name])),
+    '@/components/shared/probe-result': { ProbeMeasurementChip: 'ProbeMeasurementChip' },
+    '@/components/shared/flag-text': { FlagText: 'FlagText' },
+    '@/lib/utils': { cn: (...values) => values.filter(Boolean).join(' ') },
+    '../proxy-snippets': snippets
+  });
+  const tree = ProxyEndpointSelection({
+    endpoints, pending, excludedCount: endpoints.filter((item) => item.status === 'CAPACITY_EXCLUDED').length,
+    state: {
+      selectedLineIds,
+      toggleLine: (...args) => toggles.push(args),
+      setSelection: (ids) => selections.push(Array.from(ids))
+    }
+  });
+  function nodes(element) {
+    if (!element || typeof element !== 'object') return [];
+    if (Array.isArray(element)) return element.flatMap(nodes);
+    return [element, ...nodes(element.props?.children)];
+  }
+  return { nodes: nodes(tree), toggles, selections };
+}
+
+test('available cards and checkboxes toggle the current selection without bubbling a second toggle', () => {
+  for (const selected of [false, true]) {
+    const h = endpointSelectionHarness([endpoint('one')], selected ? ['one'] : []);
+    const checkbox = h.nodes.find((node) => node.type === 'Checkbox');
+    assert.equal(checkbox.props.checked, selected);
+    assert.equal(checkbox.props.disabled, false);
+    const card = h.nodes.find((node) => node.key === 'one');
+    card.props.onClick();
+    assert.deepEqual(h.toggles, [['one', !selected]]);
+    h.toggles.length = 0;
+    let stopped = 0;
+    checkbox.props.onClick({ stopPropagation: () => stopped++ });
+    checkbox.props.onCheckedChange(!selected);
+    assert.equal(stopped, 1);
+    assert.deepEqual(h.toggles, [['one', !selected]]);
+    checkbox.props.onCheckedChange('indeterminate');
+    assert.deepEqual(h.toggles[1], ['one', false]);
+  }
+});
+
+test('bulk selection excludes unavailable endpoints and empty or pending lists disable select-all', () => {
+  const endpoints = [endpoint('one'), endpoint('offline', { online: false }), endpoint('full', { status: 'CAPACITY_EXCLUDED' })];
+  const h = endpointSelectionHarness(endpoints, ['one']);
+  const button = (harness, label) => harness.nodes.find((node) => node.type === 'Button' && node.props.children === 'user:proxyPool.' + label);
+  assert.equal(button(h, 'selectAll').props.disabled, false);
+  button(h, 'selectAll').props.onClick();
+  assert.deepEqual(h.selections, [['one', 'offline']]);
+  assert.equal(button(h, 'clearAll').props.disabled, false);
+  button(h, 'clearAll').props.onClick();
+  assert.deepEqual(h.selections[1], []);
+  for (const pending of [false, true]) {
+    const empty = endpointSelectionHarness([], [], pending);
+    assert.equal(button(empty, 'selectAll').props.disabled, true);
+    assert.equal(button(empty, 'clearAll').props.disabled, true);
+  }
+  const pending = endpointSelectionHarness(endpoints, [], true);
+  assert.equal(button(pending, 'selectAll').props.disabled, true);
+  assert.equal(pending.nodes.some((node) => node.type === 'Checkbox'), false);
 });
 
 test('structured errors are recognized for both JSON and raw export responses', () => {

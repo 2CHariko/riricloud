@@ -10,7 +10,7 @@
     "build": "nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
-    "start:prod": "pnpm prisma:deploy && node prisma/bootstrap-admin.js && node dist/main",
+    "start:prod": "node prisma/maintenance-start.js",
     "lint": "eslint .",
     "test": "jest",
     "postinstall": "prisma generate && prisma generate --schema=prisma/telemetry/schema.prisma",
@@ -19,7 +19,11 @@
     "prisma:telemetry:migrate": "prisma migrate dev --schema=prisma/telemetry/schema.prisma",
     "prisma:telemetry:deploy": "prisma migrate deploy --schema=prisma/telemetry/schema.prisma",
     "prisma:deploy": "node prisma/deploy-databases.js",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "backup:create": "node prisma/maintenance-cli.js backup:create",
+    "backup:verify": "node prisma/maintenance-cli.js backup:verify",
+    "backup:restore": "node prisma/maintenance-cli.js backup:restore",
+    "test:maintenance": "node --test prisma/maintenance-backup.test.js prisma/maintenance-entrypoints.test.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

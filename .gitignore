@@ -20,6 +20,9 @@ coverage/
 *.db-journal
 *.db-wal
 *.db-shm
+# Master/维护命令运行锁（保留磁盘内容，不纳入源码）
+*.db.maintenance.lock/
+.riricloud-maintenance.lock/
 data/
 
 # Go 构建产物

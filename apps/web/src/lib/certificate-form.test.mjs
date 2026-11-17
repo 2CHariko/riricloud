@@ -42,7 +42,7 @@ function harness() {
   const z = { string: () => new Proxy({}, { get: (_, name) => name === 'optional' ? () => ({}) : () => z.string() }), object: () => ({}) };
   const modules = {
     react, '@/hooks/use-form-reset': { useFormResetOnKey },
-    '@hookform/resolvers/zod': { zodResolver: () => {} }, zod: { z },
+    '@/lib/zod-resolver': { zodResolver: () => {} }, zod: { z },
     'react-hook-form': { useForm: ({ defaultValues }) => { values ??= { ...defaultValues }; return form; } },
     'react-i18next': { useTranslation: () => ({ t: (key) => key }) },
     './use-certificates': { useCertificateDetail: () => detail, useCertificateMutations: () => ({ parse: { mutate: () => {}, reset: () => {} }, preview: { mutate: (payload, options) => options.onSuccess({ contentChanged: false }) } }) }

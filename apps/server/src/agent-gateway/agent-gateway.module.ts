@@ -1,3 +1,4 @@
+import { LineCredentialsModule } from '../line-credentials/line-credentials.module';
 import { Module, OnModuleInit } from '@nestjs/common';
 import { AgentGateway } from './agent.gateway';
 import { AgentService } from './agent.service';
@@ -9,7 +10,7 @@ import { ProxyPoolAccessModule } from '../proxy-pool-access/proxy-pool-access.mo
 import { CertificateTrackingModule } from '../certificates/certificate-tracking.module';
 
 @Module({
-  imports: [SystemModule, SystemLogsModule, ProxyPoolAccessModule, CertificateTrackingModule],
+  imports: [SystemModule, SystemLogsModule, ProxyPoolAccessModule, CertificateTrackingModule, LineCredentialsModule],
   controllers: [AgentPollController],
   providers: [AgentGateway, AgentService, AgentSweepService],
   exports: [AgentService]

@@ -51,12 +51,12 @@ describe('代理池线路绑定与精确账务', () => {
     const { service, prisma } = setup();
     const base = { name: 'pool', listen: '127.0.0.1', status: 'ACTIVE', isPublic: true, tagsJson: '[]', protocolType: 'MIXED', proxyPoolEnabled: true, entryNodeId: 'node', paramsJson: '{"usersEnabled":true}', certificate: null };
     const upstream = { id: 'up', status: 'ACTIVE', presenceStatus: 'PRESENT', protocolType: 'HTTP', serverHost: 'example.com', serverPort: 8080, paramsJson: encryptSecret('{"username":"up","password":"secret"}'), subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null } };
-    prisma.node.findUnique.mockResolvedValue({ id: 'node', serverHost: 'example.com', status: 'ONLINE', entryLines: [{ ...base, id: directId, type: 'DIRECT', entryPort: 10001 }, { ...base, id: relayId, type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNode: upstream, entryPort: 10002 }, { ...base, id: 'hidden-http', protocolType: 'HTTP', proxyPoolEnabled: false, type: 'DIRECT', entryPort: 10003 }], landingLines: [] });
+    prisma.node.findUnique.mockResolvedValue({ id: 'node', serverHost: 'example.com', status: 'ONLINE', configOverride: null, entryLines: [{ ...base, id: directId, type: 'DIRECT', entryPort: 10001 }, { ...base, id: relayId, type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNode: upstream, entryPort: 10002 }, { ...base, id: 'hidden-http', protocolType: 'HTTP', proxyPoolEnabled: false, type: 'DIRECT', entryPort: 10003 }], landingLines: [] });
     const config = (await service.buildConfigSync('node')).singboxConfig;
     const inbounds = config.inbounds as Array<{ type: string; listen_port: number; users: Array<{ username: string }> }>;
     expect(inbounds.find(i => i.listen_port === 10001)?.users).toEqual(expect.arrayContaining([expect.objectContaining({ username: directLogin })]));
     expect(inbounds.find(i => i.listen_port === 10002)?.users).toEqual(expect.arrayContaining([expect.objectContaining({ username: relayLogin })]));
-    expect(inbounds.find(i => i.listen_port === 10003)?.users.some(u => u.username.startsWith('pk_'))).toBe(false);
+    expect(inbounds.find(i => i.listen_port === 10003)).toBeUndefined();
     expect(inbounds.flatMap(i => i.users).some(u => u.username === rawKey)).toBe(false);
     const rules = (config.route as { rules: Array<Record<string, unknown>> }).rules;
     expect(rules.slice(0, 2).every(r => r.action === 'reject')).toBe(true);

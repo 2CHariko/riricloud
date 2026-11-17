@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn, formatDateTime } from '@/lib/utils';
+import { probeAccountErrorKey } from './probe-result-account-errors';
 import { parseLastProbe, probeTone, type ProbeResult } from '@/lib/probe-types';
 
 const chipToneStyles = cva('border font-mono select-none transition-colors', {
@@ -55,6 +56,7 @@ export function ProbeMeasurementChip({
   const { t } = useTranslation(['admin', 'common']);
   const result = parseLastProbe(value);
   const tone = result ? probeTone(result) : 'muted';
+  const accountErrorKey = probeAccountErrorKey(result);
 
   const label = result
     ? result.status === 'SUCCESS'
@@ -103,6 +105,7 @@ export function ProbeMeasurementChip({
           </div>
           {result?.status === 'SUCCESS' && <span className="font-mono font-bold">{result.latencyMs} ms</span>}
         </div>
+        {accountErrorKey && <p>{t(accountErrorKey)}</p>}
         {result && (
           <>
             <p className="font-mono text-[11px] text-primary-foreground/70">{result.targetHost}</p>
@@ -115,9 +118,10 @@ export function ProbeMeasurementChip({
 }
 
 export function ProbeResultCard({ result }: { result: ProbeResult }) {
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation(['admin', 'common']);
   const tone = probeTone(result);
   const isSuccess = result.status === 'SUCCESS';
+  const accountErrorKey = probeAccountErrorKey(result);
 
   return (
     <Card className="overflow-hidden border shadow-sm">
@@ -161,7 +165,7 @@ export function ProbeResultCard({ result }: { result: ProbeResult }) {
           </div>
           <div>{t('latencyTest.testTime', { time: formatDateTime(result.testedAt) })}</div>
         </div>
-        {!isSuccess && <p className="text-muted-foreground">{t(`latencyTest.statusHelp.${result.status}`)}</p>}
+        {!isSuccess && <p className="text-muted-foreground">{accountErrorKey ? t(accountErrorKey) : t(`latencyTest.statusHelp.${result.status}`)}</p>}
       </CardContent>
     </Card>
   );

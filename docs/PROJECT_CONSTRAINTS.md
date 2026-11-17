@@ -29,7 +29,7 @@ Linux 是本项目的首选本地开发环境，Node.js、pnpm 与 Go 必须安�
 
 - Node.js `>=20.0.0`（推荐使用与 CI 一致的 22.x）。
 - pnpm `9.15.9`（根 `package.json` 的 `packageManager` 为唯一版本来源），通过系统 npm 全局安装。
-- Go `>=1.26`，以 `apps/agent/go.mod` 的 `go 1.26.0` 为最低兼容基线。
+- Go `>=1.26`，以 `apps/agent/go.mod` 的 `go 1.26.11` 为最低兼容基线。
 - Linux 不得通过 `.npmrc`、`scripts/dev-env.sh` 或其他脚本把运行时、pnpm store、npm cache、Prisma cache 或 Go cache 重定向到仓库内；项目依赖本身仍按 pnpm Workspace 安装到本地 `node_modules`。
 - `source scripts/dev-env.sh` 在 Linux 下必须保持系统 `PATH` 与用户默认缓存不变。`.cache/`、`.tools/` 只用于 Windows Git Bash 兼容场景和临时构建产物，不作为 Linux 工具链来源。
 - CI 使用 runner 提供的 Node.js、pnpm、Go 与缓存，不依赖开发机 `.cache/` 或 `.tools/`。
@@ -49,7 +49,7 @@ Linux 是本项目的首选本地开发环境，Node.js、pnpm 与 Go 必须安�
 
 1. **禁止引入** MySQL / PostgreSQL / MongoDB / Redis / RabbitMQ / Kafka / etcd 等任何外部服务客户端依赖。
 2. 需要缓存 → 进程内缓存；需要队列 → 进程内异步任务；需要锁 → SQLite 事务。**先证明当前方案不够用，再讨论突破**（此时走 RFC，且大概率意味着架构文档重写）。
-3. 部署形态承诺不变：主控端单进程 + 单 SQLite 文件（`docker-compose.yml` 不得出现数据库/缓存服务条目）。
+3. 部署形态承诺不变：主控端单进程 + 本地业务/观测双 SQLite 文件（沿用已归档的[物理分库决策](./plans/archive/2026-09-17-telemetry-db-physical-separation.md)，不新增外部服务）；`docker-compose.yml` 不得出现数据库/缓存服务条目。
 
 ---
 
@@ -96,9 +96,9 @@ Agent 面向最低配 VPS 运行，资源预算是验收指标而非建议：
 | 规范与红线本身 | 本文档 / [VERSIONING.md](./VERSIONING.md) / [GIT_WORKFLOW.md](./GIT_WORKFLOW.md) / [CODE_REVIEW.md](./CODE_REVIEW.md) |
 | 里程碑进度 | [ROADMAP.md](./ROADMAP.md)（完成的条目打勾） |
 
-> **豁免机制**：若某次改动纯属内部微调/重构且未影响外部接口与数据模型契约，可在 commit message 或 PR 描述中添加 `[skip-doc-sync]` 或 `docs-exempt` 显式豁免阻断。
+> **豁免机制**：若某次改动纯属内部微调/重构且未影响外部接口与数据模型契约，可在 commit message 中添加 `[skip-doc-sync]` 或 `docs-exempt`。脚本读取 Git 提交信息，不读取 PR 正文；该豁免仅针对代码-文档联动，不豁免规划归档或关键规范一致性检查。
 
-`feat` / `fix` 等核心代码变更必须执行 `pnpm bump` 并在 [CHANGELOG.md](../CHANGELOG.md) 顶部的对应版本小节中记录条目（详见 [VERSIONING.md](./VERSIONING.md) §5/§6）。
+日常核心代码 PR 保持版本号不变：Master 变更记录在根 [CHANGELOG.md](../CHANGELOG.md) 的 `[Unreleased]`，Agent 变更记录在 [apps/agent/CHANGELOG.md](../apps/agent/CHANGELOG.md) 的 `[Unreleased]`；跨端变更两处均维护。发版时才通过对应 Release PR 固化版本，路径判定以 [VERSIONING.md](./VERSIONING.md) §6.1 为准。
 
 ---
 
@@ -142,11 +142,12 @@ Agent 面向最低配 VPS 运行，资源预算是验收指标而非建议：
 2. **机械阻断**：进行中规划（`docs/plans/`）内所有任务复选框 100% 勾选完成时，`pnpm gate:docs` 门禁将强制阻断报错，防止陈旧完成项滞留在活跃目录。
 3. **规范归档**：必须通过 `pnpm plan:archive <file>` 或符合 `YYYY-MM-DD-*.md` 规范将已完结任务移入 `docs/plans/archive/`，并同步刷新 [plans/README.md](./plans/README.md) 台账。
 
-## 10. 统一版本管理与 PR 级连续递增约束
+## 10. 双轨版本管理与 Unreleased 约束
 
-1. **单仓唯一版本源**：根 `package.json` 的 `version` 字段为全局唯一真实源，子包（`apps/server`、`apps/web`）与 `apps/agent` 一律不得私自维护版本号。
-2. **核心代码变更强制递增**：凡涉及 `apps/server`、`apps/web`、`apps/agent` 或 `prisma` 等核心代码修改的 PR，在合入 `main` 前分支上必须执行 `pnpm bump [patch|minor|major]` 递增版本号，并在 [CHANGELOG.md](../CHANGELOG.md) 顶部的对应版本小节中记录改动。纯文档、脚本或配置改动允许免增版本。
-3. **三重防线机械阻断**：`pnpm gate:version`、CI 流水线及 `.husky/pre-push` 构成三重防线，自动校验版本号大小、CHANGELOG 格式与 Git 变更差分，杜绝未升版本的核心代码变更合入主干。
+1. **两条版本源**：Master 版本由根 `package.json` 的 `version` 管理，`apps/server`、`apps/web` 不声明独立版本；Agent 版本由 `apps/agent/VERSION` 管理，允许与 Master 不同。
+2. **日常 PR 与发版分离**：日常 PR 保持两条版本不变，按修改范围维护各自 `[Unreleased]`。Master 发版由 `release/vX.Y.Z` 分支执行 `pnpm bump [patch|minor|major]`；Agent 发版由 `release/agent-vA.B.C` 分支执行 `pnpm bump:agent [patch|minor|major]`。两者均通过 Release PR 合并，禁止在 main 修改版本。
+3. **版本门禁**：`pnpm gate:version`、CI 与 `.husky/pre-push` 校验双轨 SemVer、版本不得倒退、各自定稿日志及 Master README 徽标；日常核心路径变更必须有对应日志新增。门禁不按提交 type 推断是否需要记录，具体路径见 [VERSIONING.md](./VERSIONING.md) §6.1。
+4. **针对性文档检查**：`pnpm gate:docs` 核对双轨契约表、已废弃版本规则及门禁清单与根 `package.json` 的一致性；不以“文件已修改”替代内容核对，不扫描历史计划中的旧版本说明。
 
 ---
 

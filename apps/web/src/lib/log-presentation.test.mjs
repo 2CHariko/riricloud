@@ -159,6 +159,7 @@ test('advanced dialog applies validated drafts once and cancellation leaves acti
   const components = new Proxy({}, { get: (_target, key) => key });
   const { LogAdvancedFilterDialog } = load('../pages/admin/logs/components/log-advanced-filter-dialog.tsx', {
     'react-i18next': translation,
+    '@/lib/zod-resolver': load('./zod-resolver.ts'),
     'react-hook-form': { useForm: (options) => { formOptions = options; return form; } },
     '@/hooks/use-form-reset': { useFormResetOnKey: (options) => { resetOptions = options; options.reset(); } },
     '@/components/shared/responsive-dialog': components, '@/components/ui/dialog': components,

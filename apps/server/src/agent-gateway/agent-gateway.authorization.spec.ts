@@ -3,7 +3,6 @@ import { formatAuthUserName, parseTrafficCredential } from '../common/inbound';
 import { buildSingboxJson, buildUriList, buildClashYaml } from '../subscription/builders';
 import { parse } from 'yaml';
 import { AgentService } from './agent-gateway.service';
-import { INTERNAL_SPEEDTEST_EMAIL, INTERNAL_SPEEDTEST_UUID } from '../common/constants';
 
 describe('AgentService per-line authorization', () => {
   const userOne = {
@@ -94,19 +93,35 @@ describe('AgentService per-line authorization', () => {
     const publicInbound = inbounds.find((inbound) => inbound.tag === 'line-public-line');
     const hiddenInbound = inbounds.find((inbound) => inbound.tag === 'line-hidden-line');
 
-    const speedtestUser = { uuid: INTERNAL_SPEEDTEST_UUID, name: INTERNAL_SPEEDTEST_EMAIL, flow: 'xtls-rprx-vision' };
     expect(publicInbound?.users).toEqual([
       { uuid: userOne.uuid, name: `${userOne.email}::public-line`, flow: 'xtls-rprx-vision' },
-      { uuid: userTwo.uuid, name: `${userTwo.email}::public-line`, flow: 'xtls-rprx-vision' },
-      speedtestUser
+      { uuid: userTwo.uuid, name: `${userTwo.email}::public-line`, flow: 'xtls-rprx-vision' }
     ]);
     expect(hiddenInbound?.users).toEqual([
-      { uuid: userTwo.uuid, name: `${userTwo.email}::hidden-line`, flow: 'xtls-rprx-vision' },
-      speedtestUser
+      { uuid: userTwo.uuid, name: `${userTwo.email}::hidden-line`, flow: 'xtls-rprx-vision' }
     ]);
     expect((result.singboxConfig.experimental as { v2ray_api: { stats: { users: string[] } } }).v2ray_api.stats.users)
-      .toEqual([`${userOne.email}::public-line`, `${userTwo.email}::public-line`, INTERNAL_SPEEDTEST_EMAIL, `${userTwo.email}::hidden-line`]);
+      .toEqual([`${userOne.email}::public-line`, `${userTwo.email}::public-line`, `${userTwo.email}::hidden-line`]);
   });
+  it.each([
+    ['无订阅', null],
+    ['用户禁用', { user: { ...userOne, isActive: false } }],
+    ['订阅撤销', { status: 'REVOKED' }],
+    ['订阅过期', { expireAt: new Date(0) }],
+    ['配额耗尽', { trafficUsedBytes: 1000n }],
+    ['套餐未授权', { plan: { lineMatchMode: 'EXPLICIT', lineTagsJson: '[]', lineIdsJson: '["other-line"]' } }]
+  ])('%s 时不生成公开业务入站或隐藏测速用户', async (_label, overrides) => {
+    prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: 'entry.example.com', status: 'ONLINE', entryLines: [line('public-line', true, '[]')], landingLines: [] });
+    prisma.subscription.findMany.mockResolvedValue(overrides === null ? [] : [{
+      id: 'sub', status: 'ACTIVE', expireAt: null, trafficLimitBytes: 1000n, trafficUsedBytes: 0n, user: userOne,
+      plan: { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' }, ...overrides
+    }]);
+    const config = await new AgentService(prisma as never).buildConfigSync('node-1');
+    expect(config.singboxConfig.inbounds).toEqual([]);
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
+    expect((config.singboxConfig.experimental as { v2ray_api: { stats: { users: string[] } } }).v2ray_api.stats.users).toEqual([]);
+  });
+
   it('EXTERNAL 和已禁用源、到期、缺失及无用户归属的中继不生成监听', async () => {
     const upstream = { status: 'ACTIVE', presenceStatus: 'PRESENT', protocolType: 'TROJAN', serverHost: 'up.example.com', serverPort: 443, paramsJson: encryptSecret(JSON.stringify({ password: 'external-secret' })), subscription: { status: 'ACTIVE', userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null } };
     const base = { ...line('relay', true, '[]'), type: 'RELAY', relayMode: 'UPSTREAM_NODE', upstreamNode: upstream };
@@ -136,7 +151,7 @@ describe('AgentService per-line authorization', () => {
     expect(inbound.users[0].username).toBe(formatAuthUserName(userOne, 'password-line'));
     expect(inbound.users[0].username).not.toContain(':');
     expect(parseTrafficCredential(inbound.users[0].username)).toEqual({ rawCredential: userOne.email, lineId: 'password-line' });
-    expect(inbound.users).toHaveLength(2);
+    expect(inbound.users).toEqual([{ username: formatAuthUserName(userOne, localLine.id), password: userOne.password }]);
     expect(inbound.users.some((item) => item.username.startsWith('pk_'))).toBe(false);
     expect((config.singboxConfig.experimental as { v2ray_api: { stats: { users: string[] } } }).v2ray_api.stats.users).toContain(inbound.users[0].username);
     const source = { id: localLine.id, name: 'Password line', protocolType, params: JSON.parse(localLine.paramsJson), serverHost: 'entry.example.com', serverPort: 24443 };

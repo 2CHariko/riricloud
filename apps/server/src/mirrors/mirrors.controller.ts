@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
 import { CreateMirrorSiteDto, ListMirrorSitesDto, UpdateMirrorSiteDto } from './dto/mirror-site.dto';
@@ -30,5 +31,8 @@ export class MirrorsController {
   rotateShareToken(@Param('id') id: string) { return this.mirrors.rotateShareToken(id); }
 
   @Post(':id/test')
-  test(@Param('id') id: string) { return this.mirrors.test(id); }
+  test(@Param('id') id: string, @Req() request: Request) {
+    const user = (request as Request & { user?: { id?: string; role?: string } }).user;
+    return this.mirrors.test(id, user, request.ip || request.socket.remoteAddress || 'unknown');
+  }
 }

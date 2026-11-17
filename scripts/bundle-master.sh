@@ -265,13 +265,17 @@ rm -rf "$MASTER_DIR/src" "$MASTER_DIR/tsconfig.json" "$MASTER_DIR/tsconfig.build
        "$MASTER_DIR/.env" "$MASTER_DIR"/*.db "$MASTER_DIR"/*.db-* "$MASTER_DIR/data" "$MASTER_DIR/.cache" \
        "$MASTER_DIR/artifacts" "$MASTER_DIR/test_deploy" "$MASTER_DIR/coverage"
 
+# pnpm files 白名单可包含 prisma 深层运行数据；统一清理本次装配目录，不碰源码库。
+"$NODE_BIN" "$WORKTREE_DIR/apps/server/prisma/maintenance-package.js" "$(to_node_path "$MASTER_DIR")"
+
 # 3. 复制启动入口与配置模板
 echo "  -> 复制启动脚本与配置模板..."
-cp "$WORKTREE_DIR/scripts/master-bundle/start.sh" "$MASTER_DIR/"
+cp "$WORKTREE_DIR/scripts/master-bundle/maintenance-start.sh" "$MASTER_DIR/start.sh"
+cp "$WORKTREE_DIR/scripts/master-bundle/maintenance.sh" "$MASTER_DIR/"
 cp "$WORKTREE_DIR/scripts/master-bundle/README.md" "$MASTER_DIR/"
 cp "$WORKTREE_DIR/scripts/master-bundle/.env.example" "$MASTER_DIR/"
 cp "$WORKTREE_DIR/scripts/master-bundle/admin-reset.sh" "$MASTER_DIR/"
-chmod +x "$MASTER_DIR/start.sh" "$MASTER_DIR/admin-reset.sh"
+chmod +x "$MASTER_DIR/start.sh" "$MASTER_DIR/admin-reset.sh" "$MASTER_DIR/maintenance.sh"
 
 # 4. 复制前端面板静态资源
 echo "  -> 集成 Web 前端静态资源..."

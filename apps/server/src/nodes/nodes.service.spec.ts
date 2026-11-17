@@ -6,6 +6,8 @@ import { BinariesService } from '../binaries/binaries.service';
 import { BinariesInstallerService } from '../binaries/installer.service';
 import { SystemLogsService } from '../system-logs/system-logs.service';
 import { NodesService } from './nodes.service';
+import { decryptSecret, encryptSecret } from '../common/secret-crypto';
+import { hashAgentToken } from '../common/agent-token';
 
 describe('NodesService', () => {
   let service: NodesService;
@@ -64,6 +66,25 @@ describe('NodesService', () => {
     prisma.line.findFirst.mockResolvedValue(null);
   });
 
+  it('节点详情与列表的线路关系不返回原始 paramsJson 或线路认证凭据', async () => {
+    const password = 'private-shared-ss-password';
+    const privateKey = 'private-transport-key';
+    const targetLine = { id: 'target', paramsJson: JSON.stringify({ password, tls: { key: privateKey } }), egressProxyJson: null, lastDebugProbeJson: null };
+    const line = { id: 'line', type: 'DIRECT', entryPort: 24443, paramsJson: JSON.stringify({ password, tls: { key: privateKey } }), egressProxyJson: null, lastDebugProbeJson: null, targetLine, tagsJson: '[]' };
+    const stored = { ...nodeWithLines, entryLines: [line], landingLines: [line] };
+    prisma.node.findUnique.mockResolvedValue(stored);
+    prisma.node.findMany.mockResolvedValue([stored]);
+
+    const detail = await service.detail(baseNode.id, 'https://panel.example.com');
+    const list = await service.list();
+    for (const output of [detail, list]) {
+      const serialized = JSON.stringify(output);
+      expect(serialized).not.toContain(password);
+      expect(serialized).not.toContain(privateKey);
+      expect(serialized).not.toContain('paramsJson');
+    }
+  });
+
   it('节点只读线路关联与派生 targetLine 不公开严格拨测历史', async () => {
     const targetLine = { id: 'target', lastDebugProbeJson: 'private-target-debug' };
     const line = { id: 'line', type: 'DIRECT', entryPort: 24443, lastDebugProbeJson: 'private-debug', targetLine, tagsJson: '[]' };
@@ -96,12 +117,13 @@ describe('NodesService', () => {
     expect(result.installCommands.native.windows.ws).toContain('riri-agent-installer/windows-amd64');
     expect(result.installCommands.native.windows.ws).toContain('curl.exe');
     // 原生安装改为拉取主控渲染的安装脚本（CMD 与 PowerShell 通用执行命令，拉取 .bat 执行）
-    expect(result.installCommands.native.windows.ws).toContain('downloads/agent-installer?token=');
+    expect(result.installCommands.native.windows.ws).toContain('downloads/agent-installer?mode=ws&platform=windows-amd64&format=bat');
+    expect(result.installCommands.native.windows.ws).toContain(`-H 'X-Agent-Token: ${result.agentToken}'`);
     expect(result.installCommands.native.windows.ws).toContain('format=bat');
     expect(result.installCommands.native.windows.ws).toContain('powershell -NoProfile -ExecutionPolicy Bypass -Command');
     expect(result.installCommands.native.windows.ws).toContain('riri-install.bat');
     expect(result.installCommands.native.macos.ws).toContain('riri-agent-installer/macos-amd64');
-    expect(result.installCommands.native.macos.ws).toContain('downloads/agent-installer?token=');
+    expect(result.installCommands.native.macos.ws).toContain('downloads/agent-installer?mode=ws&platform=macos-amd64');
     expect(result.installCommands.native.linux.ws).toContain('riri-agent-installer/linux-amd64');
     expect(result.installCommands.native.linux.ws).toContain('sudo sh /tmp/riri-agent-install.sh');
     expect(result.installCommands.portable.linux.ws).toContain('RIRICLOUD_DATA_DIR="$HOME/.riri-cloud"');
@@ -111,6 +133,43 @@ describe('NodesService', () => {
     expect(result.installCommands.portable.windows.ws).toContain('riri-agent.exe\' run');
     expect(result.installCommands.portable.windows.http).toContain("$env:MASTER_URL = 'https://panel.example.com'");
     expect(result.windowsUninstallCommand).toContain('uninstall --purge --yes');
+  });
+
+  it.each(['create', 'rotateToken'] as const)('%s 一次性原生安装命令仅用 Header 传递有效凭据并保持免交互', async (operation) => {
+    prisma.node.create.mockResolvedValue(nodeWithLines);
+    prisma.node.findUnique.mockResolvedValue(nodeWithLines);
+    prisma.node.update.mockResolvedValue({ ...nodeWithLines, status: 'OFFLINE' });
+    const result = operation === 'create'
+      ? await service.create({ name: '新节点', serverHost: '203.0.113.10' }, 'admin', 'https://panel.example.com')
+      : await service.rotateToken(baseNode.id, 'admin', 'https://panel.example.com');
+    const write = operation === 'create' ? prisma.node.create : prisma.node.update;
+    const stored = write.mock.calls[0][0].data;
+    expect(decryptSecret(stored.agentToken)).toBe(result.agentToken);
+    expect(stored.agentTokenHash).toBe(hashAgentToken(result.agentToken));
+
+    for (const os of ['linux', 'macos', 'windows'] as const) {
+      for (const mode of ['ws', 'http'] as const) {
+        const command = result.installCommands.native[os][mode];
+        expect(command).not.toMatch(/[?&]token=/i);
+        expect(command).not.toMatch(/Read-Host|read -r|<[^>]+>/);
+        expect(command).toContain(os === 'windows'
+          ? `-H 'X-Agent-Token: ${result.agentToken}'`
+          : `-H "X-Agent-Token: ${result.agentToken}"`);
+        const downloadUrl = command.match(/https:\/\/panel\.example\.com\/api\/v1\/downloads\/agent-installer\?[^'"\s]+/)?.[0];
+        expect(downloadUrl).toBeDefined();
+        const url = new URL(downloadUrl!);
+        expect(url.searchParams.has('token')).toBe(false);
+        expect(url.toString()).not.toContain(result.agentToken);
+        expect(url.searchParams.get('mode')).toBe(mode);
+        expect(url.searchParams.get('platform')).toBe(`${os}-amd64`);
+        if (os === 'windows') {
+          expect(url.searchParams.get('format')).toBe('bat');
+          expect(command).toContain('riri-install.bat');
+        } else {
+          expect(command).toContain('sudo sh /tmp/riri-agent-install.sh');
+        }
+      }
+    }
   });
 
   it('节点上报的架构复用到目标 OS 匹配的命令，不匹配时回退 amd64', async () => {
@@ -144,6 +203,26 @@ describe('NodesService', () => {
     expect(result.node.installCommands.ws).toContain('https://panel.example.com/api/v1/downloads/agent');
     expect(result.node.installCommands.ws).toContain('--master=wss://panel.example.com/ws/agent');
     expect(result.node.pendingVersionConfirm).toBeNull();
+  });
+
+  it.each(['WS', 'HTTP'] as const)('普通节点详情与列表不通过 %s 安装命令重放既有凭据', async (communicationMode) => {
+    const token = '5ed84d79d6af92da12b487f893ecb70c698315f5f3e197f841ab0f1669aa4e327';
+    for (const agentToken of [token, encryptSecret(token)]) {
+      const stored = { ...nodeWithLines, agentToken, agentTokenHash: 'stored-token-hash', communicationMode };
+      prisma.node.findUnique.mockResolvedValue(stored);
+      prisma.node.findMany.mockResolvedValue([stored]);
+      const result = await service.detail(baseNode.id, 'https://panel.example.com');
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(token);
+      expect(serialized).not.toContain('enc:v1:');
+      expect(serialized).not.toContain('stored-token-hash');
+      expect(JSON.stringify(await service.list())).not.toContain(token);
+      expect(result.node.installCommands.dockerWs).toContain('$RIRI_AGENT_TOKEN');
+      expect(result.node.installCommands.native.linux.ws).toContain('X-Agent-Token: $RIRI_AGENT_TOKEN');
+      expect(result.node.installCommands.native.windows.ws).toContain('X-Agent-Token: $Token');
+      expect(result.node.installCommands.portable.macos.http).toContain('AGENT_TOKEN="$RIRI_AGENT_TOKEN"');
+      expect(result.node.installCommands.adminScriptUrl).toContain('/admin/nodes/node-1/install-script');
+    }
   });
 
   it('任务列表版本摘要优先资源版本，自定义 URL 任务回退 payload 版本', async () => {

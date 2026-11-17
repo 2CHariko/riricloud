@@ -4,7 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { AppModule } from './app.module';
+import { acquireMasterMaintenanceLock, registerMaintenanceShutdown } from './common/maintenance-startup';
 import { JwtAuthGuard } from './common/jwt-auth.guard';
 import { configureRequestBodyParser } from './common/request-body-parser';
 import { applySecurityHeaders } from './common/security-headers';
@@ -12,7 +12,10 @@ import { shouldEnableSwagger } from './common/swagger-config';
 import { registerWebStatic } from './static/web-static';
 
 async function bootstrap() {
+  const maintenanceLease = await acquireMasterMaintenanceLock();
+  const { AppModule } = await import('./app.module');
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  registerMaintenanceShutdown(app, maintenanceLease);
   configureRequestBodyParser(app);
   app.useWebSocketAdapter(new WsAdapter(app));
   app.setGlobalPrefix('api/v1', {
@@ -81,4 +84,7 @@ function normalizeCorsOrigin(raw: string): string | undefined {
     return undefined;
   }
 }
-bootstrap();
+bootstrap().catch(() => {
+  Logger.error('Master startup failed; inspect the startup diagnostics and maintenance lock.', 'Bootstrap');
+  process.exitCode = 1;
+});

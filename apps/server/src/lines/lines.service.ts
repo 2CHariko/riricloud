@@ -4,6 +4,7 @@ import type { SubLine } from '../subscription/builders';
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { AgentService } from '../agent-gateway/agent.service';
+import { LineCredentialsService } from '../line-credentials/line-credentials.service';
 import { normalizeInboundParams, protectInboundSecrets, sanitizeInboundParams, revealInboundSecrets } from '../common/inbound';
 import {
   LINE_TYPES,
@@ -142,7 +143,8 @@ export class LinesService {
     private readonly prisma: PrismaService,
     private readonly agentGateway: AgentService,
     @Optional() private readonly settingsService?: SettingsService,
-    @Optional() private readonly certificateBindings?: CertificateBindingsService
+    @Optional() private readonly certificateBindings?: CertificateBindingsService,
+    @Optional() private readonly lineCredentials?: LineCredentialsService
   ) {}
 
   async list(query: QueryLineDto) {
@@ -179,12 +181,14 @@ export class LinesService {
   }
 
   async update(id: string, dto: UpdateLineDto) {
+    await this.lineCredentials?.assertEditable(id, ['type', 'relayMode', 'entryNodeId', 'landingNodeId', 'targetLineId', 'tag'].some(key => Object.hasOwn(dto, key)));
     const current = await this.findRaw(id);
     const prepared = await this.prepare(dto, current);
     const changed = certificateBindingChanged(current, prepared as BindingLine);
     const data = { ...prepared as Prisma.LineUncheckedUpdateInput, lastProbeJson: null, lastLatencyMs: null, lastTestedAt: null, lastTestStatus: null, lastTestMessage: null };
-    const line = this.certificateBindings ? await this.prisma.$transaction(async tx => {
-      if (prepared.certificateId !== current.certificateId || prepared.status === 'ACTIVE' && (current.status !== 'ACTIVE' || changed)) await this.certificateBindings!.assertLine(prepared as BindingLine, tx);
+    const line = this.certificateBindings || this.lineCredentials ? await this.prisma.$transaction(async tx => {
+      await this.lineCredentials?.assertEditable(id, ['type', 'relayMode', 'entryNodeId', 'landingNodeId', 'targetLineId', 'tag'].some(key => Object.hasOwn(dto, key)), tx);
+      if (prepared.certificateId !== current.certificateId || prepared.status === 'ACTIVE' && (current.status !== 'ACTIVE' || changed)) await this.certificateBindings?.assertLine(prepared as BindingLine, tx);
       return tx.line.update({ where: { id }, data, include: lineInclude });
     }) : await this.prisma.line.update({ where: { id }, data, include: lineInclude });
     void this.agentGateway.pushConfigToAll();
@@ -192,12 +196,16 @@ export class LinesService {
   }
 
   async remove(id: string) {
+    await this.lineCredentials?.assertEditable(id, true);
     await this.findRaw(id);
     const referencingLine = await this.prisma.line.findFirst({ where: { targetLineId: id }, select: { id: true } });
     if (referencingLine) {
       throw new BadRequestException('该线路正被其他中继线路作为落地目标引用，请先解除引用后再删除');
     }
-    await this.prisma.line.delete({ where: { id } });
+    if (this.lineCredentials) await this.prisma.$transaction(async tx => {
+      await this.lineCredentials!.assertEditable(id, true, tx);
+      await tx.line.delete({ where: { id } });
+    }); else await this.prisma.line.delete({ where: { id } });
     void this.agentGateway.pushConfigToAll();
     return { deleted: true, id };
   }
@@ -241,6 +249,7 @@ export class LinesService {
   }
 
   async batchStatus(dto: BatchLineStatusDto) {
+    for (const id of dto.ids) await this.lineCredentials?.assertEditable(id);
     if (dto.status === 'ACTIVE') {
       for (const id of dto.ids) {
         const line = await this.findRaw(id);
@@ -256,8 +265,9 @@ export class LinesService {
       }
     }
     const data = { status: dto.status, lastProbeJson: null, lastLatencyMs: null, lastTestStatus: null, lastTestMessage: null, lastTestedAt: null };
-    const result = this.certificateBindings ? await this.prisma.$transaction(async tx => {
-      if (dto.status === 'ACTIVE') for (const line of await tx.line.findMany({ where: { id: { in: dto.ids } } })) await this.certificateBindings!.assertLine(line, tx);
+    const result = this.certificateBindings || this.lineCredentials ? await this.prisma.$transaction(async tx => {
+      for (const id of dto.ids) await this.lineCredentials?.assertEditable(id, false, tx);
+      if (dto.status === 'ACTIVE' && this.certificateBindings) for (const line of await tx.line.findMany({ where: { id: { in: dto.ids } } })) await this.certificateBindings.assertLine(line, tx);
       return tx.line.updateMany({ where: { id: { in: dto.ids } }, data });
     }) : await this.prisma.line.updateMany({ where: { id: { in: dto.ids } }, data });
     void this.agentGateway.pushConfigToAll();

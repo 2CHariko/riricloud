@@ -1,9 +1,10 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsString, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
 export class CreateMirrorSiteDto {
   @IsString()
   @MaxLength(80)
+  @Matches(/\S/, { message: '名称不能为空' })
   name!: string;
 
   @IsString()
@@ -21,71 +22,73 @@ export class CreateMirrorSiteDto {
   allowedOrigins!: string[];
 
   @IsString()
+  @MaxLength(128)
+  @Matches(/\S/, { message: '节点不能为空' })
   nodeId!: string;
 
   @IsIn(['ADMIN', 'SHARE', 'PUBLIC'])
   accessMode!: 'ADMIN' | 'SHARE' | 'PUBLIC';
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsBoolean()
-  @Type(() => Boolean)
   enabled?: boolean;
 
-  @IsOptional()
-  @ValidateIf((value: CreateMirrorSiteDto) => value.accessMode === 'SHARE')
+  @ValidateIf((_object, value) => value !== undefined)
   @IsDateString()
   shareExpiresAt?: string;
 }
 
 export class UpdateMirrorSiteDto {
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @MaxLength(80)
+  @Matches(/\S/, { message: '名称不能为空' })
   name?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @Matches(/^[a-z0-9][a-z0-9-]{2,62}$/)
   slug?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @MaxLength(2048)
   upstreamBaseUrl?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(16)
   @IsString({ each: true })
   allowedOrigins?: string[];
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
+  @MaxLength(128)
+  @Matches(/\S/, { message: '节点不能为空' })
   nodeId?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsIn(['ADMIN', 'SHARE', 'PUBLIC'])
   accessMode?: 'ADMIN' | 'SHARE' | 'PUBLIC';
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsBoolean()
-  @Type(() => Boolean)
   enabled?: boolean;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined && value !== null)
   @IsDateString()
   shareExpiresAt?: string | null;
 }
 
 export class ListMirrorSitesDto {
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @Type(() => Number)
   @IsInt()
   @Min(1)
   page?: number;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @Type(() => Number)
   @IsInt()
   @Min(1)

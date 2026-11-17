@@ -1,14 +1,16 @@
 import { ProbeResourceService } from './probe-resource.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { encryptSecret } from '../common/secret-crypto';
-import { INTERNAL_SPEEDTEST_UUID } from '../common/constants';
 import { safeProbeResult, readLastProbe } from './probe-result';
 import type { ProbeResult } from './probe.types';
 
 function setup() {
   const source = { id: 'source', status: 'ACTIVE', updatedAt: new Date(1), userInfoUsedBytes: null, userInfoTotalBytes: null, userInfoExpireAt: null };
   const node = { id: 'node', subscriptionId: 'source', status: 'ACTIVE', presenceStatus: 'PRESENT', configHash: 'cfg', connectionHash: 'conn', protocolType: 'HYSTERIA2', serverHost: 'example.com', serverPort: 443, paramsJson: encryptSecret('{"password":"real-upstream-secret"}'), subscription: source, updatedAt: new Date(2) };
-  const prisma = { upstreamNode: { findUnique: jest.fn().mockResolvedValue(node), findMany: jest.fn(), updateMany: jest.fn(async (_args: { data: Record<string, unknown> }) => ({ count: 1 })) }, line: { findUnique: jest.fn(), findMany: jest.fn(), updateMany: jest.fn(async (_args: { data: Record<string, unknown> }) => ({ count: 1 })) }, $transaction: jest.fn() };
+  const subscription = { id: 'subscription', status: 'ACTIVE', expireAt: null, trafficLimitBytes: 1000n, trafficUsedBytes: 0n,
+    user: { uuid: 'subscriber-uuid', email: 'probe@example.com', password: 'subscriber-credential', isActive: true, extraLineGrants: [] },
+    plan: { lineMatchMode: 'ALL', lineTagsJson: '[]', lineIdsJson: '[]' } };
+  const prisma = { systemSetting: { findMany: jest.fn().mockResolvedValue([{ key: 'lineSpeedtestUserId', value: 'probe-user' }]) }, subscription: { findUnique: jest.fn().mockResolvedValue(subscription) }, upstreamNode: { findUnique: jest.fn().mockResolvedValue(node), findMany: jest.fn(), updateMany: jest.fn(async (_args: { data: Record<string, unknown> }) => ({ count: 1 })) }, line: { findUnique: jest.fn(), findMany: jest.fn(), updateMany: jest.fn(async (_args: { data: Record<string, unknown> }) => ({ count: 1 })) }, $transaction: jest.fn() };
   prisma.$transaction.mockImplementation(async (callback) => callback(prisma));
   const service = new ProbeResourceService(prisma as unknown as PrismaService);
   return { service, prisma, source, node };
@@ -35,11 +37,11 @@ describe('资源快照与条件写入', () => {
     service.reserve('UPSTREAM_NODE', ['node']);
     expect(await service.persist(snapshot, { ...result(), configHash: snapshot.request.configHash }, new AbortController().signal)).toBe(false);
   });
-  it('托管线路绑定内部探针 UUID，不泄露服务端私钥', async () => {
+  it('托管线路绑定订阅用户 UUID，不泄露服务端私钥', async () => {
     const { service, prisma } = setup();
     prisma.line.findUnique.mockResolvedValue({ id: 'line', status: 'ACTIVE', type: 'DIRECT', protocolType: 'VLESS', paramsJson: JSON.stringify({ tls: { mode: 'reality', reality: { publicKey: 'public', privateKey: 'secret', shortIds: ['1234'] } } }), entryNode: { id: 'entry', serverHost: 'example.com', status: 'OFFLINE' }, entryPort: 443, updatedAt: new Date(2) });
     const snapshot = (await service.snapshot('LINE', 'line', service.reserve('LINE', ['line'])))!;
-    expect(snapshot.request.connection.params.uuid).toBe(INTERNAL_SPEEDTEST_UUID);
+    expect(snapshot.request.connection.params.uuid).toBe('subscriber-uuid');
     expect(JSON.stringify(snapshot.request.connection)).not.toContain('secret');
   });
   it('最终出站更新使线路与桥接拨测失效，旧结果不写回', async () => {

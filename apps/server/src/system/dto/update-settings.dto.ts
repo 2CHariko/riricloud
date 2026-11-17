@@ -366,6 +366,11 @@ export class UpdateSettingsDto {
   @IsOptional()
   lineSpeedtestEnabled?: boolean;
 
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: '自建线路拨测使用的合法订阅账号' })
+  @IsUUID()
+  @IsOptional()
+  lineSpeedtestUserId?: string | null;
+
   @ApiPropertyOptional({ example: 30, minimum: 1, maximum: 1440 })
   @Type(() => Number)
   @IsInt()

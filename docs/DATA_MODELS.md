@@ -940,7 +940,7 @@ model HelpArticle {
 
 `User.trafficLimitBytes`、`trafficUsedBytes`、`expireAt`、`subscriptionToken` 暂时保留为兼容镜像。订阅模块存在时以 `Subscription` 为准，每次订购、升配、管理员修改或 Token 重置在同一事务中同步镜像；旧迁移/旧测试缺少订阅表时沿用原 User 配额路径。
 
-用户流量由在线 Agent 从 Sing-box `experimental.v2ray_api` 使用 `QueryStats(reset=false)` 上报累计值。Master 以 `nodeId + credential` 查询 `TrafficCursor` 计算增量：首次出现计入当前值，累计值上升只计入差额，累计值下降视为内核重启/计数器重置并计入当前值，同时记录告警，累计值相等则不生成流水。Master 解析节点线路时优先选择 ACTIVE 入口线路；节点没有入口线路时，回退到其作为 ACTIVE `RELAY + BLIND_FORWARD` 出口的承载线路。普通用户流水的 `upload/download` 保留物理字节，配额扣减按归属线路的 `trafficRate` 计算 `billedBytes`；没有归属线路时倍率按 `1.0` 处理。协议代理/异构桥接使用固定内部中继凭证，内部凭证只更新游标，不创建 `TrafficLog`，不扣减普通用户或订阅配额。未知普通凭证同样只更新游标，不计费；用户之后恢复时只计算新增流量。订阅存在时，`Subscription.trafficUsedBytes` 是计费与资格判断的真实来源，`User.trafficUsedBytes` 仅作为兼容镜像；未绑定订阅的旧用户继续使用 User 字段。
+用户流量由在线 Agent 从 Sing-box `experimental.v2ray_api` 使用 `QueryStats(reset=false)` 上报累计值。Master 以 `nodeId + credential` 查询 `TrafficCursor` 计算增量：首次出现计入当前值，累计值上升只计入差额，累计值下降视为内核重启/计数器重置并计入当前值，同时记录告警，累计值相等则不生成流水。Master 解析节点线路时优先选择 ACTIVE 入口线路；节点没有入口线路时，回退到其作为 ACTIVE `RELAY + BLIND_FORWARD` 出口的承载线路。普通用户流水的 `upload/download` 保留物理字节，配额扣减按归属线路的 `trafficRate` 计算 `billedBytes`；没有归属线路时倍率按 `1.0` 处理。协议代理/异构桥接使用按源线路和版本隔离、AES-GCM 加密保存的随机中继凭据。上报身份只有同时匹配实际落地节点、入站线路和已登记哈希时才只更新游标，不创建 `TrafficLog`、不重复扣减普通用户或订阅配额；名称前缀本身不能免计费。Master/Mihomo 专用订阅拨测使用指定用户的真实身份并正常计量。未知普通凭证同样只更新游标，不计费；用户之后恢复时只计算新增流量。订阅存在时，`Subscription.trafficUsedBytes` 是计费与资格判断的真实来源，`User.trafficUsedBytes` 仅作为兼容镜像；未绑定订阅的旧用户继续使用 User 字段。
 
 每次账务事务同时提交 `TrafficLog`、`TrafficCursor`、`Subscription.trafficUsedBytes` 和 `User.trafficUsedBytes`。同一节点积压的心跳允许合并为最新快照，用户与订阅配额按批次聚合更新，因而重试和中间样本丢失不会重复计费或丢失累计差额。节点实时遥测与速率聚合独立落库，历史速率桶由低频巡检按保留周期清理，不在每个心跳事务内执行删除。
 
@@ -1270,3 +1270,13 @@ Line 与 UpstreamNode 持有 `lastProbeJson String?`（普通 schemaVersion=2 / 
 公共模块 line-egress 负责校验、密码保留、加密/解密与脱敏；HTTP 不含 TLS、不支持 UDP；SOCKS5 version=5、udpEnabled 默认 false。DIRECT 当前节点、自建双节点中继落地执行，TARGET_LINE 从目标直连继承，UPSTREAM_NODE/EXTERNAL 不允许独立出站。复制重加密并保留设置，副本禁用。PATCH null 清除，省略保持原密文；对象密码省略保留旧密码，关闭认证删除旧凭据。
 
 管理视图显式剥离当前/目标线路及节点关联的 egressProxyJson，仅返回不含密码的 egressProxy/hasPassword 和 effectiveEgress。用户摘要/订阅不交付出站连接。秘密只在实际执行节点配置编译时解密。线路出站变化清除派生拨测摘要，目标线路版本变化使桥接摘要 STALE；配置下发继续复用 WS/HTTP，不新增模型关系、任务表或 Go 协议。
+
+## 15. 线路中继凭据与维护式轮换
+
+新增 LineCredential 与 LineCredentialRotation。凭据按源 Line 和递增 version 唯一，随机 UUID/用户名/密码仅保存在 AES-GCM encryptedPayload 中；uuidHash/nameHash 用于核对节点所属的统计身份。撤销时清除密文并保留指纹，禁止全局静态认证身份。协调器按 lineId 唯一，保存 operationId、源/目标版本、当前及原入口/落地节点和Tag、阶段、预期配置版本、接受与运行确认。配置版本使用 SQLite BIGINT。删除线路级联清理记录。追加迁移只建表，随机凭据由应用短事务初始化，不在SQL中植入密钥。
+
+阶段依次为 STOPPING_ENTRY、APPLYING_LANDING、RESTORING_ENTRY、CONFIRMED；失败为 FAILED，保留 failedStage 及安全错误码。各阶段120秒，重试复用候选版本且重新确认入口停止。配置回执只标记accepted，实际心跳的appliedConfigVersion、kernelRunning及无运行错误才能推进。网络分区只能展示期望停用和未确认状态，不能冒充实际已停止。
+
+拓扑变化记录previousEntryNodeId/previousLandingNodeId及previousEntryTag/previousLandingTag，用于确认旧配置真正撤销；entryTag/landingTag保存当前作用域，不能从已改名的Line反推出旧入站。协调器每次写入以版本/阶段/期限约束避免旧回执覆盖。SystemSetting新增lineSpeedtestUserId，仅保存管理员选择的User.id，不保存额外认证材料。删除或失效账号后拨测安全失败，不自动选替代账号。
+
+landingCredentialVersion持久记录落地已经推进的期望认证版本，初次为null，正常轮换初始为已确认版本，入口停用确认后推进为候选版本。失败重试保留该字段，不重新选择fromVersion；旧拓扑撤除后新落地也不能复装旧材料。该字段与阶段在同一事务更新。

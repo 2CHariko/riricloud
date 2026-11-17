@@ -1,14 +1,18 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, type OnModuleDestroy } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentService, type MirrorStreamHandlers } from '../agent-gateway/agent.service';
 import { RateLimitService } from '../common/rate-limit.service';
 import { assertSafeRemoteUrl } from '../common/safe-remote-fetch';
+import { MirrorCapacity, type MirrorReservation } from './mirror-capacity';
+import { MAX_MIRROR_RESPONSE_BYTES, MirrorResponseStream, MirrorTask } from './mirror-stream';
 import { CreateMirrorSiteDto, UpdateMirrorSiteDto } from './dto/mirror-site.dto';
 
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
-const MAX_RESPONSE_BYTES = 256 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = MAX_MIRROR_RESPONSE_BYTES;
 const PUBLIC_RATE_LIMIT = 60;
 
 type MirrorRecord = {
@@ -43,9 +47,11 @@ type MirrorWriteInput = {
 };
 
 @Injectable()
-export class MirrorService {
+export class MirrorService implements OnModuleDestroy {
   private readonly logger = new Logger(MirrorService.name);
-  private readonly activeTaskIds = new Map<string, Set<string>>();
+  private readonly activeTaskIds = new Map<string, Map<string, () => void>>();
+  private configRevision = 0;
+  private readonly capacity = new MirrorCapacity();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -102,7 +108,6 @@ export class MirrorService {
     const current = await this.findById(id);
     const input = await this.normalizeInput(dto, current);
     if (input.nodeId) await this.requireNode(input.nodeId);
-    this.cancelActiveTasks(current.id);
     const switchingToShare = input.accessMode === 'SHARE' && current.accessMode !== 'SHARE';
     const disablingShare = input.accessMode && input.accessMode !== 'SHARE';
     const share = switchingToShare ? this.newShareToken() : undefined;
@@ -114,14 +119,20 @@ export class MirrorService {
         ...(share ? { shareTokenHash: share.hash, shareRotatedAt: new Date() } : {})
       },
       include: { node: { select: { id: true, name: true, status: true, communicationMode: true, capabilitiesJson: true } } }
+    }).catch((error: unknown) => {
+      if ((error as { code?: string }).code === 'P2002') throw new ConflictException('镜像 slug 已存在');
+      throw error;
     });
+    this.configRevision += 1;
+    this.cancelActiveTasks(current.id);
     return { mirror: this.sanitize(site as MirrorRecord), ...(share ? { shareToken: share.token } : {}) };
   }
 
   async remove(id: string) {
     await this.findById(id);
-    this.cancelActiveTasks(id);
     await this.prisma.mirrorSite.delete({ where: { id } });
+    this.configRevision += 1;
+    this.cancelActiveTasks(id);
     return { deleted: true, id };
   }
 
@@ -130,116 +141,101 @@ export class MirrorService {
     if (site.accessMode !== 'SHARE') throw new BadRequestException('只有 SHARE 模式可以轮换分享 Token');
     const share = this.newShareToken();
     await this.prisma.mirrorSite.update({ where: { id }, data: { shareTokenHash: share.hash, shareRotatedAt: new Date() } });
+    this.configRevision += 1;
+    this.cancelActiveTasks(id);
     return { mirrorId: id, shareToken: share.token };
   }
 
-  async test(id: string) {
+  async test(id: string, user?: { id?: string; role?: string }, ip?: string) {
+    const reservation = this.capacity.reserve();
+    try { return await this.testReserved(id, reservation, user, ip); }
+    catch (error) { reservation.abandon(); throw error; }
+  }
+
+  private async testReserved(id: string, reservation: MirrorReservation, user?: { id?: string; role?: string }, ip?: string) {
     const site = await this.findById(id);
     this.ensureNodeAvailable(site);
     const taskId = randomUUID();
+    reservation.bindNode(site.nodeId);
+    this.enforceRateLimit(site.id, ip, user?.id);
+    const payload = this.buildRequest(site, 'HEAD', '/', {}, taskId);
     const startedAt = Date.now();
     return new Promise<Record<string, unknown>>((resolve) => {
-      let settled = false;
-      let cancel: () => void = () => undefined;
-      const finish = (result: Record<string, unknown>) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        cancel();
-        resolve({ ...result, latencyMs: Date.now() - startedAt, nodeId: site.nodeId });
-      };
+      let metadata: Record<string, unknown> = {};
+      const task = new MirrorTask(30_000, () => this.agent.cancelMirrorTask(taskId), (outcome) => {
+        this.untrackTask(site.id, taskId);
+        reservation.finish();
+        resolve({ ...metadata, ...outcome, latencyMs: Date.now() - startedAt, nodeId: site.nodeId });
+      });
       const handlers: MirrorStreamHandlers = {
-        onHeaders: (headers) => finish({ success: true, statusCode: headers.statusCode, finalHost: headers.finalHost }),
+        onHeaders: (headers) => { metadata = { finalHost: headers.finalHost }; task.finish({ success: true, statusCode: headers.statusCode }); },
         onChunk: () => undefined,
-        onEnd: (end) => finish({ success: end.success, bytes: end.bytes }),
-        onError: (error) => finish({ success: false, code: error.code, message: error.message })
+        onEnd: (end) => { metadata = { bytes: end.bytes }; task.finish({ success: end.success }); },
+        onError: (error) => task.finish({ success: false, code: error.code, message: '镜像测试未完成' })
       };
-      const timeout = setTimeout(() => finish({ success: false, code: 'TIMEOUT', message: '镜像测试超时' }), 30_000);
-      void this.agent.startMirrorTask(site.nodeId, this.buildRequest(site, 'HEAD', '/', {}, taskId), handlers)
-        .then((stop) => { cancel = stop; if (settled) stop(); })
-        .catch((error: unknown) => finish({ success: false, code: 'START_FAILED', message: error instanceof Error ? error.message : '无法启动镜像测试' }));
+      this.trackTask(site.id, taskId, () => task.finish({ success: false, code: 'REVOKED' }));
+      void this.agent.startMirrorTask(site.nodeId, payload, handlers)
+        .then((stop) => task.attachStop(stop))
+        .catch(() => task.finish({ success: false, code: 'START_FAILED', message: '无法启动镜像测试' }))
+        .finally(() => reservation.started());
     });
   }
 
-  async proxy(siteSlug: string, shareToken: string | undefined, request: Request, response: Response, user?: { role?: string }) {
-    const site = shareToken ? await this.findByShareToken(shareToken) : await this.findBySlug(siteSlug);
+  async proxy(siteSlug: string, shareToken: string | undefined, request: Request, response: Response, user?: { id?: string; role?: string }) {
+    const reservation = this.capacity.reserve();
+    try { await this.proxyReserved(siteSlug, shareToken, request, response, reservation, user); }
+    catch (error) { reservation.abandon(); throw error; }
+  }
+
+  private async proxyReserved(siteSlug: string, shareToken: string | undefined, request: Request, response: Response, reservation: MirrorReservation, user?: { id?: string; role?: string }) {
+    // 异步读取期间发生撤销时重读，避免在撤销之后用旧配置启动新流。
+    let revision: number;
+    let site: MirrorRecord;
+    do {
+      revision = this.configRevision;
+      site = shareToken ? await this.findByShareToken(shareToken) : await this.findBySlug(siteSlug);
+    } while (revision !== this.configRevision);
     this.checkAccess(site, shareToken, user);
     if (!site.enabled && user?.role !== 'ADMIN') throw new NotFoundException('镜像站不存在');
     if (!['GET', 'HEAD'].includes(request.method)) throw new BadRequestException('镜像站只支持 GET 和 HEAD');
-    if (site.accessMode !== 'ADMIN') {
-      const ip = request.ip || request.socket.remoteAddress || 'unknown';
-      if (!this.rateLimit.consume(`${site.id}:${ip}`, PUBLIC_RATE_LIMIT, 60_000)) throw new ForbiddenException('镜像请求过于频繁');
-    }
+    const ip = request.ip || request.socket.remoteAddress || 'unknown';
+    this.enforceRateLimit(site.id, ip, user?.id);
     this.ensureNodeAvailable(site);
+    reservation.bindNode(site.nodeId);
     const taskId = randomUUID();
     const startedAt = Date.now();
-    let headersSent = false;
-    let ended = false;
-    let finalHost = 'unknown';
-    let bytesSent = 0;
-    let cancel: () => void = () => undefined;
     const requestHeaders = this.forwardRequestHeaders(request);
-    const path = typeof request.params?.path === 'string' ? request.params.path : '';
+    const path = Array.isArray(request.params?.path) ? request.params.path.join('/') : request.params?.path ?? '';
     const target = this.buildTargetUrl(site, path, request.originalUrl.includes('?') ? request.originalUrl.slice(request.originalUrl.indexOf('?')) : '');
-    const finish = (success: boolean, statusCode?: number, errorCode?: string) => {
+    const stream = new MirrorResponseStream(response, request.method, (outcome) => task.finish(outcome));
+    const remaining = site.accessMode === 'SHARE' && site.shareExpiresAt ? site.shareExpiresAt.getTime() - Date.now() : REQUEST_TIMEOUT_MS;
+    const task = new MirrorTask(Math.min(REQUEST_TIMEOUT_MS, Math.max(0, remaining)), () => this.agent.cancelMirrorTask(taskId), (outcome) => {
       this.untrackTask(site.id, taskId);
-      void this.prisma.mirrorSite.update({ where: { id: site.id }, data: { lastRequestAt: new Date(), lastStatusCode: statusCode ?? null, lastErrorCode: errorCode ?? (success ? null : 'UPSTREAM_ERROR') } }).catch(() => undefined);
-      this.agent.cancelMirrorTask(taskId);
-      this.loggerRequest(site, statusCode, errorCode, Date.now() - startedAt, finalHost, bytesSent);
-    };
-    const handlers: MirrorStreamHandlers = {
-      onHeaders: (headers) => {
-        if (ended) return;
-        headersSent = true;
-        finalHost = headers.finalHost;
-        response.statusCode = headers.statusCode;
-        for (const [key, value] of Object.entries(headers.headers)) response.setHeader(key, value);
-      },
-      onChunk: (chunk) => {
-        if (!ended && !response.destroyed) {
-          bytesSent += chunk.length;
-          response.write(chunk);
-        }
-      },
-      onEnd: (end) => {
-        if (ended) return;
-        bytesSent = end.bytes;
-        ended = true;
-        if (!headersSent) response.statusCode = end.success ? 200 : 502;
-        response.end();
-        finish(end.success, response.statusCode, end.success ? undefined : 'UPSTREAM_ERROR');
-      },
-      onError: (error) => {
-        if (ended) return;
-        ended = true;
-        if (headersSent || response.headersSent) response.destroy();
-        else response.status(502).json({ message: error.message, code: error.code });
-        finish(false, headersSent ? response.statusCode : 502, error.code);
-      }
-    };
-    const timeout = setTimeout(() => {
-      if (!ended) {
-        ended = true;
-        cancel();
-        if (!response.headersSent) response.status(504).json({ message: '镜像请求超时', code: 'TIMEOUT' });
-        else response.destroy();
-        finish(false, 504, 'TIMEOUT');
-      }
-    }, REQUEST_TIMEOUT_MS);
-    response.on('close', () => {
-      clearTimeout(timeout);
-      if (!ended) { ended = true; cancel(); finish(false, response.statusCode, 'CLIENT_DISCONNECTED'); }
-    });
+      reservation.finish();
+      stream.close(outcome);
+      void this.prisma.mirrorSite.update({ where: { id: site.id }, data: { lastRequestAt: new Date(), lastStatusCode: outcome.statusCode ?? null, lastErrorCode: outcome.code ?? (outcome.success ? null : 'UPSTREAM_ERROR') } }).catch(() => undefined);
+      this.loggerRequest(site, outcome.statusCode, outcome.code, Date.now() - startedAt, stream.finalHost, stream.bytesSent);
+    }, remaining < REQUEST_TIMEOUT_MS ? 'TOKEN_EXPIRED' : 'TIMEOUT');
+    this.trackTask(site.id, taskId, () => task.finish({ success: false, statusCode: 403, code: 'REVOKED' }));
+    if (response.destroyed) { task.finish({ success: false, code: 'CLIENT_DISCONNECTED' }); reservation.started(); return; }
     try {
-      const stop = await this.agent.startMirrorTask(site.nodeId, { taskId, method: request.method as 'GET' | 'HEAD', url: target, allowedHosts: this.parseOrigins(site.allowedOriginsJson), requestHeaders, timeoutMs: REQUEST_TIMEOUT_MS, maxBytes: MAX_RESPONSE_BYTES }, handlers);
-      cancel = stop;
-      this.trackTask(site.id, taskId);
-      if (ended) stop();
-    } catch (error) {
-      clearTimeout(timeout);
-      if (!response.headersSent) throw error;
-      response.destroy();
-    }
+      const stop = await this.agent.startMirrorTask(site.nodeId, { taskId, method: request.method as 'GET' | 'HEAD', url: target, allowedHosts: this.parseOrigins(site.allowedOriginsJson), requestHeaders, timeoutMs: REQUEST_TIMEOUT_MS, maxBytes: MAX_RESPONSE_BYTES }, stream.handlers);
+      task.attachStop(stop);
+    } catch {
+      task.finish({ success: false, statusCode: 502, code: 'START_FAILED', message: '无法启动镜像请求' });
+    } finally { reservation.started(); }
+  }
+
+  onModuleDestroy() {
+    this.capacity.close();
+    for (const siteId of [...this.activeTaskIds.keys()]) this.cancelActiveTasks(siteId);
+  }
+
+  private enforceRateLimit(siteId: string, ip?: string, userId?: string) {
+    const keys = ['mirror:site:' + siteId];
+    if (ip) keys.push('mirror:ip:' + ip, siteId + ':' + ip);
+    if (userId) keys.push('mirror:user:' + userId);
+    if (keys.some((key) => !this.rateLimit.consume(key, PUBLIC_RATE_LIMIT, 60_000))) throw new ForbiddenException('镜像请求过于频繁');
   }
 
   private loggerRequest(site: MirrorRecord, statusCode: number | undefined, errorCode: string | undefined, durationMs: number, finalHost: string, bytes: number) {
@@ -248,9 +244,9 @@ export class MirrorService {
     else this.logger.log(`mirror request completed ${fields}`);
   }
 
-  private trackTask(siteId: string, taskId: string) {
-    const tasks = this.activeTaskIds.get(siteId) ?? new Set<string>();
-    tasks.add(taskId);
+  private trackTask(siteId: string, taskId: string, cancel: () => void) {
+    const tasks = this.activeTaskIds.get(siteId) ?? new Map<string, () => void>();
+    tasks.set(taskId, cancel);
     this.activeTaskIds.set(siteId, tasks);
   }
 
@@ -264,11 +260,13 @@ export class MirrorService {
   private cancelActiveTasks(siteId: string) {
     const tasks = this.activeTaskIds.get(siteId);
     if (!tasks) return;
-    for (const taskId of tasks) this.agent.cancelMirrorTask(taskId);
+    for (const cancel of [...tasks.values()]) cancel();
     this.activeTaskIds.delete(siteId);
   }
 
   private async normalizeInput(dto: CreateMirrorSiteDto | UpdateMirrorSiteDto, current?: MirrorRecord): Promise<MirrorWriteInput> {
+    const candidate = current ? plainToInstance(UpdateMirrorSiteDto, dto) : plainToInstance(CreateMirrorSiteDto, dto);
+    if (validateSync(candidate, { whitelist: true, forbidNonWhitelisted: true, forbidUnknownValues: true }).length) throw new BadRequestException('镜像站参数无效');
     const result: MirrorWriteInput = {};
     if ('name' in dto && dto.name !== undefined) { const name = dto.name.trim(); if (!name) throw new BadRequestException('镜像名称不能为空'); result.name = name; }
     if ('slug' in dto && dto.slug !== undefined) result.slug = dto.slug.trim().toLowerCase();
@@ -280,13 +278,17 @@ export class MirrorService {
     if ('shareExpiresAt' in dto && dto.shareExpiresAt !== undefined) result.shareExpiresAt = dto.shareExpiresAt ? new Date(dto.shareExpiresAt) : null;
     const upstream = result.upstreamBaseUrl ?? current?.upstreamBaseUrl;
     if (upstream) {
-      await assertSafeRemoteUrl(upstream, true);
+      try { await assertSafeRemoteUrl(upstream, true); }
+      catch (error) {
+        const message = error instanceof Error && error.message === 'remote URL resolves to a private or metadata address' ? error.message : '上游 URL 公网或 DNS 校验失败';
+        throw new BadRequestException(message);
+      }
       const parsed = new URL(upstream);
       const origins = result.allowedOriginsJson ? this.parseOrigins(result.allowedOriginsJson) : current ? this.parseOrigins(current.allowedOriginsJson) : [parsed.hostname];
       if (!origins.includes(parsed.hostname.toLowerCase())) throw new BadRequestException('允许域名必须包含上游基址域名');
     }
     if (!current && (!result.name || !result.slug || !result.upstreamBaseUrl || !result.allowedOriginsJson || !result.nodeId || !result.accessMode)) throw new BadRequestException('镜像站参数不完整');
-    if (result.accessMode === 'SHARE' && result.shareExpiresAt && new Date(result.shareExpiresAt as Date).getTime() <= Date.now()) throw new BadRequestException('分享 Token 过期时间必须在未来');
+    if ((result.accessMode ?? current?.accessMode) === 'SHARE' && result.shareExpiresAt && result.shareExpiresAt.getTime() <= Date.now()) throw new BadRequestException('分享 Token 过期时间必须在未来');
     return result;
   }
 
@@ -301,17 +303,23 @@ export class MirrorService {
 
   private normalizeOrigins(origins: string[]): string[] {
     const result = [...new Set(origins.map((origin) => origin.trim().toLowerCase().replace(/^\*\./, '')).filter(Boolean))];
-    if (!result.length || result.some((origin) => !/^(?:[a-z0-9-]+\.)+[a-z]{2,63}$/.test(origin))) throw new BadRequestException('允许域名格式无效');
+    if (!result.length || result.some((origin) => origin.length > 253 || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(origin))) throw new BadRequestException('允许域名格式无效');
     return result;
   }
 
   private buildTargetUrl(site: MirrorRecord, path: string, query: string): string {
-    if (path.includes('\0') || path.includes('\\')) throw new BadRequestException('镜像路径无效');
-    if (path.split('/').some((segment) => segment === '.' || segment === '..')) throw new BadRequestException('镜像路径无效');
-    const base = site.upstreamBaseUrl.endsWith('/') ? site.upstreamBaseUrl : `${site.upstreamBaseUrl}/`;
-    const safePath = path.replace(/^\/+/, '');
-    const target = new URL(safePath, base);
-    if (target.hostname !== new URL(site.upstreamBaseUrl).hostname) throw new BadRequestException('镜像路径不能切换主机');
+    let decoded = path;
+    for (let depth = 0; depth < 8; depth += 1) {
+      if (Array.from(decoded).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 || character === '\\') || decoded.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(decoded) || decoded.split('/').some((part) => part === '.' || part === '..')) throw new BadRequestException('镜像路径无效');
+      let next: string;
+      try { next = decodeURIComponent(decoded.replace(/%(?![0-9a-f]{2})/gi, '%25')); } catch { throw new BadRequestException('镜像路径编码无效'); }
+      if (next === decoded) break;
+      if (depth === 7) throw new BadRequestException('镜像路径编码过深');
+      decoded = next;
+    }
+    const target = new URL(site.upstreamBaseUrl);
+    const basePath = target.pathname.endsWith('/') ? target.pathname : target.pathname + '/';
+    target.pathname = basePath + path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
     target.search = query || '';
     return target.toString();
   }
@@ -322,14 +330,17 @@ export class MirrorService {
 
   private forwardRequestHeaders(request: Request): Record<string, string> {
     const result: Record<string, string> = {};
+    const nominated = new Set((request.headers.connection ?? '').toLowerCase().split(',').map((part) => part.trim()));
     for (const key of ['range', 'if-none-match', 'if-modified-since', 'if-range', 'accept', 'accept-encoding']) {
       const value = request.headers[key];
-      if (typeof value === 'string') result[key] = value.slice(0, 4096);
+      if (typeof value === 'string' && !nominated.has(key)) result[key] = value.slice(0, 4096);
     }
     return result;
   }
 
   private checkAccess(site: MirrorRecord, token: string | undefined, user?: { role?: string }) {
+    if (!['ADMIN', 'SHARE', 'PUBLIC'].includes(site.accessMode)) throw new ForbiddenException('镜像访问模式无效');
+    if (token && (site.accessMode !== 'SHARE' || site.shareTokenHash !== this.hashToken(token))) throw new ForbiddenException('分享地址已失效');
     if (site.accessMode === 'ADMIN' && user?.role !== 'ADMIN') throw new ForbiddenException('需要管理员权限');
     if (site.accessMode === 'SHARE' && (!token || !site.shareTokenHash || site.shareExpiresAt && site.shareExpiresAt.getTime() <= Date.now())) throw new ForbiddenException('分享地址已失效');
   }

@@ -325,6 +325,8 @@ model Line {
   relaySources    Line[]          @relation("LineRelayTarget")
   certificate     Certificate?    @relation(fields: [certificateId], references: [id], onDelete: SetNull)
   trafficLogs     TrafficLog[]
+  relayCredentials LineCredential[]
+  credentialRotation LineCredentialRotation?
   extraLineGrants UserLineGrant[]
   upstreamNodeId  String?
   upstreamNode    UpstreamNode?   @relation("LineUpstreamNode", fields: [upstreamNodeId], references: [id], onDelete: SetNull)
@@ -338,6 +340,58 @@ model Line {
   @@index([isPublic])
   @@index([sortOrder])
   @@index([upstreamNodeId])
+}
+
+
+// 中继凭据只保存密文；撤销后保留统计身份指纹，清除认证材料。
+model LineCredential {
+  id                String   @id @default(uuid())
+  lineId            String
+  version           Int
+  encryptedPayload  String?
+  uuidHash          String   @unique
+  nameHash          String   @unique
+  status            String   @default("PENDING") // PENDING | ACTIVE | REVOKED
+  createdAt         DateTime @default(now())
+  activatedAt       DateTime?
+  revokedAt         DateTime?
+  line              Line     @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  @@unique([lineId, version])
+  @@index([lineId, status])
+}
+
+// 每条源线路一个持久协调器；expectedConfigVersion 只接受实际生成过的阶段配置。
+model LineCredentialRotation {
+  id                    String   @id @default(uuid())
+  operationId           String   @unique
+  lineId                String   @unique
+  fromVersion           Int?
+  targetVersion         Int
+  landingCredentialVersion Int?
+  stage                 String   @default("STOPPING_ENTRY")
+  failedStage           String?
+  errorCode             String?
+  entryNodeId           String
+  landingNodeId         String
+  targetLineId          String?
+  previousEntryNodeId   String?
+  previousLandingNodeId String?
+  entryTag              String
+  landingTag            String
+  previousEntryTag      String?
+  previousLandingTag    String?
+  expectedNodeId        String?
+  expectedConfigVersion BigInt?
+  accepted              Boolean  @default(false)
+  entryStopConfirmed    Boolean  @default(false)
+  requestedById         String?
+  deadlineAt            DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  confirmedAt           DateTime?
+  line                  Line     @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  @@index([stage, deadlineAt])
+  @@index([expectedNodeId, expectedConfigVersion])
 }
 
 model Certificate {

@@ -3,6 +3,7 @@ package mirror
 import (
 	"context"
 	"net"
+	"net/http"
 	"testing"
 )
 
@@ -34,3 +35,19 @@ func TestExecutorRejectsUnsupportedMethodBeforeNetwork(t *testing.T) {
 }
 
 func parseIP(raw string) net.IP { return net.ParseIP(raw) }
+
+func TestBlockedIPRejectsReservedAndMulticast(t *testing.T) {
+	for _, raw := range []string{"192.0.0.1", "192.0.2.1", "198.18.0.1", "198.51.100.1", "203.0.113.1", "ff02::1", "2001:db8::1", "64:ff9b::a00:1", "2002:7f00:1::1"} {
+		if !blockedIP(net.ParseIP(raw)) {
+			t.Errorf("reserved address permitted: %s", raw)
+		}
+	}
+}
+
+func TestSafeResponseHeadersStripsConnectionNominations(t *testing.T) {
+	headers := http.Header{"Content-Type": {"application/octet-stream"}, "Etag": {"secret-hop"}, "Connection": {"ETag"}, "Set-Cookie": {"session=secret"}}
+	got := safeResponseHeaders(headers)
+	if got["content-type"] != "application/octet-stream" || got["etag"] != "" || got["set-cookie"] != "" {
+		t.Fatalf("unsafe response headers: %v", got)
+	}
+}

@@ -63,7 +63,7 @@
     "gate:server": "pnpm --filter @riricloud/server exec tsc --noEmit && pnpm --filter @riricloud/server lint && pnpm --filter @riricloud/server test",
     "gate:web": "pnpm --filter @riricloud/web test && pnpm --filter @riricloud/web lint && pnpm --filter @riricloud/web build",
     "gate:agent": "bash scripts/gate-agent.sh",
-    "gate": "pnpm gate:version && pnpm gate:docs && pnpm gate:i18n && pnpm gate:server && pnpm gate:web && pnpm gate:agent",
+    "gate": "pnpm gate:version && pnpm gate:docs && pnpm gate:i18n && pnpm gate:server && pnpm gate:web && pnpm gate:agent && pnpm test:scripts && pnpm test:maintenance",
     "i18n:report": "node scripts/i18n-governance.mjs report",
     "plan:new": "node scripts/doc-governance.mjs new",
     "plan:archive": "node scripts/doc-governance.mjs archive",
@@ -73,7 +73,13 @@
     "docker:export": "bash scripts/docker-build.sh export",
     "docker:tags": "bash scripts/docker-build.sh tags",
     "docker:up": "bash scripts/docker-build.sh up",
-    "docker:down": "bash scripts/docker-build.sh down"
+    "docker:down": "bash scripts/docker-build.sh down",
+    "test:scripts": "node scripts/run-script-tests.mjs",
+    "test:native": "node scripts/run-native-client-tests.mjs",
+    "backup:create": "pnpm --filter @riricloud/server backup:create",
+    "backup:verify": "pnpm --filter @riricloud/server backup:verify",
+    "backup:restore": "pnpm --filter @riricloud/server backup:restore",
+    "test:maintenance": "pnpm --filter @riricloud/server test:maintenance"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.0",

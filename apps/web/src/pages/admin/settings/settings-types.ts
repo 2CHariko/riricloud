@@ -46,6 +46,7 @@ export interface SystemSettings {
   jwtSessionDays: number;
   customCss: string;
   customHeadHtml: string;
+  lineSpeedtestUserId: string | null;
   lineSpeedtestEnabled: boolean;
   lineSpeedtestIntervalMins: number;
   lineSpeedtestTargetUrl: string;

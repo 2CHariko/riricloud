@@ -48,7 +48,8 @@ test('启动脚本调用隔离配置且不再删除其他 watcher 的编译状�
   const script = await readFile(resolve('scripts/dev-e2e.sh'), 'utf8');
   execFileSync('bash', ['-n', resolve('scripts/dev-e2e.sh').replaceAll('\\', '/')]);
   assert.match(script, /dev-e2e-server-build\.mjs/);
-  assert.match(script, /nest start --watch --path "\$SERVER_TSCONFIG_ARG"/);
+  assert.match(script, /nest build --path "\$SERVER_TSCONFIG_ARG"/);
+  assert.ok(script.includes('node apps/server/prisma/maintenance-start.js --build-dir'));
   assert.match(script, /SERVER_TSCONFIG_ARG="\.cache\//);
   assert.match(script, /e2e_server_start_state/);
   assert.doesNotMatch(script, /rm -f apps\/server\/\*\.tsbuildinfo/);

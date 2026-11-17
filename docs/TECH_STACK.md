@@ -147,3 +147,13 @@ Docker 与发行包中的 Sing-box 使用 `with_v2ray_api,with_utls,with_quic,wi
 内部严格请求拒绝非预期 200/500/302、超时/取消及不可信/主机名不匹配的目标证书；测试 CA 下的严格 HTTPS 通过。普通 URLTest 单独以真实 HEAD/鉴权/超时/取消/HTTPS 不可信证书与原域名传递用例验收，不承诺严格状态。WSL2 Debian 13 amd64 系统 Node20/Node22 的既有原生严格、HTTP/中继、Docker 和 Master 包验证仍保留；Linux arm64/macOS 只有资产校验，不宣称本次原生执行。
 
 固定 Mihomo 启动时 listener 监听早于内部 Running 状态，版本 API/TCP 不足以判定数据面就绪；两种执行路径共享独立回环 HTTP 204 自检屏障（DIRECT 仅属于该自检 listener），不访问业务目标、不计业务延迟。业务 listener 固定代理无 DIRECT 兜底，日常结果来自指定 proxy URLTest；自检共享连接槽/启动预算并在 finally 回收。
+
+### 6.2 原生验收与维护工具
+
+现有 Node.js 内置测试器负责 Web 自动发现与工程脚本回归；维护CLI使用现有 Prisma 客户端、Node.js fs/crypto，测试夹具使用 Node22 内置SQLite，不新增运行依赖。独立原生CI在五个宿主平台编译仓库定制Sing-box并运行固定Mihomo，通过受控目标和真实协议验证；资源缺失、错误哈希与未执行均不能计通过。普通本地gate运行六类基础门禁、工程脚本和备份恢复回归，native保持独立；不包含视觉测试。
+
+### 6.3 Go 标准库安全补丁基线
+
+Agent最低Go补丁基线为1.26.11，两个Dockerfile的Sing-box/Agent构建阶段统一锁定官方1.26.11-bookworm及相同多架构digest，CI的编译和安全扫描均读取go.mod。本轮只更新工具链补丁，不改第三方依赖或Sing-box/Cronet版本。旧Windows便携Go1.27.0仍可能被dev-env选中；本轮验证显式使用独立校验安装的Go1.26.11，系统工具链不被覆盖。源码govulncheck以可达路径为门禁，模块/二进制保守告警单独留证，不能称为完全没有第三方advisory。
+
+自建线路的专用账号拨测另要求逐用户计量：SS 共享模式在执行前返回明确不可计量结果，SS2022 multi-user 继续由真实账号派生认证；这不改变外部资源的客户端编译能力。原生验收另外使用 VMess 对两种自建中继做真实 entry/landing 两进程测试，配置来自生产网关和订阅编译器，不以单跳认证替代路由证据。

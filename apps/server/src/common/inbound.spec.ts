@@ -1,11 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
-import { createPrivateKey, createPublicKey } from 'node:crypto';
+import { createPrivateKey, createPublicKey, randomBytes, randomUUID } from 'node:crypto';
 import { bindManagedConnection } from '../subscription/compilers/managed-connection';
 import { compileMihomoProxy } from '../subscription/compilers/mihomo-proxy';
 import { compileSingboxClient } from '../subscription/compilers/singbox-client';
 import {
   buildClientTls,
   formatAuthUserName,
+  formatInboundUserName,
+  parseTrafficCredential,
   buildClientTransport,
   buildProxyPoolWhitelistRules,
   buildShadowsocksClientPassword,
@@ -32,6 +34,56 @@ const users = [
   { uuid: 'uuid-1', email: 'a@x.com', credential: 'pwd-1' },
   { uuid: 'uuid-2', email: 'b@x.com', credential: 'pwd-2' }
 ];
+
+
+describe('入站认证身份的线路归属', () => {
+  const relay = { uuid: randomUUID(), email: 'relay-' + randomBytes(24).toString('hex'), credential: randomBytes(32).toString('base64url') };
+  const identities = [
+    { email: 'subscriber@example.com', uuid: 'subscriber-uuid' },
+    { uuid: 'subscriber-uuid' },
+    relay,
+    { uuid: relay.uuid },
+    // 旧固定值只作为负例，不能因历史名称而豁免线路标识或登录名编码。
+    { email: '__riricloud_relay_transit__' },
+    { uuid: '00000000-0000-4000-8000-000000000002' },
+    { email: '__riricloud_speedtest_probe__' },
+    { uuid: '00000000-0000-4000-8000-000000000003' }
+  ];
+
+  it.each(identities.map((identity, index) => [index, identity] as const))('所有身份都绑定实际入站线路：案例 %i', (_index, identity) => {
+    const base = identity.email || identity.uuid;
+    for (const lineId of ['relay-source', 'actual-landing']) {
+      const name = formatInboundUserName(identity, lineId);
+      expect(name).toBe(base + '::' + lineId);
+      expect(name).not.toBe(base);
+      expect(parseTrafficCredential(name)).toEqual({ rawCredential: base, lineId });
+      const login = formatAuthUserName(identity, lineId);
+      expect(login).toBe('riri_login_' + Buffer.from(base + '::' + lineId).toString('base64url'));
+      expect(login).not.toContain(':');
+      expect(parseTrafficCredential(login)).toEqual({ rawCredential: base, lineId });
+    }
+    expect(formatAuthUserName(identity, 'relay-source')).not.toBe(formatAuthUserName(identity, 'actual-landing'));
+  });
+
+  it('无线路或无身份的原有格式保持兼容', () => {
+    expect(formatInboundUserName({ email: users[0].email })).toBe(users[0].email);
+    expect(formatAuthUserName({ uuid: users[0].uuid })).toBe(users[0].uuid);
+    expect(formatInboundUserName({}, 'line-1')).toBe('');
+    expect(formatAuthUserName({}, 'line-1')).toBe('');
+  });
+
+  it.each(['NAIVE', 'MIXED', 'HTTP', 'SOCKS'] as const)('%s 使用实际入站线路的冒号安全登录名', (type) => {
+    const inbound = buildServerInbound({
+      type, tag: 'landing', listen: '0.0.0.0', port: 443,
+      params: { usersEnabled: true, tls: { enabled: true, mode: 'tls', certificatePath: '/certificate.pem', keyPath: '/key.pem' } },
+      users: [relay], lineId: 'actual-landing'
+    });
+    const login = formatAuthUserName(relay, 'actual-landing');
+    expect(inbound.users).toEqual([{ username: login, password: relay.credential }]);
+    expect(login).not.toBe(formatAuthUserName(relay, 'relay-source'));
+    expect(parseTrafficCredential(login)).toEqual({ rawCredential: relay.email, lineId: 'actual-landing' });
+  });
+});
 
 describe('generateRealityKeypair', () => {
   it('生成 32 字节裸密钥的 base64url（sing-box 内核可解析，非 PEM）', () => {

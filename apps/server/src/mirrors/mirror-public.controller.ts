@@ -11,7 +11,28 @@ export class MirrorPublicController {
   constructor(private readonly mirrors: MirrorService) {}
 
   private user(request: Request) {
-    return (request as Request & { user?: { role?: string } }).user;
+    return (request as Request & { user?: { id?: string; role?: string } }).user;
+  }
+
+  // 静态分享前缀必须先于 slug 通配路由登记，避免 Token 被当作普通路径。
+  @Get('share/:token')
+  share(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
+    return this.mirrors.proxy('', token, request, response, this.user(request));
+  }
+
+  @Head('share/:token')
+  shareHead(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
+    return this.mirrors.proxy('', token, request, response, this.user(request));
+  }
+
+  @Get('share/:token/*path')
+  sharePath(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
+    return this.mirrors.proxy('', token, request, response, this.user(request));
+  }
+
+  @Head('share/:token/*path')
+  sharePathHead(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
+    return this.mirrors.proxy('', token, request, response, this.user(request));
   }
 
   @Get(':slug')
@@ -32,25 +53,5 @@ export class MirrorPublicController {
   @Head(':slug/*path')
   headPath(@Param('slug') slug: string, @Req() request: Request, @Res() response: Response) {
     return this.mirrors.proxy(slug, undefined, request, response, this.user(request));
-  }
-
-  @Get('share/:token')
-  share(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
-    return this.mirrors.proxy('', token, request, response, this.user(request));
-  }
-
-  @Head('share/:token')
-  shareHead(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
-    return this.mirrors.proxy('', token, request, response, this.user(request));
-  }
-
-  @Get('share/:token/*path')
-  sharePath(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
-    return this.mirrors.proxy('', token, request, response, this.user(request));
-  }
-
-  @Head('share/:token/*path')
-  sharePathHead(@Param('token') token: string, @Req() request: Request, @Res() response: Response) {
-    return this.mirrors.proxy('', token, request, response, this.user(request));
   }
 }

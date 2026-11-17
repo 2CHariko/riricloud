@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -198,6 +199,15 @@ type logReportData struct {
 	Logs []agentLogItem `json:"logs"`
 }
 
+type mirrorWorker struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+type mirrorExecutor interface {
+	Do(context.Context, mirror.Request, func(mirror.Headers) error, func([]byte) error) (int64, error)
+}
+
 // Client 长连接客户端：负责连接、鉴权、心跳与配置接收
 type Client struct {
 	masterURL        string
@@ -211,9 +221,9 @@ type Client struct {
 	traffic          *trafficstats.Collector
 	restart          *restart.Manager
 	writeMu          sync.Mutex
-	mirrorExec       *mirror.Executor
+	mirrorExec       mirrorExecutor
 	mirrorMu         sync.Mutex
-	mirrorCancels    map[string]context.CancelFunc
+	mirrorCancels    map[string]*mirrorWorker
 	logCollector     *logging.Collector
 	logRotator       *logging.RotatingWriter
 	shaper           *trafficshaper.Shaper
@@ -239,7 +249,7 @@ func NewClient(masterURL, token string, heartbeat time.Duration, singboxMgr *sin
 		traffic:       trafficstats.NewCollector(log),
 		restart:       restarter,
 		mirrorExec:    mirror.NewExecutor(),
-		mirrorCancels: make(map[string]context.CancelFunc),
+		mirrorCancels: make(map[string]*mirrorWorker),
 		logCollector:  logCollector,
 		diagnostics:   singbox.NewDiagnostics(singboxMgr, logCollector),
 		logRotator:    logRotator,
@@ -350,7 +360,14 @@ func (c *Client) runOnce(ctx context.Context) error {
 
 // readLoop 持续读取服务端消息；升级与探针任务在该连接的可取消上下文中执行。
 func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
-	defer c.cancelAllMirrors()
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			c.log.WithError(err).Debug("close mirror connection")
+		}
+		c.cancelAllMirrors()
+	}()
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -433,7 +450,7 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 				c.sendMirrorError(conn, task.TaskID, "INVALID_REQUEST", "invalid mirror_request payload")
 				continue
 			}
-			go c.handleMirror(ctx, conn, task)
+			c.handleMirror(ctx, conn, task)
 		case "mirror_cancel":
 			var task mirrorCancel
 			if err := json.Unmarshal(msg.Data, &task); err == nil && task.TaskID != "" {
@@ -445,8 +462,14 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 	}
 }
 
+// 登记在读循环内完成，随后派发协程，确保紧邻的取消帧不会丢失。
 func (c *Client) handleMirror(parent context.Context, conn *websocket.Conn, task mirrorRequest) {
+	if len(task.TaskID) == 0 || len(task.TaskID) > 128 {
+		c.sendMirrorError(conn, "", "INVALID_REQUEST", "invalid mirror task id")
+		return
+	}
 	ctx, cancel := context.WithCancel(parent)
+	worker := &mirrorWorker{cancel: cancel, done: make(chan struct{})}
 	c.mirrorMu.Lock()
 	if _, exists := c.mirrorCancels[task.TaskID]; exists {
 		c.mirrorMu.Unlock()
@@ -454,26 +477,56 @@ func (c *Client) handleMirror(parent context.Context, conn *websocket.Conn, task
 		c.sendMirrorError(conn, task.TaskID, "DUPLICATE_TASK", "mirror task already exists")
 		return
 	}
-	c.mirrorCancels[task.TaskID] = cancel
-	c.mirrorMu.Unlock()
-	defer func() {
+	if len(c.mirrorCancels) >= mirror.MaxConcurrent {
+		c.mirrorMu.Unlock()
 		cancel()
+		c.sendMirrorError(conn, task.TaskID, "BUSY", "mirror concurrency limit reached")
+		return
+	}
+	c.mirrorCancels[task.TaskID] = worker
+	c.mirrorMu.Unlock()
+	go c.runMirror(ctx, parent, conn, task, worker)
+}
+
+func (c *Client) runMirror(ctx, parent context.Context, conn *websocket.Conn, task mirrorRequest, worker *mirrorWorker) {
+	defer func() {
+		if recover() != nil {
+			c.log.Warn("mirror worker panicked")
+			if parent.Err() == nil {
+				c.sendMirrorError(conn, task.TaskID, "UPSTREAM_ERROR", "mirror worker failed")
+			}
+		}
+		worker.cancel()
 		c.mirrorMu.Lock()
-		delete(c.mirrorCancels, task.TaskID)
+		if c.mirrorCancels[task.TaskID] == worker {
+			delete(c.mirrorCancels, task.TaskID)
+		}
+		close(worker.done)
 		c.mirrorMu.Unlock()
 	}()
-
+	if ctx.Err() != nil {
+		return
+	}
 	bytes, err := c.mirrorExec.Do(ctx, mirror.Request{
 		Method: task.Method, URL: task.URL, AllowedHosts: task.AllowedHosts,
 		Headers: task.RequestHeaders, TimeoutMs: task.TimeoutMs, MaxBytes: task.MaxBytes,
 	}, func(headers mirror.Headers) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return c.sendMirrorHeaders(conn, mirrorResponseHeaders{
 			TaskID: task.TaskID, StatusCode: headers.StatusCode, Headers: headers.Headers,
 			ContentLength: headers.ContentLength, FinalHost: headers.FinalHost,
 		})
 	}, func(chunk []byte) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return c.sendMirrorChunk(conn, task.TaskID, chunk)
 	})
+	if parent.Err() != nil {
+		return
+	}
 	if err != nil {
 		var typed *mirror.Error
 		if errors.As(err, &typed) {
@@ -490,23 +543,25 @@ func (c *Client) handleMirror(parent context.Context, conn *websocket.Conn, task
 
 func (c *Client) cancelMirror(taskID string) {
 	c.mirrorMu.Lock()
-	cancel := c.mirrorCancels[taskID]
+	worker := c.mirrorCancels[taskID]
 	c.mirrorMu.Unlock()
-	if cancel != nil {
-		cancel()
+	if worker != nil {
+		worker.cancel()
 	}
 }
 
 func (c *Client) cancelAllMirrors() {
 	c.mirrorMu.Lock()
-	cancels := make([]context.CancelFunc, 0, len(c.mirrorCancels))
-	for _, cancel := range c.mirrorCancels {
-		cancels = append(cancels, cancel)
+	workers := make([]*mirrorWorker, 0, len(c.mirrorCancels))
+	for _, worker := range c.mirrorCancels {
+		workers = append(workers, worker)
 	}
-	c.mirrorCancels = make(map[string]context.CancelFunc)
 	c.mirrorMu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
+	for _, worker := range workers {
+		worker.cancel()
+	}
+	for _, worker := range workers {
+		<-worker.done
 	}
 }
 
@@ -857,8 +912,8 @@ func (c *Client) sendMirrorError(conn *websocket.Conn, taskID, code, messageText
 }
 
 func (c *Client) sendMirrorChunk(conn *websocket.Conn, taskID string, chunk []byte) error {
-	if len(taskID) > 128 {
-		return fmt.Errorf("mirror task id is too long")
+	if len(taskID) == 0 || len(taskID) > 128 || len(chunk) > 32*1024 {
+		return fmt.Errorf("invalid mirror chunk frame")
 	}
 	frame := make([]byte, 2+len(taskID)+len(chunk))
 	binary.BigEndian.PutUint16(frame[:2], uint16(len(taskID)))

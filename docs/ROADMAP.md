@@ -6,14 +6,14 @@
 
 ## 📅 阶段任务拆解
 
-> **当前进度**：Phase 1 ~ Phase 6 基线与 Phase 4.5 中继流量归属/倍率计费重构已落地，当前应用版本为 `v0.6.2`；流量账务与 SQLite 写入链路优化仍面向 `v0.5.0` 规划收尾。节点与线路解耦、中继拓扑、Master 内置 Agent、管理员初始化/重置、Docker 离线镜像双标签导出、Agent Cobra CLI 与 Bubble Tea 全屏 TUI 控制台、网络探针与升级分发闭环已全量就绪。当前流量统计使用协议 v2 累计快照与 Master 侧 `TrafficCursor` 差分，不再按心跳周期清零。视觉验证按项目约束仅在 Antigravity 环境按需执行，不接入常规门禁。
+> **当前进度**：Phase 1 ~ Phase 6 基础能力、直连代理池、主客户端职责分离与异步拨测已落地。Master 与 Agent 独立迭代，当前版本分别读取根 [package.json](../package.json) 与 [apps/agent/VERSION](../apps/agent/VERSION)；下文的历史里程碑版本不代表当前发行版本。日常 PR 使用各自 Unreleased，发版使用 Release PR。流量协议 v2 累计快照、`TrafficCursor` 差分和写入调度已有实现，生产部署观察仍是 [流量账务计划](./plans/traffic-accounting-sqlite-optimization.md) 的独立待验收项。真实客户端已有原生用例与部分平台证据，跨平台完整验收见 [双内核计划](./plans/mihomo-client-probe-separation.md)。视觉验证仍仅在 Antigravity 环境按需执行，不接入 CI / Git hook。
 
 ### Phase 1: 基础设施与 Monorepo 脚手架搭建
 - [x] ⭐ 初始化 pnpm Monorepo 根工程 (`package.json`, `pnpm-workspace.yaml`, `.gitignore`)。
 - [x] ⭐ 创建 `apps/web`、`apps/server`、`apps/agent` 目录结构。
 - [x] ⭐ 配置全局 TypeScript 与代码规范。
 - [x] ⭐ 落地工程治理工具链：`commitlint`（Conventional Commits 校验）+ `husky`（pre-commit 钩子）+ `lint-staged` + `.editorconfig`，规范见 [GIT_WORKFLOW.md](./GIT_WORKFLOW.md) 与 [CODE_REVIEW.md](./CODE_REVIEW.md)。
-- [x] ⭐ 以 `v0.1.0` 为目标建立首次发布基线：统一版本号写入根 `package.json`，维护 [CHANGELOG.md](../CHANGELOG.md) 并按 [VERSIONING.md](./VERSIONING.md) §6 流程打 Tag。
+- [x] ⭐ 以 `v0.1.0` 建立首次发布基线（历史记录）；现行 Master/Agent 版本源、日志与发布流程以 [VERSIONING.md](./VERSIONING.md) 为准。
 - [x] ⭐ 开发环境策略：Linux 使用系统 Node.js / pnpm / Go 与用户默认缓存；Windows Git Bash 保留 `.cache/`、`.tools/` 兼容方案（见 `scripts/dev-env.sh`）。
 
 ### Phase 2: 主控端核心服务开发 (`apps/server`)
@@ -112,12 +112,14 @@
 - [x] ⭐ 落地 `artifacts/` 统一产物布局与 Docker 离线镜像双标签导出（`pnpm docker:build` / `pnpm docker:export`）。
 
 ### Phase 6: 工程治理与自动化门禁体系（v0.4.5）
-- [x] ⭐ 落地 PR 级统一版本管理与自动化门禁治理体系（`scripts/version-governance.mjs`）。
+- [x] ⭐ 落地版本治理脚本（`scripts/version-governance.mjs`）；已演进为 Master/Agent 双轨版本与各自 Unreleased，Release PR 固化版本。
 - [x] ⭐ 落地文档治理与规划归档机械约束门禁（`scripts/doc-governance.mjs`）。
 - [x] ⭐ Agent Cobra CLI、Bubble Tea 全屏 TUI 控制台、CGO 禁用静态编译与多架构跨平台适配。
 
-### Phase 7: 进阶演进路线（v0.5.0+ 规划）
-- [ ] **真实客户端端到端自动化验证套件**：构建在真实网络或虚拟网络接口下的 Clash Meta / Sing-box Client 代理连通性自动化测试脚本。
+### Phase 7: 进阶演进与待验收能力
+- [x] **真实客户端编译、检查与受控请求回归**：已有 Mihomo / Sing-box 客户端编译器、原生配置检查、URLTest/严格 HTTP/TLS、协议鉴权与取消清理用例。通过 `RUN_NATIVE_CLIENT_TESTS=1` 显式执行；已有 Windows / WSL Linux amd64 证据及未覆盖组合见 [TECH_STACK.md §6.1](./TECH_STACK.md#61-能力与验证证据矩阵)，普通 URLTest 成功不代表严格 HTTP 状态校验。
+- [ ] **五平台完整原生验收**：Linux amd64/arm64、Windows amd64、macOS amd64/arm64 分别保存实际内核版本与运行结果。本轮已配置五平台 CI；2026-11-17 的 Windows amd64 原生入口记录为 PASSED（Node 22，8 套件 / 53 项 Jest、7 项脚本测试；Naive/Cronet 按 Linux 专属能力排除）。其余平台仍须实际执行，配置矩阵、下载资产或交叉编译均不代替通过证据。
+- [ ] **生产网络与真实外部出口验收**：在部署环境验证真实客户端与节点出口，保留流量游标、写队列及升级后观察证据；受控回环夹具不代替现网验收。
 - [ ] **分流规则集生态与自更新**：引入远程 Rule-Set / Geosite / GeoIP 动态拉取、定时更新与订阅模板动态注入。
 - [x] **订阅邮件通知**：支持流量多阈值预警与套餐到期阶段提醒、用户级退订、持久投递去重与失败重试。
 - [ ] **多用户订阅高级管控与通知中心**：Webhook 告警推送与用户订阅用量趋势深度报表。
@@ -136,11 +138,13 @@
 
 ## 🎯 验收与交付标准
 
-1. **零外部数据库依赖**：主控端 `pnpm start` 即可开箱即用，自动生成 SQLite 数据库。
+1. **零外部数据库依赖**：按部署指南完成配置、迁移与构建后，通过 `pnpm start:server` 启动主控，数据保存在本地 SQLite。
 2. **多节点无缝纳管**：在任意多台 Linux VPS 上运行 Agent，均可在主控 Web 管理面板实时看到在线状态与负载。
 3. **主流客户端全适配**：导出的订阅链接能够在 Clash Meta (Mihomo)、Sing-box 官方客户端以及 Shadowrocket 等工具中正常加载与代理翻墙。
 
-## 🧪 质量验收记录（v0.4.5 基线）
+## 🧪 历史质量验收记录（v0.4.5 基线）
+
+以下数量与目录属于当时验收记录，不代表当前测试规模或本轮已通过。当前合并标准为 `pnpm gate` 六类基础门禁与脚本回归，另执行适用的独立原生验收，具体结果应随 PR 留存。
 
 - [x] Server：TypeScript、ESLint、Jest（14 suites / 121 tests）通过。
 - [x] Web：TypeScript、ESLint、Vite build 通过。
@@ -149,4 +153,4 @@
 - [x] Git：`git diff --check` 通过；所有变更位于独立特性分支，未直接修改、提交或推送 `main`。
 - [x] 文档：模型、API/WS、架构、前端规范、视觉台账、路线图与 CHANGELOG 已同步。
 - [ ] 视觉截图回归：按 `docs/VISUAL_VERIFICATION.md` 仅在 Antigravity 环境、收到明确视觉验证请求后执行（按需执行）。
-- [ ] 真实代理客户端连通性：需要可用 VPS、Sing-box 内核及客户端环境，保留为部署环境验收项。
+- [ ] 生产环境真实代理客户端连通性：需要可用 VPS、内核及客户端环境，保留为部署环境验收项；已实现的受控原生回归见 Phase 7。

@@ -81,6 +81,7 @@ export function createSettingsSchema() {
     jwtSessionDays: z.coerce.number().int().min(1).max(30),
     customCss: z.string().max(50000),
     customHeadHtml: z.string().max(20000),
+    lineSpeedtestUserId: z.string(),
     lineSpeedtestEnabled: z.boolean(),
     lineSpeedtestIntervalMins: z.coerce.number().int().min(1).max(1440),
     lineSpeedtestTargetUrl: z.string().refine(isBlankOrUrl, i18n.t('admin:settings.valSpeedtestTargetUrl')),

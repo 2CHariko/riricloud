@@ -1,6 +1,6 @@
 module github.com/Nanako660/riricloud/apps/agent
 
-go 1.26.0
+go 1.26.11
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10

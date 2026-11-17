@@ -21,7 +21,7 @@
 ```bash
 tar -xzf riri-master_<version>_linux_amd64.tar.gz && cd riri-master_<version>_linux_amd64
 cp .env.example .env   # 编辑：JWT_SECRET、ADMIN_EMAIL、ADMIN_PASSWORD 必填
-./start.sh             # 首启自动：生成 Prisma client → migrate deploy → admin/Master-Local bootstrap → 启动 Master
+./start.sh             # 迁移前取得维护锁 → 双库 migrate deploy → admin/Master-Local bootstrap → 启动 Master
 ```
 
 - 访问 `http://<host>:<port>` 即 Web 面板（生产模式下后端直接托管面板静态资源，非 `/api` 路径自动 SPA 回退）；生产环境出于安全考虑默认禁用 Swagger API 文档（返回 404），如需排查联调可在 `.env` 中设置 `ENABLE_SWAGGER=true` 后访问 `/api/docs`。
@@ -47,7 +47,7 @@ pnpm --filter @riricloud/server build
 pnpm --filter @riricloud/server start:prod
 ```
 
-> 源码方式下请先在当前 shell 或 `apps/server/.env` 设置强随机 `JWT_SECRET` 与首次启动所需的 `ADMIN_EMAIL`、`ADMIN_PASSWORD`；`start:prod` 会自动先行执行 `prisma migrate deploy` 与 `bootstrap-admin.js`，已有管理员时安全跳过；服务启动 15 秒后 `TrafficCleanupService` 还会自动在后台平滑归拢存量未聚合的历史流量明细。`start:prod` 同时会探测并托管 `apps/web/dist`（monorepo 布局自动命中）。
+> 源码方式下请先在当前 shell 或 `apps/server/.env` 设置强随机 `JWT_SECRET` 与首次启动所需的 `ADMIN_EMAIL`、`ADMIN_PASSWORD`；`start:prod` 经 `prisma/maintenance-start.js` 在迁移前取得维护锁，再执行双库迁移与 `bootstrap-admin.js`，已有管理员时安全跳过；服务启动 15 秒后 `TrafficCleanupService` 还会自动在后台平滑归拢存量未聚合的历史流量明细。`start:prod` 同时会探测并托管 `apps/web/dist`（monorepo 布局自动命中）。
 
 根目录 `pnpm build` 可一次构建三端：Server 输出保留在 `apps/server/dist/`，Web 输出保留在 `apps/web/dist/`，当前平台 Agent 输出到 `artifacts/dev/agent/<os>-<arch>/riri-agent[.exe]`。其中两个 `dist/` 是框架和运行时的约定目录，不与可分发二进制产物混放。
 
@@ -320,7 +320,7 @@ E2E_SYNC_RESOURCES=0 bash scripts/dev-e2e.sh # 跳过本地构建产物同步
 - E2E 主库与遥测库 URL 在脚本启动时分别以 `prisma/` 与 `prisma/telemetry/` 的 schema 目录规范化成绝对 `file:` URL，文件存在判断、上游预检、迁移、种子、主控和 AgentToken helper 复用相同路径。双库部署入口也进行同样规范化；不要将 scratch/custom-output 客户端的生成文件复制进默认 Prisma client，Windows 引擎占用解除后从正式 schema 正常执行 `prisma generate`。
 - 遇到 `P3018` / `backup_and_remove_legacy_upstream_before_upgrade` 应按迁移保护处理，不是写锁或 Prisma 未安装。开发者明确选择不保留专用 E2E 数据时，先确认相关服务已停止，再删除 `prisma/dev-e2e.db`、`prisma/telemetry/dev-e2e-telemetry.db` 及对应 WAL/SHM 后重新运行脚本；不要删除 `dev.db` 或生产库。脚本不会自动清库。两库重建后旧失败记录不保留，正常从空库迁移和播种。
 - 默认资源同步版本跟随 `apps/agent/VERSION`，构建二进制与上传资源使用同一 Agent 版本；可通过 `E2E_AGENT_VERSION` 同时覆盖构建和资源版本。为兼容已有脚本，单独设置 `E2E_RESOURCE_VERSION` 也会作为 Agent 构建版本覆盖；若同时设置两个变量但值不一致，脚本会在启动前报错。`E2E_APP_VERSION` 只记录资源构建来源，不再用作 Agent 版本。设置 `E2E_SYNC_RESOURCES=0` 可跳过同步；`E2E_AGENT_RESOURCE_FILE`、`E2E_AGENT_RESOURCE_TARGET`、`E2E_SINGBOX_RESOURCE_FILE`、`E2E_SINGBOX_RESOURCE_TARGET` 和 `E2E_SINGBOX_RESOURCE_VERSION` 仍可覆盖资源文件、架构或 Sing-box 版本。
-- 主控端默认尝试 `http://localhost:30800`（避开 Windows 系统保留与动态端口区间）；若未检测到可复用的服务且该端口无法绑定，脚本会自动向后探测最多 1000 个可用端口，并同步更新主控地址、Web API 代理地址和 Agent WebSocket 地址；实际使用的端口会记录在 `.cache/dev-e2e-server-port`，后续运行据此复用已在运行的主控端（不再因端口漂移而重复拉起）。若端口在探测与绑定之间被其他进程抢占（`EADDRINUSE`），脚本会顺延到下一个可用端口重试（默认 5 次，可用 `SERVER_START_ATTEMPTS` 调整）。可通过 `SERVER_PORT` 或 `PORT` 固定端口（固定后不自动顺延），或通过 `SERVER_PORT_SCAN_LIMIT` 调整探测范围。手动启动 Web 时可用 `VITE_API_PROXY_TARGET` 指定 `/api` 代理目标。应用自身的默认端口仍为 `3000`，联调端口仅作用于本脚本。
+- 主控端默认尝试 `http://localhost:30800`（避开 Windows 系统保留与动态端口区间）；若未检测到可复用的服务且该端口无法绑定，脚本会自动向后探测最多 1000 个可用端口，并同步更新主控地址、Web API 代理地址和 Agent WebSocket 地址；实际使用的端口会记录在 `.cache/dev-e2e-instances/<实例标识>/server-port`，后续运行据此复用已在运行的主控端（不再因端口漂移而重复拉起）。若端口在探测与绑定之间被其他进程抢占（`EADDRINUSE`），脚本会顺延到下一个可用端口重试（默认 5 次，可用 `SERVER_START_ATTEMPTS` 调整）。可通过 `SERVER_PORT` 或 `PORT` 固定端口（固定后不自动顺延），或通过 `SERVER_PORT_SCAN_LIMIT` 调整探测范围。手动启动 Web 时可用 `VITE_API_PROXY_TARGET` 指定 `/api` 代理目标。应用自身的默认端口仍为 `3000`，联调端口仅作用于本脚本。
 - 每次新启动的 E2E 主控使用 `apps/server/.cache/dev-e2e-server-*/tsconfig.json`，继承正式构建配置并写入该次独立 `dist`，不删除手动 `pnpm dev:server` 的输出或编译状态；退出或端口重试时只清理本次目录。即使旧 watcher 暂时未监听，也不会因为第二个 Nest 编译器清空共享 `dist` 而丢失入口。已在运行的服务仍按原规则复用，不自动终止其他开发进程。
 - 新实例就绪要求本次进程存活、本次日志出现监听成功后的 `HTTP listener ready` 标记，以及版本接口可达；单独的 `Nest application successfully started` 或旧实例 HTTP 成功不算就绪。端口冲突/编译与启动错误优先结算。资源同步网络失败显示请求方法、接口路径及脱敏错误码（如 `ECONNREFUSED`/`UND_ERR_SOCKET`/`TIMEOUT`），不输出 Cookie/底层消息；读请求最多 15 秒、写请求最多 120 秒，不自动重试上传、激活或默认切换。
 - 启动隔离回归：`node --test scripts/dev-e2e-server.test.mjs scripts/dev-e2e-sync-resource.test.mjs scripts/dev-e2e-agent-version.test.mjs`，覆盖旧实例响应不能冒充就绪、进程退出/端口冲突优先、真实 Nest CLI 相对配置并行构建及网络错误脱敏/不重试写入。2026-10-03 Windows Git Bash 验证完整 E2E 资源同步与 Agent/内核启动成功，常规 server 构建期间 23 次 API 检查无失败，原 1 个订阅、48 个上游节点、4 条线路及设置快照未变化；未修改 REST/WS 契约或清库。
@@ -332,6 +332,7 @@ E2E_SYNC_RESOURCES=0 bash scripts/dev-e2e.sh # 跳过本地构建产物同步
 - 2026-10-07 Windows 旧库完整启动链路复验：`SKIP_WEB=1 E2E_SYNC_RESOURCES=0 bash scripts/dev-e2e.sh`，真实 Master API 返回历史 ONLINE、无 Agent/内核进程时等待正常离线扫描；盲转入口从被系统拒绝的 62470 改为 30000，直连 38433 保持不变，真实配置下发、内核稳定存活与实际管理 API/TCP 入站就绪均通过，退出后所启动进程/端口已清理。本轮跳过 Web 与资源同步，Linux/macOS 尚未原生复验。
 - 开发联调启动的 Agent 会显式使用非交互模式，避免 Git Bash 后台进程误判为 Bubble Tea 终端并触发无效 console handle 错误。
 - 开发联调要求 Sing-box 启用 `with_v2ray_api`、`with_utls`、`with_quic` 和 `with_naive_outbound`。脚本会先按当前系统与 CPU 架构选择可执行的内核并检查这些标签；如果缓存中没有匹配版本，脚本会使用项目内 Go 工具链从 `SINGBOX_VERSION`（默认 `1.14.0`）源码构建并缓存到 `.cache/sing-box-v2ray-api/`。显式设置 `SINGBOX_BINARY_PATH` 时，若文件无法执行或缺少所需标签会直接报错，不会静默切换到其他内核。
+- 运行数据按规范化后的业务库与观测库 URL 共同计算 SHA-256 实例标识，固定保存于 `.cache/dev-e2e-instances/<实例标识>/data/`，并导出为 `RIRICLOUD_DATA_DIR`；不继承普通开发服务的数据目录。同一双库组合重复启动或自动更换端口时目录不变；不同双库组合分离。可用 `E2E_DATA_ROOT` 改变实例目录的父目录，每个实例仍保留独立子目录。日志、Agent 临时配置、实际端口及数据库/数据目录复用标记分别保存于该实例目录内；自动复用必须同时匹配业务库和数据目录，不再采用旧的全局端口标记。强制结束留下的维护锁需按 §3.7 检查处理，不自动删除或迁移旧联调库。
 - 未显式设置 `JWT_SECRET` 时，脚本会为本地联调生成强随机密钥并按数据库 URL 维度持久化到 `.cache/dev-e2e-secrets/`（同一联调数据库始终复用同一密钥），既避免空白开发 `.env` 阻止主控启动，也保证持久复用的联调库中加密凭据（Master-Local AgentToken 等）跨运行可解密；显式提供的 `JWT_SECRET` 优先但不落盘，若与目标数据库历史密钥不一致会出现解密失败，需换用历史密钥或删除该联调库重建。生产环境仍必须按源码部署要求手动配置强随机密钥。Cookie 会话仅在本次脚本生命周期内使用，退出时清理临时 jar。
 - 已在运行的主控/Web 服务会被复用而非重启；脚本退出时按进程树回收其自身启动的主控/Web/Agent 进程（Windows 下使用 `taskkill /T`，避免 pnpm 派生的 `nest`/`sing-box` 子进程成为孤儿继续占用端口）。若主控端口发生变化，需先停止旧的 5173 Web 进程，再重新执行脚本，使 Vite 重新读取 API 代理目标。
 - 若主控进程启动失败，脚本会立即输出 `server.log` 最近 40 行并退出，不再静默等待完整超时；迁移、登录或节点准备阶段失败也会回收本次已启动的主控/Web 进程。
@@ -424,6 +425,70 @@ artifacts/packages/
    - `telemetry.db`、`telemetry.db-wal`、`telemetry.db-shm`
 
 管理员可在「系统设置 → 存储与日志」维护小时流量、节点速率、系统日志和 Agent 本地日志策略；策略保存不会立即删除数据。系统日志每小时自动清理，小时汇总、节点速率与旧版 `TrafficLog` 每 12 小时自动清理，旧版明细固定按 7 天过渡保留。手动清理使用 `/admin/telemetry/cleanup/preview` 预览与 `/admin/telemetry/cleanup` 执行，并要求 `CLEAR_HISTORY` 确认短语；执行后审计日志写入时序库。清理接口不修改主业务库中的额度、订阅用量、流量游标、节点实时状态或计费数据。
+
+### 3.7 停服备份、校验与隔离恢复
+
+维护入口为 `prisma/maintenance-cli.js`，源码、发行包及 Docker 使用同一实现。备份格式是一个目录，包含 `manifest.json`、`databases/main.db`、`databases/telemetry.db`、存在的 WAL/SHM 和 `binaries/` 运行资源，不是 tar/ZIP 压缩包。静态内置内核由匹配版本发行包/镜像提供；`.env`、密钥文件、锁和临时下载文件不进入备份。
+
+| 命令 | 必填参数 | 可选参数 |
+| :--- | :--- | :--- |
+| `backup:create` | `--destination <不存在的新目录>` | `--database file:<业务库路径>`、`--telemetry-database file:<观测库路径>`、`--data-dir <运行数据目录>` |
+| `backup:verify` | `--backup <备份目录>` | `--json`（默认已输出 JSON） |
+| `backup:restore` | `--backup <备份目录>`、`--destination <新建或空目录>` | `--json` |
+
+`--help` 输出命令和退出码说明；`--json` 也可用于创建。数据库/数据目录覆盖参数只接受于 `backup:create`，不会改变保存的环境配置。未覆盖时读取 `DATABASE_URL`、`TELEMETRY_DATABASE_URL` 和 `RIRICLOUD_DATA_DIR`（兼容 `MASTER_DATA_DIR`）；没有数据目录配置时使用 server/发行包根下的 `data/`。`file:` 相对路径分别以业务 `prisma/` 与观测 `prisma/telemetry/` 为基准；运维命令建议始终显式使用绝对路径并同时指定双库，避免误选数据。`--data-dir` 指向包含 `binaries/` 的父目录。备份目的目录必须位于源双库目录及运行数据目录之外，其父目录须已存在。
+
+**密钥与备份保管**：CLI 加载 server/发行包根目录的 `.env`，已导出的环境变量优先；使用既有 `RIRICLOUD_ENCRYPTION_KEY`，未设置时使用 `JWT_SECRET`。不接受命令行密钥参数，也不把密钥明文写入清单。维护者必须另行安全保存原密钥，丢失或更换后无法还原数据库中的加密配置。创建时也会检查库内真实密文字段，包括证书、节点 Token、上游配置和 `LineCredential.encryptedPayload`，避免用错误密钥签发无法使用的备份。清单采用现有 AES-GCM 认证元数据；备份文件本身没有整体加密，仍含用户、账务等敏感数据，须按数据库同等级保护。Unix 下新目录/文件使用私有权限；不得将备份提交 Git 或发布到公共下载地址。
+
+**冷备与锁**：先停止 Master 及所有其他数据库/资源写入程序，再运行创建命令。Master、源码 `start:prod`、发行包 `start.sh` 和 Docker 迁移入口与 CLI 共用三个原子目录锁：`<业务库文件>.maintenance.lock/`、`<观测库文件>.maintenance.lock/`、`<运行数据目录>/.riricloud-maintenance.lock/`。生产入口在首次迁移前加锁；E2E 先完成独立编译，再由同一 `maintenance-start.js --build-dir <隔离dist> --seed-if-missing` 持锁执行迁移、首次种子和服务启动，不在 shell 中提前执行 Prisma。E2E 此入口不启用 Nest watcher，修改源码后需停机重启；退出时仅在本次编译目录写入 stop-file，通过已验证 IPC 请求应用关闭，等待十秒仍未退出才回收本次进程树并保留异常锁。父子继承同时校验直接父 PID、随机租约与专属 IPC challenge，环境变量本身不能授权；任一数据库相同即互斥，变更 dataDir 无法绕过，并拒绝数据库/WAL/SHM 的符号链接、目录联接与硬链接。正常子服务须确认应用和双库已关闭，再允许父入口释放锁；异常退出、父进程丢失和无法证明关闭的路径保留锁。父进程丢失会触发子服务关闭；直接启动 Master 时，优雅关闭应用和数据库后才解锁。锁不能拦截绕过入口直接运行的 SQLite、Prisma 或管理员维护命令，这些写入程序同样必须停用。
+
+运行中或残留锁均返回 `MAINTENANCE_LOCKED`，不按 PID 推测抢占，不提供强制覆盖选项。崩溃、强制结束或掉电后，先确认所有相关进程确已停止，再核对锁目录所有者信息并人工清理对应锁；不能仅因 PID 看似不存在便删除锁（容器 PID 与宿主机 PID 可能不同）。不要公开完整 `owner.json`。正常恢复不会复制旧锁，恢复完成后也会释放本次恢复锁。
+
+源码方式（仓库根目录；绝对路径由维护者替换）：
+
+```bash
+pnpm backup:create --destination /srv/backups/riri-before-upgrade \
+  --database file:/srv/riri/data/riri.db \
+  --telemetry-database file:/srv/riri/data/telemetry.db \
+  --data-dir /srv/riri/data
+pnpm backup:verify --backup /srv/backups/riri-before-upgrade
+pnpm backup:restore --backup /srv/backups/riri-before-upgrade \
+  --destination /srv/restores/riri-verified
+```
+
+也可直接从仓库根运行 `node apps/server/prisma/maintenance-cli.js <命令> ...`。发行包中使用 `./maintenance.sh <命令> ...`，例如 `./maintenance.sh backup:verify --backup /srv/backups/riri-before-upgrade`；启动仍使用 `./start.sh`，它转入共用的 `prisma/maintenance-start.js` 执行受锁保护的双库迁移、管理员引导和 Master 启动，运行时不重新生成 Prisma Client。组装脚本还会清理本次发行输出 `prisma/` 下的数据库、WAL/SHM、运行锁、环境文件和测试夹具，保留 schema 与迁移；不会清理源码目录。
+
+Docker 可直接将维护命令传给同版本 Master 镜像，入口会进入 CLI，不启动 Master、不执行迁移。以下容器不启用网络或端口；备份源挂载需要可写以创建维护锁，备份及恢复父目录需允许镜像用户 `65532:65532` 写入：
+
+```bash
+MASTER_IMAGE='riricloud/master:<与备份匹配的版本>'
+# 所有原 Master/写入进程已停止；same-master.env 由维护者安全保管并含原密钥。
+docker run --rm --network none --env-file /secure/same-master.env \
+  -v /srv/riri/data:/app/data -v /srv/backups:/backups \
+  "$MASTER_IMAGE" backup:create --destination /backups/riri-before-upgrade
+docker run --rm --network none --env-file /secure/same-master.env \
+  -v /srv/backups:/backups:ro \
+  "$MASTER_IMAGE" backup:verify --backup /backups/riri-before-upgrade
+docker run --rm --network none --env-file /secure/same-master.env \
+  -v /srv/backups:/backups:ro -v /srv/restores:/restores \
+  "$MASTER_IMAGE" backup:restore --backup /backups/riri-before-upgrade \
+  --destination /restores/riri-verified
+```
+
+**校验范围和兼容性**：校验文件清单、目录越界、符号链接/目录联接/硬链接、文件大小与 SHA-256、清单密钥认证、SQLite 完整性/外键及实际已完成迁移记录。文件边复制边计算哈希；SQLite 只打开私有副本，非空 WAL 可在副本上回放，原库和原备份不被校验写入。临时目录需有至少一份完整备份的可用空间。恢复还会再检查目标双库，成功前绝不标记就绪。默认严格要求应用版本及全部迁移内容一致；跨版本恢复须先用匹配版本恢复、核验，再按正常升级流程迁移，不能跳过兼容检查。
+
+**隔离恢复与正式切换**：成功目标布局为 `riri.db`、`telemetry.db`、`binaries/` 和 `.riricloud-restore.json`。返回 `RESTORE_READY`、`isolated: true` 只表示离线数据已通过校验；不会启动应用或发送邮件。隔离标记令 Master 在加载 Nest 应用、邮件巡检或 Agent 接口前拒绝启动。中途失败的目录保留 `incomplete` 状态，不能直接启动，也不能在其中重试覆盖；检查失败原因后选用另一个新/空目录重试。
+
+只有准备正式切换且原实例已停止时，才由维护者完成以下步骤：
+
+1. 核对标记为 `status: "ready"`，确认业务记录、版本、原密钥及上线环境配置正确，保存本次离线验收记录。
+2. 将正式环境的 `DATABASE_URL` 指向恢复目录内 `riri.db`，`TELEMETRY_DATABASE_URL` 指向 `telemetry.db`，`RIRICLOUD_DATA_DIR` 指向恢复目录。不要让演练进程与生产 Agent 或 SMTP 建立连接。
+3. 明确解除隔离：将恢复目录中的 `.riricloud-restore.json` 移到目录外留档，或在确认其为 ready 后删除该单个文件。**不得移除 incomplete 标记来强行启动**，不得把整个备份覆盖到运行目录。
+4. 使用受保护的 `start:prod`、发行包 `start.sh` 或 Docker 默认入口启动，检查迁移、双库、业务记录与节点状态；需要升级时再走正常版本升级流程。
+
+CLI 默认在 stdout 输出一行 JSON；失败响应包含稳定 `code`、`message`、`exitCode`，不输出底层 SQL、密钥或异常对象。退出码：`0` 成功，`2` 参数/目录使用错误，`3` 锁冲突，`4` 备份格式/路径/哈希或认证异常，`5` 版本或迁移不匹配，`6` 缺少密钥/密钥不匹配，`7` 文件操作失败，`8` SQLite/数据库配置验证失败；受保护启动入口以 `9` 表示恢复隔离或未就绪阻止启动。调用方须同时检查进程退出码与 JSON，不能把目录存在当成成功。
+
+**2026-11-17 本轮隔离证据**：Windows amd64 / Node 22.23.5 使用新装配的生产依赖目录和当前源码独立编译产物，经发行包 `start.sh` 完成真实双库迁移、管理员引导、HTTP 200、运行中更换 dataDir 仍拒绝冷备、正常停机释放锁，以及创建→校验→隔离恢复。恢复后启动在迁移前返回 `RESTORE_ISOLATED`；测试限制回环监听并阻断外部连接，无邮件/外部 Agent 接入。证据位于本地 `artifacts/maintenance-review/`，不含环境密钥。当前 WSL Rocky Linux 9.8 无原生 Node/pnpm、Docker/Podman CLI 与引擎 socket，仅 Shell 语法验证通过；本轮没有 Linux 原生发行包或 Docker 镜像启动证据，不等同历史版本的验证结果。
 
 ---
 

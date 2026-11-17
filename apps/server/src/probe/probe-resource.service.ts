@@ -4,7 +4,9 @@ import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { readUpstreamConnection, getUpstreamUnavailableReason } from '../common/upstream-availability';
 import { sanitizeInboundParams } from '../common/inbound';
-import { INTERNAL_SPEEDTEST_EMAIL, INTERNAL_SPEEDTEST_SECRET, INTERNAL_SPEEDTEST_UUID } from '../common/constants';
+import { evaluateSubscriptionEntitlement } from '../common/subscription-entitlement';
+import { applyPlanSnapshot } from '../subscription/plan-snapshot';
+import { ProbeSubscriptionError } from './probe-subscription';
 import { bindManagedConnection } from '../subscription/compilers/managed-connection';
 import type { UpstreamConnection } from '../common/upstream-connection';
 import type { ProbeConnectionRequest, ProbeMeasurement, ProbeResult, ProbeSubjectType } from './probe.types';
@@ -15,7 +17,7 @@ const include = { entryNode: true, landingNode: true, certificate: certificateVe
 type ProbeLine = Prisma.LineGetPayload<{ include: typeof include }>;
 type ProbeNode = Prisma.UpstreamNodeGetPayload<{ include: { subscription: true } }>;
 export interface ProbeSelection { id?: string; subscriptionId?: string }
-export interface ResourceSnapshot { request: ProbeConnectionRequest; version: string; updatedAt: Date; sequence: number; measurement?: ProbeMeasurement }
+export interface ResourceSnapshot { request: ProbeConnectionRequest; version: string; updatedAt: Date; sequence: number; measurement?: ProbeMeasurement; authorization?: { userId: string; version: string } }
 export const probeHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value, (_, item: unknown) => typeof item === 'bigint' ? item.toString() : item)).digest('hex');
 
 // 仅配置与关联状态进入版本，不把 Agent 心跳和探针自身写入作为配置变更。
@@ -72,7 +74,7 @@ export class ProbeResourceService {
       cursor = batch[batch.length - 1].id;
     }
   }
-  async snapshot(type: ProbeSubjectType, id: string, sequence: number, db: Prisma.TransactionClient = this.prisma, measurement: ProbeMeasurement = 'MIHOMO_URL_TEST'): Promise<ResourceSnapshot | null> {
+  async snapshot(type: ProbeSubjectType, id: string, sequence: number, db: Prisma.TransactionClient = this.prisma, measurement: ProbeMeasurement = 'MIHOMO_URL_TEST', expectedUserId?: string | null): Promise<ResourceSnapshot | null> {
     if (type === 'UPSTREAM_NODE') {
       const node = await db.upstreamNode.findUnique({ where: { id }, include: { subscription: true } });
       if (!node || getUpstreamUnavailableReason(node)) return null;
@@ -88,17 +90,49 @@ export class ProbeResourceService {
       if (!['TARGET_LINE', 'UPSTREAM_NODE'].includes(line.relayMode ?? '') && (!line.landingNode || line.landingNode.status === 'DISABLED' || !line.landingPort)) return null;
     }
     const version = lineProbeVersion(line);
-    const connection = line.type === 'EXTERNAL' ? readUpstreamConnection(line.upstreamNode!) : this.managedConnection(line);
-    return { request: { subjectType: type, subjectId: id, connection, configHash: version, routeKind: line.type === 'EXTERNAL' ? 'UPSTREAM_DIRECT' : line.type === 'RELAY' ? 'MANAGED_RELAY' : 'MANAGED_DIRECT', allowPrivateEndpoint: line.type !== 'EXTERNAL' && Boolean(line.allowLanAccess || line.entryNode?.isLocal) }, version, updatedAt: line.updatedAt, sequence, measurement };
+    const identity = line.type === 'EXTERNAL' ? undefined : await this.managedIdentity(db, line, expectedUserId);
+    const connection = identity ? this.managedConnection(line, identity.user) : readUpstreamConnection(line.upstreamNode!);
+    return { request: { subjectType: type, subjectId: id, connection, configHash: version, routeKind: line.type === 'EXTERNAL' ? 'UPSTREAM_DIRECT' : line.type === 'RELAY' ? 'MANAGED_RELAY' : 'MANAGED_DIRECT', allowPrivateEndpoint: line.type !== 'EXTERNAL' && Boolean(line.allowLanAccess || line.entryNode?.isLocal) }, version, updatedAt: line.updatedAt, sequence, measurement, ...(identity ? { authorization: identity.authorization } : {}) };
   }
-  private managedConnection(line: ProbeLine): UpstreamConnection {
+  private async managedIdentity(db: Prisma.TransactionClient, line: ProbeLine, expectedUserId?: string | null) {
+    // 直接使用同一数据库/事务读取设置和权益，结果写回不依赖缓存或 User 兼容配额字段。
+    const rows = await db.systemSetting.findMany({ where: { key: { in: ['lineSpeedtestUserId', 'enforceEmailVerification', 'publicLinesEnabled'] } } });
+    const settings = new Map(rows.map((row) => [row.key, row.value.trim()]));
+    const userId = settings.get('lineSpeedtestUserId');
+    if (!userId || userId === 'undefined') throw new ProbeSubscriptionError('SPEEDTEST_USER_NOT_CONFIGURED');
+    if (expectedUserId !== undefined && userId !== expectedUserId) throw new ProbeSubscriptionError('SPEEDTEST_IDENTITY_CHANGED');
+    const enforceEmailVerification = ['true', '1'].includes(settings.get('enforceEmailVerification')?.toLowerCase() ?? '');
+    if (['false', '0'].includes(settings.get('publicLinesEnabled')?.toLowerCase() ?? '')) throw new ProbeSubscriptionError('SPEEDTEST_LINE_UNAUTHORIZED');
+    const subscription = await db.subscription.findUnique({ where: { userId }, include: { user: { include: { extraLineGrants: { select: { lineId: true } } } }, plan: true } });
+    const entitlement = evaluateSubscriptionEntitlement(subscription, { enforceEmailVerification, line });
+    if (!entitlement.allowed) throw new ProbeSubscriptionError(entitlement.reason === 'LINE_UNAUTHORIZED' ? 'SPEEDTEST_LINE_UNAUTHORIZED' : 'SPEEDTEST_USER_UNAVAILABLE');
+    if (!subscription?.plan || !subscription.user.uuid) throw new ProbeSubscriptionError('SPEEDTEST_USER_UNAVAILABLE');
+    const effective = applyPlanSnapshot(subscription);
+    const user = { uuid: subscription.user.uuid, email: subscription.user.email, credential: subscription.user.password ?? subscription.user.uuid };
+    // 正常流量累计不能使快照失效，但每次写回仍重新判定是否已耗尽配额。
+    const version = probeHash([userId, user, subscription.id, subscription.status, subscription.expireAt, subscription.trafficLimitBytes,
+      enforceEmailVerification, subscription.user.role, subscription.user.emailVerifiedAt,
+      effective.plan.lineMatchMode, effective.plan.lineTagsJson, effective.plan.lineIdsJson,
+      subscription.user.extraLineGrants.map((grant) => grant.lineId).sort(), line.isPublic, line.tagsJson]);
+    return { user, authorization: { userId, version } };
+  }
+  private managedConnection(line: ProbeLine, user: { uuid: string; email: string; credential: string }): UpstreamConnection {
     const params = sanitizeInboundParams(JSON.parse(line.paramsJson) as Record<string, unknown>);
+    // 共享密码无法携带账号身份，不能把无法逐用户结算的请求当作正常订阅拨测。
+    if (line.protocolType === 'SHADOWSOCKS' && (params.mode !== 'multi-user' || typeof params.method !== 'string' || !params.method.startsWith('2022-'))) {
+      throw new ProbeSubscriptionError('SPEEDTEST_LINE_UNMETERED');
+    }
+    // 普通托管密码入口与网关统一强制认证，兼容表单旧的关闭鉴权字段。
+    if (line.relayMode !== 'UPSTREAM_NODE' && ['MIXED', 'SOCKS', 'HTTP'].includes(line.protocolType)) params.usersEnabled = true;
+    // 旧线路残留的单用户字段不能绕过专用订阅身份；多用户 SS 由订阅编译器绑定身份。
+    if (['VLESS', 'VLESS_REALITY', 'VMESS', 'TUIC'].includes(line.protocolType)) params.uuid = user.uuid;
+    if (['TROJAN', 'HYSTERIA2', 'TUIC'].includes(line.protocolType)) params.password = user.credential;
     return bindManagedConnection({ protocolType: line.protocolType, params, lineId: line.id,
       serverHost: line.endpointOverrideEnabled && line.serverHost ? line.serverHost : line.entryNode!.serverHost,
       serverPort: line.endpointOverrideEnabled && line.serverPort ? line.serverPort : line.entryPort!,
       serverName: line.endpointOverrideEnabled ? line.serverName ?? undefined : undefined,
       host: line.endpointOverrideEnabled ? line.host ?? undefined : undefined
-    }, { uuid: INTERNAL_SPEEDTEST_UUID, email: INTERNAL_SPEEDTEST_EMAIL, credential: INTERNAL_SPEEDTEST_SECRET });
+    }, user);
   }
   async persist(snapshot: ResourceSnapshot, result: ProbeResult, signal: AbortSignal): Promise<boolean> {
     const { subjectType, subjectId } = snapshot.request;
@@ -110,8 +144,8 @@ export class ProbeResourceService {
     result = safe;
     const stale = new Error('STALE_PROBE_WRITE');
     try { return await this.prisma.$transaction(async (tx) => {
-      const current = await this.snapshot(subjectType, subjectId, snapshot.sequence, tx, measurement);
-      if (!currentLaunch() || !current || current.version !== snapshot.version || current.updatedAt.getTime() !== snapshot.updatedAt.getTime()) return false;
+      const current = await this.snapshot(subjectType, subjectId, snapshot.sequence, tx, measurement, snapshot.authorization?.userId);
+      if (!currentLaunch() || !current || current.version !== snapshot.version || current.authorization?.version !== snapshot.authorization?.version || current.updatedAt.getTime() !== snapshot.updatedAt.getTime()) return false;
       const json = JSON.stringify({ ...result, applied: true, resourceVersion: snapshot.version });
       // 测量元数据不推进配置时间，避免两种测量互相使快照失效；仍按原配置时间条件写入。
       const data = measurement === 'PROXY_HTTP_DELAY'
@@ -123,6 +157,6 @@ export class ProbeResourceService {
         : await tx.upstreamNode.updateMany({ where: { id: subjectId, updatedAt: snapshot.updatedAt, status: 'ACTIVE', presenceStatus: 'PRESENT' }, data: { ...data, ...(measurement === 'MIHOMO_URL_TEST' ? { latencyMs: latency } : {}) } });
       if (!currentLaunch()) throw stale;
       return updated.count === 1;
-    }); } catch (error) { if (error === stale) return false; throw error; }
+    }); } catch (error) { if (error === stale || error instanceof ProbeSubscriptionError) return false; throw error; }
   }
 }

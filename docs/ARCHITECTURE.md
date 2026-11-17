@@ -95,7 +95,7 @@ graph TB
 - **WebSocket 实时网关 (`apps/server/agent-gateway`)**：与分布在全球的各 Node Agent 保持双向全双工长连接，实现秒级状态同步与实时配置热推。
 - **HTTP 轮询适配器 (`POST /api/v1/agent/poll`)**：为无法完成 WS Upgrade 的网络提供 HTTPS 主动上报、配置差异拉取和异步任务回执。
 - **Master-Local 本机节点纳管 (`apps/agent` + `riri-agent`)**：Master 镜像与 Agent 镜像在进程及容器层面彻底解耦；Docker Compose 默认编排独立的 `master` 与 `agent` 容器，通过 `AGENT_IMAGE` 与 `MASTER_LOCAL_AGENT_TOKEN` 环境变量完成自动对接；Master 启动时 bootstrap 自动为 Master-Local 节点绑定该凭据，Agent 独立运行并作为宿主机网络上的节点纳管服务。远程 VPS 使用 Agent 原生 CLI 安装或 Docker 容器运行并接入，支持通过管理面板快捷复制多模式启动命令。
-- **线路与订阅引擎 (`apps/server/lines`、`apps/server/subscription`)**：Line 是用户订阅端点的唯一业务实体，直接拥有协议、参数、监听地址、Tag、入口/出口拓扑和端口，支持直连、盲转发和协议代理中继；订阅服务按套餐匹配公开启用且入口/出口节点在线的线路，动态组装 Clash Meta YAML、Sing-box Client JSON 和 Base64 URI，并应用地址/端口、SNI/Host 与倍率覆盖。
+- **线路与订阅引擎 (`apps/server/lines`、`apps/server/subscription`)**：Line 是用户订阅端点的唯一业务实体，直接拥有协议、参数、监听地址、Tag、入口/出口拓扑和端口，支持直连、盲转发和协议代理中继；订阅服务按套餐匹配公开启用的线路（Agent在线状态不作为订阅资格），动态组装 Clash Meta YAML、Sing-box Client JSON 和 Base64 URI，并应用地址/端口、SNI/Host 与倍率覆盖。
 - **入站配置组装 (`apps/server/common/inbound.ts`)**：入站参数归一化（默认值填充/密钥自动生成/必填校验）、服务端入站 JSON 与客户端 TLS/Transport JSON 组装的单一实现，`config_sync` 与订阅 builders 复用，避免两处各持一份协议知识；其中 WebSocket `host` 统一映射为 `headers.Host`，SS2022 用户密钥按算法长度归一化。ShadowTLS 固定为 v3 + SS2022 内层，配置生成两个入站：公网 ShadowTLS 外层通过 `detour` 接入仅监听回环地址的 SS 入站，用户凭证只用于外层用户鉴权。
 - **多设备在线限制与设备管理 (`apps/agent/internal/devices`、`apps/server/agent-gateway`)**：Agent 每 2 秒读取 Sing-box 本地 Clash API `/connections`，将可识别的用户凭据、来源 IP、线路和连接数随心跳/HTTP 轮询上报；Master 只在内存中按用户 + IP 跨节点去重，并按 `deviceOnlineWindowSecs` 过滤陈旧报告。Master 下发正数用户限额，Agent 在本机选择较早出现的 IP 保留并断开超额连接；跨节点超限由 Master 按最早 `firstSeenAt` 保留设备、向相关节点下发 `kick_devices`，30 秒防抖并默认阻断 60 秒。手动用户/管理员踢设备复用同一任务通道。Agent 自编译 Sing-box 的 Clash API JSON 增加 `metadata.inboundUser` 字段（不解析日志）；短连接可能被 2 秒采样漏过，外部 Clash API 地址必须为 loopback。
 - **套餐与订阅控制面 (`apps/server/plans`、`apps/server/subscription`、`apps/server/subscription-templates`)**：Plan 决定线路标签/显式 ID 授权范围与流量重置策略，Subscription 维护用户唯一订阅和当前流量周期，UserLineGrant 维护独立于订阅生命周期的用户额外线路授权，Template 驱动 Clash/Sing-box 的策略组、规则、DNS 与顶层覆写；订阅和 User 兼容镜像在事务中同步。
@@ -167,7 +167,7 @@ sequenceDiagram
   - **协议代理机制 (`PROTOCOL_PROXY`)**：入口节点先拉起完整协议入站终结连接，再经由 Sing-box 内部 `route.rules` 和动态生成的对应协议 `outbound` 向落地节点重新握手建连。
   - **桥接已有线路 (`TARGET_LINE`)**：入口节点将连接中转至其他节点上已有的直连目标线路，数据库中落地字段保持 `null`，完全基于关联动态解析（单一真理源 SSOT），落地节点复用目标直连入站。
 - **独立端口管道设计**：系统为每条线路分配独立的端口管道（除桥接模式复用落地直连入站外）。这确保了不同线路的流量倍率（如直连 1.0x vs 中转 1.5x）在边缘 Agent 增量统计时精准隔离，且任何单条线路的启停或变更均不影响其他线路的生命周期与健康检测。
-- **配置推送与在线门禁**：保存线路后复用 250ms 防抖，自动为承担入口或落地角色的在线节点重新编译并下发 `config_sync`。中继线路在套餐订阅中要求中转入口节点与落地节点**同时在线**才会向客户端呈现并允许连通。
+- **配置推送与在线门禁**：保存线路后复用 250ms 防抖，自动为承担入口或落地角色的在线节点重新编译并下发 `config_sync`。中继线路订阅资格与节点心跳解耦；维护轮换的期望停用与实际运行确认另行展示，不以在线标记替代配置确认。
 
 ### 3.2.1 线路最终落地 HTTP/SOCKS5 出站
 
@@ -329,7 +329,7 @@ sequenceDiagram
 
 ## 8. 二进制资源中心与升级分发
 
-Master 将“应用发布”和“可分发二进制资源”拆成两条生命周期。根 `package.json` 版本继续代表 Master/Web/Agent 应用与协议版本；Sing-box 资源由 `upstreamVersion + revision` 独立标识，平台文件由 `BinaryAsset` 管理，`libcronet.so` 与 Sing-box 主文件挂在同一资产包内。
+Master 将“应用发布”和“可分发二进制资源”拆成两条生命周期。应用发布采用 Master/Web 与 Agent 双轨：根 `package.json` 的 `version` 仅为 Master（Server + Web + 控制面）的版本源，Agent 程序版本独立取自 `apps/agent/VERSION`；两轨分别维护各自的 Unreleased 与 Release PR，使用 `vX.Y.Z`、`agent-vA.B.C` Tag，协议兼容须按 [VERSIONING.md](./VERSIONING.md) 协同评估。Sing-box 资源由 `upstreamVersion + revision` 独立标识，平台文件由 `BinaryAsset` 管理，`libcronet.so` 与 Sing-box 主文件挂在同一资产包内。
 
 启动时 `BinaryResourcesService` 读取静态内置仓和运行态 `data/binaries` 中的 `manifest.json`，将资源元数据认领到 SQLite，再兼容旧目录扫描；随后自动收敛内置资源生命周期——镜像/发行包主 manifest 解析成功时，把不在当前 manifest 中的 `BUILTIN` 资源自动归档（保留审计、可手动恢复），避免升级镜像后在资源列表中积累历史“内置”版本；同时把磁盘文件缺失或 SHA-256 不符的资产标记为不可用（文件恢复后自愈回填），无任何可用资产的启用资源自动停用，并将每类资源的默认版本收敛为唯一一条。资源文件不进入数据库，运行态文件按 `data/binaries/resources/<releaseId>/<target>/` 保存。管理员通过资源中心上传或远程导入，资源状态流转为 DRAFT、ACTIVE、DISABLED、RETIRED；节点或默认配置引用的资源只能逻辑停用/归档。
 
@@ -340,9 +340,17 @@ Master 将“应用发布”和“可分发二进制资源”拆成两条生命�
 
 ## 9. 实时节点镜像链路
 
-实时镜像保持控制面与数据面分离：浏览器请求先到 Master 的 `/mirror/...` 路由，Master 根据 `MirrorSite` 完成访问策略、路径拼接、请求头白名单、限速和节点能力检查，再通过当前节点的 WSS/WS 长连接发送 `mirror_request`。Agent 在节点本地重新解析并校验目标地址后访问上游，将安全响应头、二进制分片和结束/错误事件回传；Master 只把事件映射为 Express 响应，不保存响应体。
+浏览器请求先到 Master 的 `/mirror/...` 路由，Master 根据 `MirrorSite` 完成 ADMIN/SHARE/PUBLIC 访问策略、Token 有效性、路径拼接、请求头白名单、限频和节点能力检查，再通过指定节点的 WSS/WS 长连接发送 `mirror_request`。分享路由先于 slug 通配路由登记；通配路径逐段重新编码，不能切换上游协议、主机或端口。仅在线且宣告 `mirror_proxy` 的 WS 节点可以承载任务，旧 Agent 能力不足或 HTTP 轮询节点均被拒绝。
 
-`taskId -> MirrorSession` 只存在 Master 内存中。客户端关闭、请求超时、Agent 断开或 Master 重启都会取消并清理会话；进行中的流不跨重启恢复。旧 Agent 不宣告 `mirror_proxy` 时不会收到镜像任务，HTTP 轮询节点也不参与实时镜像。所有 Agent 写帧继续经过既有写锁，二进制帧按任务 ID 路由到对应会话。
+Agent 的镜像执行器独立于 Sing-box，在节点本地访问上游，不将镜像变成用户订阅线路。URL 前检、每次重定向及实际拨号均执行允许域名和公网地址校验；拨号时重新解析，整组拒绝混合公网/私网答案，再固定到已校验的具体 IP，禁止 HTTPS 降级重定向。解析器/拨号器仅通过内部构造供受控测试注入，生产没有私网绕过开关。安全响应头、二进制分片及结束/错误事件仍沿既有 WS 协议回传；正文不保存到数据库或磁盘缓存，压缩字节不被 Agent 自动解压。
+
+**Master 流生命周期**：在异步启动前登记任务，`MirrorTask` 统一处理终态，`MirrorResponseStream` 负责 HTTP 写入。每流按 Node 原生写缓冲与排队分片合计设置 1 MiB 阈值；写入返回 false 后等待本流 drain，超限按 `SLOW_CONSUMER` 取消该流，不暂停共享 WS 消费。Agent 结束后仍须排空队列并等待 HTTP 完成事件，期间总超时及客户端关闭检测继续生效。正常完成、错误、超时、浏览器断开、节点断线、撤销及模块关闭均清除计时器、监听器、分片队列与任务登记，并对代理请求的摘要写入和日志各结算一次；迟到启动句柄立即停止，迟到事件不重复结算。日志不记录 Token、完整含查询 URL 或正文。
+
+**授权变更与关闭**：配置更新、删除及分享 Token 轮换只有持久化成功后才撤销该镜像活动任务，失败不提前中断；访问配置读取期间遇到撤销会重读，活动分享流到期也会结束。管理员 HEAD 测试复用同一任务收尾机制。正常模块关闭会清理内存任务；异常进程终止后的流依赖 WS 断开回收，不承诺取消帧送达或将进行中请求恢复到新进程。
+
+**Agent 协程与资源**：任务在读循环内同步登记，再启动执行协程，防止请求后立即到达的取消帧丢失。每节点最多 4 个活动镜像任务，满载返回 BUSY，不派生无界等待任务；执行器的 DNS 与并发槽等待也纳入请求预算。读循环退出时取消上下文、关闭连接，取消并等待全部镜像协程退出；异常受控恢复后仍释放任务登记。所有 Agent 写帧复用既有写锁，分片按 task ID 路由；Master 忽略损坏、未知及跨节点帧。普通请求最多 10 分钟、正文最多 256 MiB，管理员 HEAD 测试 30 秒，上游响应头最多 64 KiB；具体阶段预算、错误码和 HTTP 已发头后的关闭行为见 [镜像协议 §4](./API_AND_PROTOCOLS.md#4-实时节点镜像协议)。Master 在异步查询前预留全局槽和每流 1 MiB 正文缓冲，跨节点合计最多 16 个活动任务、16 MiB 预留；每节点最多 4 个任务，无等待队列，满载返回 `503/BUSY`。取消但启动尚未结束或等待 drain 的任务仍占用槽，直到实际清理完成。
+
+本轮证据来自本地受控 HTTP/TLS/WS 服务、依赖注入与定向回归，覆盖慢客户端隔离、并发分片/心跳、Token 变更和取消后的协程退出。真实外部节点出口、现网下载与生产部署验收尚未由这些测试证明。
 
 ## 10. 直连代理池双轨架构（v0.9.0）
 
@@ -441,3 +449,11 @@ Mihomo 在 Master 上独立运行，不修改业务 Agent 内核。一次批次�
 主要客户端模板按格式验证，不默认双内核互相否决。内核缺失明确 UNAVAILABLE，外部规则/GeoIP/证书等依赖缺失明确 EXTERNAL_RESOURCES_REQUIRED；FULL 与 PARTIAL 分开，禁止改写规则后宣称完整通过。固定资源由 Docker/发行包/本地准备共用清单，运行时默认不下载。
 
 模板校验链路由 `config-resources` 按内核分析依赖 → `ValidationResourcesService` 解析受控清单、校验大小和 SHA-256 → `ManagedKernelProcess` 准备私有资源快照 → 固定内核原生检查构成。引用资源不等于缺失；依赖明细带位置、可用性和处理建议，响应有界且不输出资源 URL/私钥/宿主路径。Mihomo 的默认地理库与 domain/ipcidr YAML/text 本地规则可进入校验；远程/不支持资源仍阻断，不变更规则或切换内核冒充通过。预览仍直接返回生成内容与统计；原生检查通过不代表节点连通性。资源准备只在构建/显式命令进行，运行时不会替预览请求下载任意资源；快照准备、超时和取消复用受管进程清理。
+
+## 11. 线路凭据维护与订阅拨测
+
+LineCredentialsModule只依赖Prisma和系统日志，由AgentService注册下发回调，不反向依赖网关。Prepare批量读取作用域/密文，配置编译保存短期快照；capture对最终Sing-box配置执行阶段证明后登记预期版本。回执、心跳与五秒协调巡检使用持久化条件更新推进，入口停用、落地替换、入口恢复按实际运行确认串行。节点或Tag变化先撤销旧入口/落地。旧阶段失败、超时快照和旧版本回执不能覆盖已登记的新状态。两端没有同时原子提交的假设，失败期望停用，网络分区仍明确未确认。
+
+专用订阅拨测与网关复用evaluateSubscriptionEntitlement；Master仍使用受管Mihomo，不改变延迟测量起点。选择User.id后按正常权益和账务处理，公共入站不注入系统测速身份。中继免重复计量只识别数据库登记的节点、实际入站线路和身份指纹。配置、心跳及日志诊断先按实际渲染秘密脱敏，再交给原日志边界。
+
+中继认证拒绝沿用日志通道：Master 按真实配置版本及落地入站白名单识别确定的认证/认证首包拒绝，替换原始错误为线路/端口维度的有界计数摘要；首次立即提示、后续30秒合并，停机刷出。共享目标归目标线路，不根据攻击者身份推断源线路。日志中不可观测的 Hysteria2 静默拒绝不伪造零计数，详细边界见 API §6.4。
