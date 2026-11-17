@@ -1,6 +1,7 @@
 import { assertEgressOverride, egressOverrideConflict } from '../common/line-egress';
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { Node, Prisma } from '@prisma/client';
+import { LineCredentialsService } from '../line-credentials/line-credentials.service';
 import { AgentService, type UpgradeTaskOptions } from '../agent-gateway/agent.service';
 import { BinariesService, normalizeOsArch } from '../binaries/binaries.service';
 import { BinaryResourcesService } from '../binaries/binary-resources.service';
@@ -28,6 +29,12 @@ const nodeLinesInclude = {
   landingLines: { include: { entryNode: nodeSummary }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] }
 } satisfies Prisma.NodeInclude;
 type NodeWithLines = Prisma.NodeGetPayload<{ include: typeof nodeLinesInclude }>;
+const runtimeNodeFields = ['serverHost', 'reachability', 'configOverride', 'communicationMode', 'pollIntervalSecs'] as const;
+type NodeUpdate = Pick<UpdateNodeDto, 'name' | typeof runtimeNodeFields[number]>;
+
+function changesNodeRuntime(current: Pick<Node, typeof runtimeNodeFields[number]>, data: NodeUpdate): boolean {
+  return runtimeNodeFields.some(key => data[key] !== undefined && data[key] !== current[key]);
+}
 
 @Injectable()
 export class NodesService {
@@ -39,7 +46,8 @@ export class NodesService {
     @Optional() private readonly settingsService?: SettingsService,
     @Optional() private readonly offlinePackage?: OfflinePackageService,
     @Optional() private readonly installer?: BinariesInstallerService,
-    @Optional() private readonly systemLogsService?: SystemLogsService
+    @Optional() private readonly systemLogsService?: SystemLogsService,
+    @Optional() private readonly lineCredentials?: LineCredentialsService
   ) {}
 
   async list() {
@@ -56,13 +64,13 @@ export class NodesService {
       requestBaseUrl
     });
     const agentImage = process.env.AGENT_IMAGE || '2chariko/riricloud-agent:latest';
-    const decryptedToken = decryptSecret(node.agentToken);
     return {
       node: {
         ...this.sanitize(node),
         // 升级任务已完成但心跳版本尚未确认（Agent 重启可能失败）时的待确认信息
         pendingVersionConfirm: this.agentGateway.getPendingVersionConfirmation(id),
-        installCommands: this.buildInstallCommands(node.osArch, publicBaseUrl, node.id, decryptedToken, node.communicationMode),
+        // 普通查询只生成待输入凭据的命令；预配置下载由单独的管理员入口显式提供。
+        installCommands: this.buildInstallCommands(node.osArch, publicBaseUrl, node.id),
         agentImage,
         uninstallCommand: this.buildUninstallCommand(),
         windowsUninstallCommand: this.buildWindowsUninstallCommand()
@@ -109,13 +117,21 @@ export class NodesService {
   async rotateToken(id: string, operatorId?: string, requestBaseUrl?: string) {
     const node = await this.requireNode(id);
     if (node.isLocal) throw new ConflictException('主控本机节点请通过重置主控配置轮换凭证');
+    await this.lineCredentials?.assertNodeEditable(id);
     const settings = await this.settingsService?.getSettings();
     const publicBaseUrl = resolvePublicBaseUrl({
       configuredBaseUrl: settings?.publicBaseUrl,
       requestBaseUrl
     });
     const token = generateAgentToken();
-    await this.prisma.node.update({ where: { id }, data: { agentToken: encryptSecret(token), agentTokenHash: hashAgentToken(token), status: 'OFFLINE' } });
+    const data = { agentToken: encryptSecret(token), agentTokenHash: hashAgentToken(token), status: 'OFFLINE' };
+    if (this.lineCredentials) await this.prisma.$transaction(async tx => {
+      const latest = await this.requireNode(id, tx);
+      if (latest.isLocal) throw new ConflictException('主控本机节点请通过重置主控配置轮换凭证');
+      await this.lineCredentials!.assertNodeEditable(id, tx);
+      await tx.node.update({ where: { id }, data });
+    });
+    else await this.prisma.node.update({ where: { id }, data });
     this.agentGateway.disconnectNode(id);
     this.systemLogsService?.enqueue({
       source: 'SERVER',
@@ -333,8 +349,8 @@ export class NodesService {
   }
 
   async update(id: string, dto: UpdateNodeDto) {
-    await this.requireNode(id);
-    const data: { name?: string; serverHost?: string; reachability?: string; configOverride?: string | null; communicationMode?: 'WS' | 'HTTP'; pollIntervalSecs?: number } = {};
+    const current = await this.requireNode(id);
+    const data: NodeUpdate = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
       if (!name) throw new BadRequestException('节点名称不能为空');
@@ -345,39 +361,57 @@ export class NodesService {
       if (!serverHost) throw new BadRequestException('服务器地址不能为空');
       data.serverHost = serverHost;
     }
-    if (dto.reachability !== undefined) {
-      if (dto.reachability === 'NAT') {
-        const activeEntryLines = await this.prisma.line.count({
-          where: { entryNodeId: id }
-        });
-        if (activeEntryLines > 0) {
-          throw new BadRequestException('该节点正在作为直连线路或中继入口节点使用，无法变更为 NAT 节点，请先调整相关线路');
-        }
-      }
-      data.reachability = dto.reachability;
-    }
+    if (dto.reachability !== undefined) data.reachability = dto.reachability;
     if (dto.configOverride !== undefined) {
       data.configOverride = dto.configOverride === null || dto.configOverride.trim() === ''
-        ? null
-        : this.validateConfigOverride(dto.configOverride);
-      if (egressOverrideConflict(data.configOverride)) {
-        const egressLine = await this.prisma.line.findFirst({ where: { egressProxyJson: { not: null }, OR: [{ type: 'DIRECT', entryNodeId: id }, { type: 'RELAY', relayMode: { in: ['BLIND_FORWARD', 'PROTOCOL_PROXY'] }, landingNodeId: id }] }, select: { id: true } });
-        if (egressLine) assertEgressOverride(data.configOverride, egressLine.id);
-      }
+        ? null : this.validateConfigOverride(dto.configOverride);
     }
     if (dto.communicationMode !== undefined) data.communicationMode = dto.communicationMode;
     if (dto.pollIntervalSecs !== undefined) data.pollIntervalSecs = dto.pollIntervalSecs;
     if (Object.keys(data).length === 0) throw new BadRequestException('未提供任何更新字段');
-    const updated = await this.prisma.node.update({ where: { id }, data, include: nodeLinesInclude });
+    if (changesNodeRuntime(current, data)) await this.lineCredentials?.assertNodeEditable(id);
+    const write = async (tx: Prisma.TransactionClient, recheck: boolean) => {
+      // 表单会重复提交未修改的地址；必须以事务内最新值判断是否真正改变运行配置。
+      if (recheck) {
+        const latest = await this.requireNode(id, tx);
+        if (changesNodeRuntime(latest, data)) await this.lineCredentials!.assertNodeEditable(id, tx);
+      }
+      await this.validateNodeRuntimeUpdate(id, data, tx);
+      return tx.node.update({ where: { id }, data, include: nodeLinesInclude });
+    };
+    const updated = this.lineCredentials
+      ? await this.prisma.$transaction(tx => write(tx, true))
+      : await write(this.prisma, false);
     void (dto.serverHost !== undefined ? this.agentGateway.pushConfigToAll() : this.agentGateway.pushConfig(id));
     return { node: this.sanitize(updated) };
+  }
+
+  private async validateNodeRuntimeUpdate(id: string, data: NodeUpdate, tx: Prisma.TransactionClient) {
+    if (data.reachability === 'NAT' && await tx.line.count({ where: { entryNodeId: id } }) > 0) {
+      throw new BadRequestException('该节点正在作为直连线路或中继入口节点使用，无法变更为 NAT 节点，请先调整相关线路');
+    }
+    if (data.configOverride !== undefined && egressOverrideConflict(data.configOverride)) {
+      const egressLine = await tx.line.findFirst({
+        where: { egressProxyJson: { not: null }, OR: [{ type: 'DIRECT', entryNodeId: id }, { type: 'RELAY', relayMode: { in: ['BLIND_FORWARD', 'PROTOCOL_PROXY'] }, landingNodeId: id }] },
+        select: { id: true }
+      });
+      if (egressLine) assertEgressOverride(data.configOverride, egressLine.id);
+    }
   }
 
   async remove(id: string) {
     const node = await this.requireNode(id);
     if (node.isLocal) throw new ConflictException('主控本机节点不可删除');
+    await this.lineCredentials?.assertNodeEditable(id);
+    if (this.lineCredentials) await this.prisma.$transaction(async tx => {
+      const latest = await this.requireNode(id, tx);
+      if (latest.isLocal) throw new ConflictException('主控本机节点不可删除');
+      await this.lineCredentials!.assertNodeEditable(id, tx);
+      await tx.node.delete({ where: { id } });
+    });
+    else await this.prisma.node.delete({ where: { id } });
+    // 数据库拒绝删除或事务回滚时，不提前断开仍在维护中的 Agent。
     this.agentGateway.disconnectNode(id);
-    await this.prisma.node.delete({ where: { id } });
     return { deleted: true, id };
   }
 
@@ -385,8 +419,8 @@ export class NodesService {
     return generateRealityParameters();
   }
 
-  private async requireNode(id: string) {
-    const node = await this.prisma.node.findUnique({ where: { id } });
+  private async requireNode(id: string, tx: Prisma.TransactionClient = this.prisma) {
+    const node = await tx.node.findUnique({ where: { id } });
     if (!node) throw new NotFoundException('节点不存在');
     return node;
   }

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { URL } from 'node:url';
 import ts from 'typescript';
+import { z } from 'zod';
 const source = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const exports = {};
 runInNewContext(ts.transpileModule(source('./probe-types.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports });
@@ -191,12 +192,17 @@ test('ordinary task dialog and results never render kernel metadata or raw diagn
 });
 
 test('settings omit the hidden fallback flag and preserve explicit timeout overrides', () => {
-  const settings = {};
+  const settings = {}, settingsSchema = {};
   const modules = {
+    zod: { z },
+    '@/i18n/config': { default: { t: (key) => key } },
+    './settings-schema': settingsSchema,
     '@/lib/speed-tier': { DEFAULT_SPEED_TIERS: [] },
     '@/lib/announcements': { parseAnnouncements: () => [], derivePrimaryBannerText: () => '' },
     './components/probe-preset-schema': { toProbePresetFormValue: (v) => v, toProbePresetTarget: (v) => v }
   };
+  runInNewContext(ts.transpileModule(source('../pages/admin/settings/settings-schema.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText,
+    { exports: settingsSchema, require: (name) => modules[name] });
   runInNewContext(ts.transpileModule(source('../pages/admin/settings/settings-form.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText,
     { exports: settings, require: (name) => modules[name], __DEFAULT_GITHUB_REPO_URL__: 'https://github.com/example/repo' });
   const defaults = settings.defaultSettingsForm();
@@ -208,6 +214,9 @@ test('settings omit the hidden fallback flag and preserve explicit timeout overr
   }
   const explicit = settings.toForm({ ...settings.toPayload(defaults), defaultBalance: 0, emailDomainList: [], githubMirrorUrls: [], probePresetTargets: [], lineSpeedtestTimeoutMs: 3000 });
   assert.equal(explicit.lineSpeedtestTimeoutMs, 3000);
+  const reminders = settings.toPayload({ ...defaults, trafficWarningThresholdsText: '95, 80，95', subscriptionExpiryReminderDaysText: '0, 7, 3' });
+  assert.deepEqual(Array.from(reminders.trafficWarningThresholds), [95, 80]);
+  assert.deepEqual(Array.from(reminders.subscriptionExpiryReminderDays), [7, 3, 0]);
   const tabs = source('../pages/admin/settings/components/settings-tabs.tsx');
   assert.doesNotMatch(tabs, /name="probeSingboxFallbackEnabled"|<ClientKernelStatusCard/);
 });

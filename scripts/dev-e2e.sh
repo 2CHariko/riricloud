@@ -8,8 +8,8 @@
 #   NODE_PORT=9443 USE_MASTER_LOCAL=0 bash scripts/dev-e2e.sh # 自定义独立节点端口
 #   AGENT_TOKEN=xxx bash scripts/dev-e2e.sh  # 复用既有节点 Token（跳过自动建节点）
 #
-# 环境变量：SERVER_URL / SERVER_PORT / STATS_API_LISTEN / CLASH_API_LISTEN / WEB_URL / ADMIN_EMAIL / ADMIN_PASSWORD / SERVER_ENV_FILE / E2E_DATABASE_URL / NODE_NAME / NODE_HOST / NODE_PORT / USE_MASTER_LOCAL / E2E_SYNC_RESOURCES / E2E_SERVICE_PORT_START / E2E_SERVICE_PORT_SCAN_LIMIT / E2E_KERNEL_START_ATTEMPTS
-# 联调端口：主控端默认 30800（避开 Windows 保留/动态端口区间），实际使用端口写入 .cache/dev-e2e-server-port 供后续运行复用
+# 环境变量：SERVER_URL / SERVER_PORT / STATS_API_LISTEN / CLASH_API_LISTEN / WEB_URL / ADMIN_EMAIL / ADMIN_PASSWORD / SERVER_ENV_FILE / E2E_DATABASE_URL / E2E_TELEMETRY_DATABASE_URL / E2E_DATA_ROOT / NODE_NAME / NODE_HOST / NODE_PORT / USE_MASTER_LOCAL / E2E_SYNC_RESOURCES / E2E_SERVICE_PORT_START / E2E_SERVICE_PORT_SCAN_LIMIT / E2E_KERNEL_START_ATTEMPTS
+# 联调端口：主控端默认 30800（避开 Windows 保留/动态端口区间），实际使用端口写入 .cache/dev-e2e-instances/<实例标识>/server-port 供后续运行复用
 # 联调数据库：默认使用 apps/server/prisma/dev-e2e.db，避免与手动启动的 3000 端口主控共享 SQLite 写锁；可通过 E2E_DATABASE_URL 显式改回其他 SQLite URL
 # Agent 版本默认取 apps/agent/VERSION；E2E_AGENT_VERSION 或 E2E_RESOURCE_VERSION 覆盖该版本，两者同时指定须相同
 # sing-box 二进制查找顺序：SINGBOX_BINARY_PATH > 当前平台缓存 > tools/ > PATH
@@ -60,6 +60,10 @@ E2E_DATABASE_URL="$(node apps/server/prisma/sqlite-url.js "${E2E_DATABASE_URL:-$
 export DATABASE_URL="$E2E_DATABASE_URL"
 E2E_TELEMETRY_DATABASE_URL="$(node apps/server/prisma/sqlite-url.js "${E2E_TELEMETRY_DATABASE_URL:-${TELEMETRY_DATABASE_URL:-file:./dev-e2e-telemetry.db}}" "$ROOT/apps/server/prisma/telemetry")" || { printf '%s\n' '[dev-e2e] 观测库 SQLite URL 无效' >&2; exit 1; }
 export TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL"
+# 不继承普通开发服务的 RIRICLOUD_DATA_DIR；每个双库实例独占且稳定复用运行资源。
+E2E_INSTANCE_DIR="$(node scripts/dev-e2e-storage.mjs "$ROOT" "$E2E_DATABASE_URL" "$E2E_TELEMETRY_DATABASE_URL" "${E2E_DATA_ROOT:-}")" || { printf '%s\n' '[dev-e2e] 无法定位隔离运行数据目录' >&2; exit 1; }
+export RIRICLOUD_DATA_DIR="$E2E_INSTANCE_DIR/data"
+mkdir -p "$E2E_INSTANCE_DIR" "$RIRICLOUD_DATA_DIR"
 ADMIN_EMAIL="${ADMIN_EMAIL:-$(read_dotenv_value "$SERVER_ENV_FILE" ADMIN_EMAIL)}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-${SEED_ADMIN_EMAIL:-$(read_dotenv_value "$SERVER_ENV_FILE" SEED_ADMIN_EMAIL)}}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@riricloud.local}"
@@ -101,8 +105,8 @@ if [ -z "${JWT_SECRET:-}" ]; then
 fi
 export JWT_SECRET
 
-LOG_DIR="$ROOT/.cache/logs"
-SINGBOX_CONF_DIR="$ROOT/.cache/agent"
+LOG_DIR="$E2E_INSTANCE_DIR/logs"
+SINGBOX_CONF_DIR="$E2E_INSTANCE_DIR/agent"
 mkdir -p "$LOG_DIR" "$SINGBOX_CONF_DIR"
 COOKIE_JAR=""
 LOGIN_RESPONSE_FILE=""
@@ -146,8 +150,9 @@ SERVER_TSCONFIG=""
 
 # 记录本次实际使用的主控端口：端口一旦漂移，仅探测默认地址无法发现既有主控端，
 # 二次启动会重复拉起并抢占同一端口（Windows 下表现为 EADDRINUSE 竞态）。
-E2E_PORT_FILE="$ROOT/.cache/dev-e2e-server-port"
-E2E_DATABASE_MARKER_FILE="$ROOT/.cache/dev-e2e-server-db"
+E2E_PORT_FILE="$E2E_INSTANCE_DIR/server-port"
+E2E_DATABASE_MARKER_FILE="$E2E_INSTANCE_DIR/database-url"
+E2E_DATA_MARKER_FILE="$E2E_INSTANCE_DIR/data-dir"
 SERVER_REUSE_ALLOWED=0
 if [ -n "$SERVER_URL_OVERRIDE" ]; then
   SERVER_REUSE_ALLOWED=1
@@ -159,11 +164,16 @@ if [ -z "$SERVER_PORT_OVERRIDE" ] && [ -z "$SERVER_URL_OVERRIDE" ] && [ -f "$E2E
     ''|*[!0-9]*) RECORDED_PORT="" ;;
   esac
   RECORDED_DATABASE_URL=""
+  RECORDED_DATA_DIR=""
+  if [ -f "$E2E_DATA_MARKER_FILE" ]; then
+    read -r RECORDED_DATA_DIR <"$E2E_DATA_MARKER_FILE" || true
+  fi
   if [ -f "$E2E_DATABASE_MARKER_FILE" ]; then
     read -r RECORDED_DATABASE_URL <"$E2E_DATABASE_MARKER_FILE" || true
   fi
   if [ -n "$RECORDED_PORT" ] && [ "${#RECORDED_PORT}" -le 5 ] \
     && [ "$RECORDED_DATABASE_URL" = "$E2E_DATABASE_URL" ] \
+    && [ "$RECORDED_DATA_DIR" = "$RIRICLOUD_DATA_DIR" ] \
     && curl -fsS --max-time 2 "http://localhost:$RECORDED_PORT/api/v1/system/version" >/dev/null 2>&1; then
     SERVER_PORT="$RECORDED_PORT"
     SERVER_URL="http://localhost:$RECORDED_PORT"
@@ -191,10 +201,25 @@ kill_process_tree() {
   kill "$pid" 2>/dev/null || true
 }
 
+stop_owned_server() {
+  [ -n "$SERVER_PID" ] || return 0
+  if [ -n "$SERVER_TSCONFIG" ]; then
+    printf 'stop\n' >"$SERVER_TSCONFIG.stop"
+    # 只向本次编译目录发出请求；复用的用户服务没有 SERVER_PID，绝不受影响。
+    for _ in $(seq 1 50); do
+      if ! kill -0 "$SERVER_PID" 2>/dev/null; then wait "$SERVER_PID" 2>/dev/null || true; SERVER_PID=""; return 0; fi
+      sleep 0.2
+    done
+  fi
+  kill_process_tree "$SERVER_PID"
+  wait "$SERVER_PID" 2>/dev/null || true
+  SERVER_PID=""
+}
+
 cleanup() {
   kill_process_tree "$AGENT_PID"
   # 只回收本次脚本启动的服务；已在运行的复用实例保持不动
-  kill_process_tree "$SERVER_PID"
+  stop_owned_server
   kill_process_tree "$WEB_PID"
   # 先停止持有输出的进程，再仅清理本次隔离目录；不碰手动开发服务的 dist。
   [ -n "$SERVER_TSCONFIG" ] && rm -rf -- "$(dirname "$SERVER_TSCONFIG")"
@@ -470,15 +495,7 @@ if [ "$SERVER_REUSE_ALLOWED" = "1" ] && server_up; then
   SERVER_ALREADY_UP=1
   say "主控端已在 $SERVER_URL 运行，跳过数据库迁移并直接复用"
 else
-  say "检查并应用数据库迁移（$E2E_DATABASE_URL / $E2E_TELEMETRY_DATABASE_URL）…"
-  DATABASE_URL="$E2E_DATABASE_URL" node apps/server/prisma/upstream-upgrade-preflight.js || die "旧上游数据不支持自动升级；请备份并显式处理上游源、节点与关联线路后再运行"
-  TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" pnpm --dir apps/server exec prisma migrate deploy --schema=prisma/telemetry/schema.prisma || die "观测库迁移失败"
-  DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" node apps/server/prisma/migrate-telemetry-data.js || true
-  DATABASE_URL="$E2E_DATABASE_URL" pnpm --dir apps/server exec prisma migrate deploy || die "数据库迁移失败；请按上方 Prisma 错误处理（P3018/CHECK 为失败迁移或旧数据保护，不是端口或写锁问题）"
-  if [ "$DB_WAS_PRESENT" = "0" ]; then
-    say "初始化种子数据…"
-    DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" pnpm --dir apps/server exec prisma db seed || die "数据库种子失败"
-  fi
+  say "双库迁移与首次种子将在主控受锁启动入口执行…"
 fi
 
 if [ "$SERVER_ALREADY_UP" = "1" ]; then
@@ -522,7 +539,8 @@ else
     # Nest CLI 的 --path 使用工作区相对路径（绝对路径在当前 Windows CLI 下会被重复拼接）。
     SERVER_TSCONFIG_ARG=".cache/$(basename "$(dirname "$SERVER_TSCONFIG")")/tsconfig.json"
     say "启动主控端（端口 $SERVER_PORT，日志：$LOG_DIR/server.log）…"
-    PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" CLASH_API_LISTEN="${CLASH_API_LISTEN:-}" pnpm --filter @riricloud/server exec nest start --watch --path "$SERVER_TSCONFIG_ARG" >"$LOG_DIR/server.log" 2>&1 &
+    pnpm --filter @riricloud/server exec nest build --path "$SERVER_TSCONFIG_ARG" >"$LOG_DIR/server.log" 2>&1 || die "主控独立编译失败，请检查 $LOG_DIR/server.log"
+    PORT="$SERVER_PORT" DATABASE_URL="$E2E_DATABASE_URL" TELEMETRY_DATABASE_URL="$E2E_TELEMETRY_DATABASE_URL" STATS_API_LISTEN="${STATS_API_LISTEN:-}" CLASH_API_LISTEN="${CLASH_API_LISTEN:-}" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" node apps/server/prisma/maintenance-start.js --build-dir "$(dirname "$SERVER_TSCONFIG")/dist" --seed-if-missing --stop-file "$SERVER_TSCONFIG.stop" >>"$LOG_DIR/server.log" 2>&1 &
     SERVER_PID=$!
     SERVER_EADDRINUSE=0
     for _ in $(seq 1 60); do
@@ -543,8 +561,7 @@ else
       break
     fi
     if [ "$SERVER_EADDRINUSE" = "1" ]; then
-      kill_process_tree "$SERVER_PID"
-      SERVER_PID=""
+      stop_owned_server
       rm -rf -- "$(dirname "$SERVER_TSCONFIG")"
       SERVER_TSCONFIG=""
       if [ -n "$SERVER_PORT_OVERRIDE" ]; then
@@ -564,6 +581,7 @@ else
   fi
   printf '%s' "$SERVER_PORT" >"$E2E_PORT_FILE"
   printf '%s' "$E2E_DATABASE_URL" >"$E2E_DATABASE_MARKER_FILE"
+  printf '%s' "$RIRICLOUD_DATA_DIR" >"$E2E_DATA_MARKER_FILE"
   say "主控端就绪：$SERVER_URL"
 fi
 

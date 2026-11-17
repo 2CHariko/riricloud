@@ -23,7 +23,10 @@ try {
 
 const prismaCli = '/app/node_modules/prisma/build/index.js';
 let serverChild = null;
+let serverSession = null;
+let maintenanceLease = null;
 let shutdownRequested = false;
+let safeToRelease = true;
 
 function fail(message) {
   console.error(message);
@@ -31,23 +34,25 @@ function fail(message) {
 }
 
 function runPrisma(...args) {
+  if (shutdownRequested) fail('Master startup was cancelled');
   const result = spawnSync(process.execPath, [prismaCli, ...args], {
     cwd: '/app',
     env: process.env,
     stdio: 'inherit'
   });
-  if (result.error) fail(`prisma ${args.join(' ')} failed: ${result.error.message}`);
-  if (result.status !== 0) fail(`prisma ${args.join(' ')} failed with exit code ${result.status ?? 1}`);
+  if (result.error) { safeToRelease = false; fail(`prisma ${args.join(' ')} failed: ${result.error.message}`); }
+  if (result.status !== 0) { safeToRelease = false; fail(`prisma ${args.join(' ')} failed with exit code ${result.status ?? 1}`); }
 }
 
 function runNodeScript(scriptPath) {
+  if (shutdownRequested) fail('Master startup was cancelled');
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: '/app',
     env: process.env,
     stdio: 'inherit'
   });
-  if (result.error) fail(`${scriptPath} failed: ${result.error.message}`);
-  if (result.status !== 0) fail(`${scriptPath} failed with exit code ${result.status ?? 1}`);
+  if (result.error) { safeToRelease = false; fail(`${scriptPath} failed: ${result.error.message}`); }
+  if (result.status !== 0) { safeToRelease = false; fail(`${scriptPath} failed with exit code ${result.status ?? 1}`); }
 }
 
 function isEnabled(value) {
@@ -265,17 +270,33 @@ function stopChild(child, signal = 'SIGTERM') {
 
 function handleSignal(signal) {
   shutdownRequested = true;
-  if (serverChild) stopChild(serverChild, signal);
+  if (serverChild && !serverSession?.requestShutdown()) stopChild(serverChild, signal);
 }
 
-process.on('SIGTERM', () => handleSignal('SIGTERM'));
-process.on('SIGINT', () => handleSignal('SIGINT'));
-
 async function main() {
+  process.on('SIGTERM', () => handleSignal('SIGTERM'));
+  process.on('SIGINT', () => handleSignal('SIGINT'));
   runStartupDiagnostics();
 
-  process.env.TELEMETRY_DATABASE_URL = process.env.TELEMETRY_DATABASE_URL || 'file:/app/data/telemetry.db';
+  const maintenanceDir = fs.existsSync('/app/prisma/maintenance-lock.js')
+    ? '/app/prisma'
+    : path.resolve(__dirname, '../apps/server/prisma');
+  const { resolveConfig } = require(path.join(maintenanceDir, 'maintenance-config.js'));
+  const { acquireLock, assertStartAllowed } = require(path.join(maintenanceDir, 'maintenance-lock.js'));
+  const dataDir = process.env.MASTER_DATA_DIR || '/app/data';
+  process.env.DATABASE_URL = process.env.DATABASE_URL || `file:${dataDir}/riri.db`;
+  process.env.TELEMETRY_DATABASE_URL = process.env.TELEMETRY_DATABASE_URL || `file:${dataDir}/telemetry.db`;
+  process.env.RIRICLOUD_DATA_DIR = process.env.RIRICLOUD_DATA_DIR || dataDir;
+  const storage = resolveConfig({}, process.env);
+  // 原子锁必须先于所有迁移/引导，持有到 Master 子进程退出，不能在迁移后留空窗。
+  maintenanceLease = acquireLock(storage, { role: 'startup' });
+  assertStartAllowed(storage);
+  process.env.DATABASE_URL = `file:${storage.main.split(path.sep).join('/')}`;
+  process.env.TELEMETRY_DATABASE_URL = `file:${storage.telemetry.split(path.sep).join('/')}`;
+  process.env.RIRICLOUD_DATA_DIR = storage.dataDir;
+  Object.assign(process.env, { RIRICLOUD_MAINTENANCE_LEASE: maintenanceLease.childEnvironment.RIRICLOUD_MAINTENANCE_LEASE });
 
+  require(path.join(maintenanceDir, 'maintenance-start.js')).prepareDatabaseFiles(storage);
   runNodeScript('/app/prisma/upstream-upgrade-preflight.js');
   runPrisma('migrate', 'deploy', '--schema=/app/prisma/telemetry/schema.prisma');
   runNodeScript('/app/prisma/migrate-telemetry-data.js');
@@ -294,11 +315,14 @@ async function main() {
       ? 'dist/src/main.js'
       : 'dist/main.js';
 
+  if (shutdownRequested) return;
   serverChild = spawn(process.execPath, [mainEntry], {
     cwd: '/app',
     env: process.env,
-    stdio: 'inherit'
+    stdio: ['inherit', 'inherit', 'inherit', 'ipc']
   });
+  const childLease = maintenanceLease.bindChild(serverChild);
+  serverSession = childLease;
 
   const exitCode = await new Promise((resolve) => {
     serverChild.once('error', (error) => {
@@ -306,16 +330,28 @@ async function main() {
       resolve(1);
     });
     serverChild.once('exit', (code, signal) => {
-      if (shutdownRequested || signal) resolve(0);
-      else resolve(code ?? 1);
+      childLease.detach();
+      if (signal || code !== 0 || !childLease.closed) safeToRelease = false;
+      resolve(signal || !childLease.closed ? 1 : code ?? 1);
     });
   });
 
   process.exitCode = exitCode;
 }
 
-main().catch((error) => {
+if (['backup:create', 'backup:verify', 'backup:restore', '--help'].includes(process.argv[2])) {
+  const maintenanceDir = fs.existsSync('/app/prisma/maintenance-cli.js')
+    ? '/app/prisma'
+    : path.resolve(__dirname, '../apps/server/prisma');
+  require(path.join(maintenanceDir, 'maintenance-cli.js')).run(process.argv.slice(2)).then((result) => {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    process.exitCode = result.exitCode || 0;
+  });
+} else main().catch((error) => {
   if (serverChild) stopChild(serverChild);
   console.error(`master entrypoint failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = shutdownRequested ? 0 : 1;
+}).finally(() => {
+  if (safeToRelease) maintenanceLease?.release();
+  delete process.env.RIRICLOUD_MAINTENANCE_LEASE;
 });

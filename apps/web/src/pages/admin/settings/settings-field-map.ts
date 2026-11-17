@@ -72,6 +72,7 @@ export const FIELD_TAB_MAP: Record<keyof SettingsForm, SettingsTabKey> = {
   githubRepoUrl: 'agent',
   githubMirrorUrlsText: 'agent',
   probePresetTargets: 'agent',
+  lineSpeedtestUserId: 'agent',
   lineSpeedtestEnabled: 'agent',
   lineSpeedtestIntervalMins: 'agent',
   lineSpeedtestTargetUrl: 'agent',

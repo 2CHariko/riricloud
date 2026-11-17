@@ -27,16 +27,6 @@ export type LineType = (typeof LINE_TYPES)[number];
 export const RELAY_MODES = ['BLIND_FORWARD', 'PROTOCOL_PROXY', 'TARGET_LINE', 'UPSTREAM_NODE'] as const;
 export type RelayMode = (typeof RELAY_MODES)[number];
 
-// 协议代理/异构桥接在出口节点使用的专用凭证，不对应任何普通用户。
-export const INTERNAL_RELAY_TRANSIT_EMAIL = '__riricloud_relay_transit__';
-export const INTERNAL_RELAY_TRANSIT_UUID = '00000000-0000-4000-8000-000000000002';
-export const INTERNAL_RELAY_TRANSIT_SECRET = 'riricloud-internal-relay-transit-secret';
-
-// 服务端线路测速探针使用的系统专用凭证，不对应任何普通用户且不计入账单。
-export const INTERNAL_SPEEDTEST_EMAIL = '__riricloud_speedtest_probe__';
-export const INTERNAL_SPEEDTEST_UUID = '00000000-0000-4000-8000-000000000003';
-export const INTERNAL_SPEEDTEST_SECRET = 'riricloud-internal-speedtest-secret';
-
 // 入站用户凭证与线路 ID 的复合分隔符（用于 Sing-box 原生按线路区分用户流量）
 export const TRAFFIC_CREDENTIAL_DELIMITER = '::';
 

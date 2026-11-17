@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 import * as nodemailer from 'nodemailer';
 import { decryptSecret, encryptSecret } from '../common/secret-crypto';
+import { evaluateSubscriptionEntitlement } from '../common/subscription-entitlement';
 import { DEFAULT_SPEED_TIERS, type SpeedTier } from '../common/speed-format';
 
 export type EmailDomainMode = 'none' | 'whitelist' | 'blacklist';
@@ -101,6 +102,7 @@ export const SETTING_KEYS = {
   JWT_SESSION_DAYS: 'jwtSessionDays',
   CUSTOM_CSS: 'customCss',
   CUSTOM_HEAD_HTML: 'customHeadHtml',
+  LINE_SPEEDTEST_USER_ID: 'lineSpeedtestUserId',
   LINE_SPEEDTEST_ENABLED: 'lineSpeedtestEnabled',
   LINE_SPEEDTEST_INTERVAL_MINS: 'lineSpeedtestIntervalMins',
   LINE_SPEEDTEST_TARGET_URL: 'lineSpeedtestTargetUrl',
@@ -189,6 +191,7 @@ export interface SystemSettings {
   jwtSessionDays: number;
   customCss: string;
   customHeadHtml: string;
+  lineSpeedtestUserId: string | null;
   lineSpeedtestEnabled: boolean;
   lineSpeedtestIntervalMins: number;
   lineSpeedtestTargetUrl: string;
@@ -329,6 +332,7 @@ export const DEFAULTS: SystemSettings = {
   jwtSessionDays: 1,
   customCss: '',
   customHeadHtml: '',
+  lineSpeedtestUserId: null,
   lineSpeedtestEnabled: true,
   lineSpeedtestIntervalMins: 30,
   lineSpeedtestTargetUrl: 'https://cp.cloudflare.com/generate_204',
@@ -417,6 +421,7 @@ const DESCRIPTIONS: Record<keyof SystemSettings, string> = {
   jwtSessionDays: 'JWT 会话有效天数',
   customCss: '自定义 CSS 样式',
   customHeadHtml: '自定义 HTML/JS 头部代码',
+  lineSpeedtestUserId: '自建线路拨测使用的合法订阅账号',
   lineSpeedtestEnabled: '是否开启线路自动定时延迟测试',
   lineSpeedtestIntervalMins: '线路自动延迟测试执行周期（分钟）',
   lineSpeedtestTargetUrl: '延迟测试目标 URL',
@@ -604,6 +609,7 @@ export class SettingsService implements OnModuleInit {
       jwtSessionDays: this.readInteger(map, 'jwtSessionDays', 1, 30),
       customCss: this.readString(map, 'customCss'),
       customHeadHtml: this.readString(map, 'customHeadHtml'),
+      lineSpeedtestUserId: this.readNullableString(map, 'lineSpeedtestUserId'),
       lineSpeedtestEnabled: this.readBoolean(map, 'lineSpeedtestEnabled'),
       lineSpeedtestIntervalMins: this.readInteger(map, 'lineSpeedtestIntervalMins', 1, 1440),
       lineSpeedtestTargetUrl: this.readString(map, 'lineSpeedtestTargetUrl'),
@@ -783,6 +789,13 @@ export class SettingsService implements OnModuleInit {
   }
 
   private async validateReferences(patch: SystemSettingsPatch) {
+    if (patch.lineSpeedtestUserId !== undefined && patch.lineSpeedtestUserId !== null) {
+      const subscription = await this.prisma.subscription.findUnique({ where: { userId: patch.lineSpeedtestUserId }, include: { user: true, plan: true } });
+      const enforceEmailVerification = patch.enforceEmailVerification ?? (await this.getSettings()).enforceEmailVerification;
+      if (!subscription?.plan || !evaluateSubscriptionEntitlement(subscription, { enforceEmailVerification }).allowed) {
+        throw new BadRequestException({ code: 'SPEEDTEST_USER_UNAVAILABLE', message: '请选择已启用、满足邮箱验证要求且有有效订阅和剩余配额的拨测账号' });
+      }
+    }
     if (patch.systemTimezone !== undefined && patch.systemTimezone !== null && !isValidTimezone(patch.systemTimezone)) {
       throw new BadRequestException('无效的 IANA 时区标识符');
     }

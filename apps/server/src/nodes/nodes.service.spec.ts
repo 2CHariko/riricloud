@@ -6,6 +6,7 @@ import { BinariesService } from '../binaries/binaries.service';
 import { BinariesInstallerService } from '../binaries/installer.service';
 import { SystemLogsService } from '../system-logs/system-logs.service';
 import { NodesService } from './nodes.service';
+import { encryptSecret } from '../common/secret-crypto';
 
 describe('NodesService', () => {
   let service: NodesService;
@@ -144,6 +145,26 @@ describe('NodesService', () => {
     expect(result.node.installCommands.ws).toContain('https://panel.example.com/api/v1/downloads/agent');
     expect(result.node.installCommands.ws).toContain('--master=wss://panel.example.com/ws/agent');
     expect(result.node.pendingVersionConfirm).toBeNull();
+  });
+
+  it.each(['WS', 'HTTP'] as const)('普通节点详情与列表不通过 %s 安装命令重放既有凭据', async (communicationMode) => {
+    const token = '5ed84d79d6af92da12b487f893ecb70c698315f5f3e197f841ab0f1669aa4e327';
+    for (const agentToken of [token, encryptSecret(token)]) {
+      const stored = { ...nodeWithLines, agentToken, agentTokenHash: 'stored-token-hash', communicationMode };
+      prisma.node.findUnique.mockResolvedValue(stored);
+      prisma.node.findMany.mockResolvedValue([stored]);
+      const result = await service.detail(baseNode.id, 'https://panel.example.com');
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(token);
+      expect(serialized).not.toContain('enc:v1:');
+      expect(serialized).not.toContain('stored-token-hash');
+      expect(JSON.stringify(await service.list())).not.toContain(token);
+      expect(result.node.installCommands.dockerWs).toContain('$RIRI_AGENT_TOKEN');
+      expect(result.node.installCommands.native.linux.ws).toContain('X-Agent-Token: $RIRI_AGENT_TOKEN');
+      expect(result.node.installCommands.native.windows.ws).toContain('X-Agent-Token: $Token');
+      expect(result.node.installCommands.portable.macos.http).toContain('AGENT_TOKEN="$RIRI_AGENT_TOKEN"');
+      expect(result.node.installCommands.adminScriptUrl).toContain('/admin/nodes/node-1/install-script');
+    }
   });
 
   it('任务列表版本摘要优先资源版本，自定义 URL 任务回退 payload 版本', async () => {

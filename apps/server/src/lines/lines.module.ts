@@ -1,3 +1,4 @@
+import { LineCredentialsModule } from '../line-credentials/line-credentials.module';
 import { Module } from '@nestjs/common';
 import { AgentGatewayModule } from '../agent-gateway/agent-gateway.module';
 import { LinesController } from './lines.controller';
@@ -8,7 +9,7 @@ import { ProbeModule } from '../probe/probe.module';
 import { CertificateTrackingModule } from '../certificates/certificate-tracking.module';
 
 @Module({
-  imports: [AgentGatewayModule, SystemModule, ProbeModule, CertificateTrackingModule],
+  imports: [AgentGatewayModule, SystemModule, ProbeModule, CertificateTrackingModule, LineCredentialsModule],
   controllers: [LinesController],
   providers: [LinesService, LineSpeedtestService],
   exports: [LinesService, LineSpeedtestService]

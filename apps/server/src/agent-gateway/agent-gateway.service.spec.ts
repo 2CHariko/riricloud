@@ -1,16 +1,12 @@
+import { randomBytes, randomUUID } from 'node:crypto';
 import { encryptSecret } from '../common/secret-crypto';
-import { formatAuthUserName } from '../common/inbound';
+import { formatAuthUserName, formatInboundUserName, type InboundUserCredential } from '../common/inbound';
 import { Test } from '@nestjs/testing';
 import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemLogsService } from '../system-logs/system-logs.service';
-import {
-  INTERNAL_RELAY_TRANSIT_EMAIL,
-  INTERNAL_RELAY_TRANSIT_SECRET,
-  INTERNAL_RELAY_TRANSIT_UUID,
-  INTERNAL_SPEEDTEST_EMAIL,
-  INTERNAL_SPEEDTEST_UUID
-} from '../common/constants';
+import { LineCredentialsService } from '../line-credentials/line-credentials.service';
+import { credentialFingerprint, type RelayCredentialView } from '../line-credentials/line-credential.types';
 import { AgentGatewayService } from './agent-gateway.service';
 import type { AgentOnlineDeviceReportItem, HeartbeatData } from './agent-message';
 import { ProxyPoolAccessService } from '../proxy-pool-access/proxy-pool-access.service';
@@ -19,6 +15,37 @@ import { formatProxyLineUsername } from '../proxy-pool/proxy-key.util';
 describe('AgentGatewayService', () => {
   let service: AgentGatewayService;
   const systemLogEnqueue = jest.fn();
+  type FixtureRelay = RelayCredentialView & { credential: InboundUserCredential };
+  const relayFixtures = new Map<string, FixtureRelay>();
+  const confirmedRelay = (lineId: string, overrides: Partial<Omit<RelayCredentialView, 'credential'>> = {}): FixtureRelay => {
+    const current = relayFixtures.get(lineId);
+    if (current) return current;
+    // 随机材料仅供测试；同一线路两端复用，线路之间绝不共享。
+    const fixture: FixtureRelay = {
+      lineId, rotationId: 'rotation-' + lineId, operationId: randomUUID(), stage: 'CONFIRMED', targetVersion: 1,
+      entryNodeId: 'node-1', landingNodeId: 'node-2', previousEntryNodeId: null, previousLandingNodeId: null, targetLineId: null, entryEnabled: true,
+      ...overrides,
+      credential: { uuid: randomUUID(), email: 'relay-' + randomBytes(24).toString('hex'), credential: randomBytes(32).toString('base64url') }
+    };
+    relayFixtures.set(lineId, fixture);
+    return fixture;
+  };
+  const lineCredentials = {
+    setDispatcher: jest.fn(),
+    prepare: jest.fn(async (lineIds: string[], _nodeId?: string) => new Map(lineIds.map(id => [id, confirmedRelay(id)]))),
+    internalFingerprints: jest.fn(async (nodeId: string) => new Set([...relayFixtures.values()]
+      .filter(view => view.landingNodeId === nodeId)
+      .flatMap(view => [view.credential.email, view.credential.uuid]
+        .map(value => (view.targetLineId ?? view.lineId) + ':' + credentialFingerprint(value))))),
+    remember: jest.fn(),
+    capture: jest.fn(async () => undefined),
+    sanitizeDiagnostic: jest.fn((_nodeId: string, _version: number, message: string) => message),
+    sanitizeLog: jest.fn((_nodeId: string, message: string) => message),
+    sanitizeLogMetadata: jest.fn((_nodeId: string, metadata: Record<string, unknown> | undefined) => metadata),
+    accepted: jest.fn(async () => undefined),
+    heartbeat: jest.fn(async () => undefined)
+  };
+  const subscriptionFindMany = jest.fn();
   const txUserFindMany = jest.fn();
   const txTrafficCreateMany = jest.fn(async () => undefined);
   const txUserUpdate = jest.fn(async () => undefined);
@@ -54,6 +81,7 @@ describe('AgentGatewayService', () => {
     $transaction: jest.fn(async (callback: (value: typeof tx) => Promise<void>) => callback(tx)),
     node: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
     user: { findMany: jest.fn(), findUnique: userFindUnique },
+    subscription: { findMany: subscriptionFindMany },
     line: { findFirst: jest.fn(), findMany: jest.fn() },
     proxyKey: { findMany: proxyKeyFindMany },
     nodeRateMetric: { deleteMany: jest.fn(async () => ({ count: 0 })) },
@@ -72,6 +100,7 @@ describe('AgentGatewayService', () => {
         AgentGatewayService,
         { provide: PrismaService, useValue: prisma },
         { provide: ProxyPoolAccessService, useValue: poolBindings },
+        { provide: LineCredentialsService, useValue: lineCredentials },
         { provide: SystemLogsService, useValue: { enqueue: systemLogEnqueue } }
       ]
     }).compile();
@@ -80,6 +109,9 @@ describe('AgentGatewayService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    relayFixtures.clear();
+    subscriptionFindMany.mockReset();
+    subscriptionFindMany.mockResolvedValue([]);
     prisma.node.findUnique.mockReset();
     prisma.node.findUnique.mockResolvedValue(null);
     prisma.node.findFirst.mockReset();
@@ -116,14 +148,41 @@ describe('AgentGatewayService', () => {
     (service as unknown as { pendingTasks: Map<string, unknown[]> }).pendingTasks?.clear();
   });
 
-  const user = { uuid: 'uuid-1', email: 'user@example.com', password: 'secret', isActive: true, expireAt: null, trafficLimitBytes: BigInt(1000), trafficUsedBytes: BigInt(0) };
+  const user = { id: 'user-1', role: 'USER', emailVerifiedAt: new Date('2026-01-01T00:00:00.000Z'), uuid: 'uuid-1', email: 'user@example.com', password: 'secret', isActive: true, expireAt: null, trafficLimitBytes: BigInt(1000), trafficUsedBytes: BigInt(0) };
+  const grantSubscription = (lineIds?: string[]) => subscriptionFindMany.mockResolvedValue([{
+    id: 'sub-1', userId: user.id, status: 'ACTIVE', expireAt: null, planSnapshotJson: null,
+    trafficLimitBytes: user.trafficLimitBytes, trafficUsedBytes: user.trafficUsedBytes, user,
+    plan: { lineMatchMode: lineIds ? 'EXPLICIT' : 'ALL', lineTagsJson: '[]', lineIdsJson: JSON.stringify(lineIds ?? []) }
+  }]);
   const vlessParams = { flow: 'xtls-rprx-vision', transport: { type: 'tcp' }, tls: { enabled: true, mode: 'reality', serverName: 'www.apple.com', reality: { dest: 'www.apple.com:443', serverNames: ['www.apple.com'], privateKey: 'private', publicKey: 'public', shortIds: ['sid'] } } };
   const line = (overrides: Record<string, unknown> = {}) => ({
     id: 'line-1', name: 'VLESS 线路', tag: null, listen: '0.0.0.0', type: 'DIRECT', relayMode: null, protocolType: 'VLESS', paramsJson: JSON.stringify(vlessParams),
     entryNodeId: 'node-1', entryPort: 24443, landingNodeId: null, landingPort: null, targetLineId: null, endpointOverrideEnabled: false, serverHost: null, serverPort: null, serverName: null, host: null,
-    status: 'ACTIVE',
+    status: 'ACTIVE', tagsJson: '[]', isPublic: true,
     landingNode: { id: 'node-2', serverHost: '198.51.100.20', status: 'ONLINE' },
     ...overrides
+  });
+
+  it('credential regression: public inbounds cannot authenticate a hidden probe user without a subscription', async () => {
+    prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [line()], landingLines: [] });
+    const { singboxConfig } = await service.buildConfigSync('node-1');
+    const inbound = (singboxConfig.inbounds as Array<{ tag: string; users?: unknown[] }>).find((item) => item.tag === 'line-line-1');
+    expect(inbound?.users ?? []).toEqual([]);
+    expect(inbound).toBeUndefined();
+    expect(subscriptionFindMany).toHaveBeenCalled();
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it('credential regression: separate relay landing inbounds cannot share an authentication identity', async () => {
+    const relays = ['relay-a', 'relay-b'].map((id, index) => line({ id, type: 'RELAY', relayMode: 'PROTOCOL_PROXY', entryNodeId: 'node-1', landingNodeId: 'node-2', landingPort: 25000 + index, entryNode: { id: 'node-1', status: 'ONLINE' } }));
+    prisma.node.findUnique.mockResolvedValue({ id: 'node-2', serverHost: '198.51.100.20', status: 'ONLINE', configOverride: null, entryLines: [], landingLines: relays });
+    const { singboxConfig } = await service.buildConfigSync('node-2');
+    const inbounds = singboxConfig.inbounds as Array<{ tag: string; users?: Array<{ uuid: string }> }>;
+    const first = inbounds.find((item) => item.tag === 'line-relay-a-landing');
+    const second = inbounds.find((item) => item.tag === 'line-relay-b-landing');
+    expect(first?.users?.[0]?.uuid).toBeDefined();
+    expect(second?.users?.[0]?.uuid).toBeDefined();
+    expect(first?.users?.[0]?.uuid).not.toBe(second?.users?.[0]?.uuid);
   });
 
   it('按 Line 顶层协议生成 VLESS、Hysteria2 与 Shadowsocks 入站', async () => {
@@ -144,7 +203,7 @@ describe('AgentGatewayService', () => {
       })
     ];
     prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: lines, landingLines: [] });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
     const { singboxConfig } = await service.buildConfigSync('node-1');
     const inbounds = singboxConfig.inbounds as Array<Record<string, unknown>>;
     expect(singboxConfig.experimental).toEqual({
@@ -152,7 +211,7 @@ describe('AgentGatewayService', () => {
         listen: '127.0.0.1:10085',
         stats: {
           enabled: true,
-          users: ['user@example.com::line-1', INTERNAL_SPEEDTEST_EMAIL, 'user@example.com::line-hy2', 'user@example.com::line-shadowtls'],
+          users: ['user@example.com::line-1', 'user@example.com::line-hy2', 'user@example.com::line-shadowtls'],
           inbounds: ['line-line-1', 'line-line-hy2', 'line-line-ss', 'line-line-shadowtls', 'line-line-shadowtls-inner']
         }
       }
@@ -175,7 +234,7 @@ describe('AgentGatewayService', () => {
       certificate: { certificatePem: 'CERTIFICATE PEM', privateKeyPem: 'PRIVATE KEY PEM' }
     });
     prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [managed], landingLines: [] });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
 
     const { singboxConfig } = await service.buildConfigSync('node-1');
     const managedInbound = (singboxConfig.inbounds as Array<Record<string, unknown>>).find((inbound) => inbound.tag === 'line-managed-tls');
@@ -190,7 +249,7 @@ describe('AgentGatewayService', () => {
   it('使用线路自定义监听地址和直连 Tag', async () => {
     const custom = line({ id: 'custom', tag: 'public-vless', listen: '127.0.0.1' });
     prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [custom], landingLines: [] });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
     const { singboxConfig } = await service.buildConfigSync('node-1');
     expect(singboxConfig.inbounds).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'vless', tag: 'public-vless', listen: '127.0.0.1', listen_port: 24443 })
@@ -198,6 +257,7 @@ describe('AgentGatewayService', () => {
   });
 
   it('双节点盲转发在入口生成 direct，在出口生成协议入站', async () => {
+    grantSubscription(['blind']);
     const relay = line({ id: 'blind', name: '盲转发', type: 'RELAY', relayMode: 'BLIND_FORWARD', entryNodeId: 'node-1', entryPort: 25001, landingNodeId: 'node-2', landingPort: 25002 });
     prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [relay], landingLines: [] });
     const entryConfig = await service.buildConfigSync('node-1');
@@ -209,6 +269,7 @@ describe('AgentGatewayService', () => {
   });
 
   it('中继线路配置生成解耦对端节点在线状态，落地或入口离线依然正常下发转发规则', async () => {
+    grantSubscription(['blind-decoupled']);
     const relay = line({ id: 'blind-decoupled', name: '盲转发解耦', type: 'RELAY', relayMode: 'BLIND_FORWARD', entryNodeId: 'node-1', entryPort: 25001, landingNodeId: 'node-2', landingPort: 25002, landingNode: { serverHost: '198.51.100.20', status: 'OFFLINE' } });
     prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [relay], landingLines: [] });
     const entryConfig = await service.buildConfigSync('node-1');
@@ -222,10 +283,10 @@ describe('AgentGatewayService', () => {
   it('协议代理中继生成协议入口、协议出口和路由规则', async () => {
     const relay = line({ id: 'proxy', tag: 'relay-proxy', type: 'RELAY', relayMode: 'PROTOCOL_PROXY', entryNodeId: 'node-1', entryPort: 25101, landingNodeId: 'node-2', landingPort: 25102 });
     prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [relay], landingLines: [] });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
     const { singboxConfig } = await service.buildConfigSync('node-1');
     expect(singboxConfig.inbounds).toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'relay-proxy-entry', listen_port: 25101 })]));
-    expect(singboxConfig.outbounds).toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'relay-out-proxy', server: '198.51.100.20', server_port: 25102, uuid: INTERNAL_RELAY_TRANSIT_UUID })]));
+    expect(singboxConfig.outbounds).toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'relay-out-proxy', server: '198.51.100.20', server_port: 25102, uuid: confirmedRelay('proxy').credential.uuid })]));
     expect(singboxConfig.route).toEqual({ rules: [{ inbound: ['relay-proxy-entry'], outbound: 'relay-out-proxy' }] });
 
     prisma.node.findUnique.mockResolvedValue({
@@ -240,11 +301,63 @@ describe('AgentGatewayService', () => {
     expect(exitConfig.singboxConfig.inbounds).toEqual(expect.arrayContaining([
       expect.objectContaining({
         tag: 'relay-proxy-landing',
-        users: [{ uuid: INTERNAL_RELAY_TRANSIT_UUID, name: INTERNAL_RELAY_TRANSIT_EMAIL, flow: 'xtls-rprx-vision' }]
+        users: [{ uuid: confirmedRelay('proxy').credential.uuid, name: formatInboundUserName(confirmedRelay('proxy').credential, relay.id), flow: 'xtls-rprx-vision' }]
       })
     ]));
     expect((exitConfig.singboxConfig.experimental as { v2ray_api: { stats: { users: string[] } } }).v2ray_api.stats.users)
-      .toContain(INTERNAL_RELAY_TRANSIT_EMAIL);
+      .toContain(formatInboundUserName(confirmedRelay('proxy').credential, relay.id));
+  });
+
+  it.each(['PROTOCOL_PROXY', 'TARGET_LINE'])('NAIVE %s 出站与实际落地入站采用同一线路编码登录名', async (relayMode) => {
+    const relayId = 'naive-relay';
+    const targetId = 'naive-target';
+    const credentialLineId = relayMode === 'TARGET_LINE' ? targetId : relayId;
+    const material = confirmedRelay(relayId, { targetLineId: relayMode === 'TARGET_LINE' ? targetId : null }).credential;
+    const params = { tls: { enabled: true, mode: 'tls', serverName: 'naive.example.com', certificatePath: '/certificate.pem', keyPath: '/key.pem' } };
+    const target = line({
+      id: targetId, protocolType: 'NAIVE', paramsJson: JSON.stringify(params), entryNodeId: 'node-2', entryPort: 25443,
+      entryNode: { id: 'node-2', serverHost: '198.51.100.20', status: 'ONLINE' }, landingNode: null,
+      relaySources: [{ id: relayId, tagsJson: '[]', isPublic: true, status: 'ACTIVE' }]
+    });
+    const relay = line({
+      id: relayId, type: 'RELAY', relayMode, entryPort: 24443,
+      protocolType: relayMode === 'TARGET_LINE' ? 'VLESS' : 'NAIVE',
+      paramsJson: JSON.stringify(relayMode === 'TARGET_LINE' ? vlessParams : params),
+      landingNodeId: relayMode === 'TARGET_LINE' ? null : 'node-2', landingPort: relayMode === 'TARGET_LINE' ? null : 25443,
+      targetLineId: relayMode === 'TARGET_LINE' ? targetId : null, targetLine: relayMode === 'TARGET_LINE' ? target : null
+    });
+    // 账号仅有入口线路权益，不能因桥接关系直接登录目标直连入站。
+    grantSubscription([relayId]);
+    prisma.node.findUnique.mockResolvedValueOnce({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [relay], landingLines: [] });
+    const entry = await service.buildConfigSync('node-1');
+    const outbound = (entry.singboxConfig.outbounds as Array<Record<string, unknown>>).find(item => item.tag === 'relay-out-' + relayId);
+    const expectedLogin = formatAuthUserName(material, credentialLineId);
+    expect(outbound).toMatchObject({ type: 'naive', username: expectedLogin, password: material.credential, server: '198.51.100.20', server_port: 25443 });
+    expect(expectedLogin).not.toContain(':');
+    expect(entry.singboxConfig.inbounds).toEqual(expect.arrayContaining([expect.objectContaining({ listen_port: 24443 })]));
+
+    prisma.node.findUnique.mockResolvedValueOnce({
+      id: 'node-2', serverHost: '198.51.100.20', status: 'ONLINE', configOverride: null,
+      entryLines: relayMode === 'TARGET_LINE' ? [target] : [],
+      landingLines: relayMode === 'TARGET_LINE' ? [] : [{ ...relay, entryNode: { id: 'node-1', status: 'ONLINE' } }]
+    });
+    const landing = await service.buildConfigSync('node-2');
+    const inbound = (landing.singboxConfig.inbounds as Array<Record<string, unknown>>).find(item => item.listen_port === 25443);
+    expect(inbound).toMatchObject({ type: 'naive', users: [{ username: expectedLogin, password: material.credential }] });
+    expect(lineCredentials.prepare).toHaveBeenNthCalledWith(1, [relayId], 'node-1');
+    expect(lineCredentials.prepare).toHaveBeenNthCalledWith(2, [relayId], 'node-2');
+    const sibling = confirmedRelay('unrelated-relay').credential;
+    expect(JSON.stringify(inbound)).not.toContain(sibling.credential);
+    expect(JSON.stringify(inbound)).not.toContain(user.password);
+    if (relayMode === 'TARGET_LINE') expect(expectedLogin).not.toBe(formatAuthUserName(material, relayId));
+  });
+
+  it('显式套餐无目标线路权益时不生成公开业务入站', async () => {
+    grantSubscription(['another-line']);
+    prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [line()], landingLines: [] });
+    const { singboxConfig } = await service.buildConfigSync('node-1');
+    expect(singboxConfig.inbounds).toEqual([]);
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
   });
 
   it('NAT 落地中继正确重定向出口地址至 127.0.0.1、限制入站监听本地、注入局域网防护及下发反向隧道配置', async () => {
@@ -274,7 +387,7 @@ describe('AgentGatewayService', () => {
       entryLines: [natRelay],
       landingLines: []
     });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
 
     const entrySync = await service.buildConfigSync('entry-node');
     expect(entrySync.singboxConfig.inbounds).toEqual(expect.arrayContaining([
@@ -367,6 +480,7 @@ describe('AgentGatewayService', () => {
   });
 
   it('目标线路桥接生成入口协议、目标协议出口，并复用目标直连入站', async () => {
+    const bridgeCredential = confirmedRelay('bridge', { targetLineId: 'target' }).credential;
     const targetParams = { tls: { enabled: true, mode: 'tls', serverName: 'target.example.com' }, upMbps: 100, downMbps: 500 };
     const targetLine = line({
       id: 'target',
@@ -409,13 +523,13 @@ describe('AgentGatewayService', () => {
     prisma.node.findUnique.mockResolvedValueOnce({
       id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [bridge], landingLines: []
     });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
     const entryConfig = await service.buildConfigSync('node-1');
     expect(entryConfig.singboxConfig.inbounds).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'vless', tag: 'relay-bridge-entry', listen_port: 25001 })
     ]));
     expect(entryConfig.singboxConfig.outbounds).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'hysteria2', tag: 'relay-out-bridge', server: '198.51.100.20', server_port: 25002, password: INTERNAL_RELAY_TRANSIT_SECRET })
+      expect.objectContaining({ type: 'hysteria2', tag: 'relay-out-bridge', server: '198.51.100.20', server_port: 25002, password: bridgeCredential.credential })
     ]));
     expect(entryConfig.singboxConfig.route).toEqual({ rules: [{ inbound: ['relay-bridge-entry'], outbound: 'relay-out-bridge' }] });
 
@@ -429,7 +543,7 @@ describe('AgentGatewayService', () => {
         listen_port: 25002,
         users: expect.arrayContaining([
           { name: `${user.email}::${targetLine.id}`, password: user.password },
-          { name: INTERNAL_RELAY_TRANSIT_EMAIL, password: INTERNAL_RELAY_TRANSIT_SECRET }
+          { name: formatInboundUserName(bridgeCredential, targetLine.id), password: bridgeCredential.credential }
         ])
       })
     ]));
@@ -457,7 +571,7 @@ describe('AgentGatewayService', () => {
     prisma.node.findUnique.mockResolvedValueOnce({
       id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [relayWithOverride], landingLines: []
     });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
 
     const entryConfig = await service.buildConfigSync('node-1');
     expect(entryConfig.singboxConfig.inbounds).toEqual(expect.arrayContaining([
@@ -501,7 +615,7 @@ describe('AgentGatewayService', () => {
     prisma.node.findUnique.mockResolvedValueOnce({
       id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [bridgeInherited], landingLines: []
     });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
 
     const entryConfig = await service.buildConfigSync('node-1');
     expect(entryConfig.singboxConfig.outbounds).toEqual(expect.arrayContaining([
@@ -546,7 +660,7 @@ describe('AgentGatewayService', () => {
     prisma.node.findUnique.mockResolvedValueOnce({
       id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [bridgeWithOriginIp], landingLines: []
     });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
 
     const originConfig = await service.buildConfigSync('node-1');
     expect(originConfig.singboxConfig.outbounds).toEqual(expect.arrayContaining([
@@ -664,7 +778,7 @@ describe('AgentGatewayService', () => {
       entryLines: [vmessUpstreamRelay, vlessRealityUpstreamRelay, hy2UpstreamRelay],
       landingLines: []
     });
-    prisma.user.findMany.mockResolvedValue([user]);
+    grantSubscription();
 
     const { singboxConfig } = await service.buildConfigSync('node-1');
     const outbounds = singboxConfig.outbounds as Array<Record<string, unknown>>;
@@ -825,36 +939,133 @@ describe('AgentGatewayService', () => {
     });
   });
 
-  it('内部中继与测速探针凭证只更新游标，不创建流水或扣减任何用户配额', async () => {
-    txTrafficCursorFindMany.mockResolvedValue([
-      { credential: INTERNAL_RELAY_TRANSIT_EMAIL, uploadTotal: 100n, downloadTotal: 100n },
-      { credential: INTERNAL_RELAY_TRANSIT_UUID, uploadTotal: 100n, downloadTotal: 100n },
-      { credential: INTERNAL_SPEEDTEST_EMAIL, uploadTotal: 100n, downloadTotal: 100n },
-      { credential: INTERNAL_SPEEDTEST_UUID, uploadTotal: 100n, downloadTotal: 100n }
-    ]);
+  const internalAccountingScopes = [
+    { relayMode: 'PROTOCOL_PROXY', sourceLineId: 'metered-relay', targetLineId: null, inboundLineId: 'metered-relay' },
+    { relayMode: 'TARGET_LINE', sourceLineId: 'metered-bridge', targetLineId: 'landing-line', inboundLineId: 'landing-line' }
+  ];
+
+  it.each(internalAccountingScopes)('$relayMode 已登记身份仅在对应落地节点及实际入站线路更新游标', async ({ sourceLineId, targetLineId, inboundLineId }) => {
+    const { credential } = confirmedRelay(sourceLineId, { targetLineId });
+    const credentials = [
+      formatInboundUserName(credential, inboundLineId),
+      formatInboundUserName({ uuid: credential.uuid }, inboundLineId),
+      formatAuthUserName(credential, inboundLineId),
+      formatAuthUserName({ uuid: credential.uuid }, inboundLineId)
+    ];
+    // 建立可计费映射，避免“未知用户”掩盖注册表没有命中；豁免必须由完整作用域决定。
+    txUserFindMany.mockResolvedValue([{ ...user, email: credential.email, uuid: credential.uuid }]);
+    txSubscriptionFindMany.mockResolvedValue([{ id: 'sub-1', userId: user.id }]);
+    txTrafficCursorFindMany.mockResolvedValue(credentials.map(value => ({ credential: value, uploadTotal: 100n, downloadTotal: 100n })));
+    const resetCount = (service as unknown as { trafficCounterResetCount: number }).trafficCounterResetCount;
 
     await service.handleHeartbeat('node-2', {
-      protocolVersion: 2,
-      cpuUsage: 1,
-      memoryUsage: 2,
-      bandwidthRate: 3,
-      trafficSnapshots: [
-        { userUuid: INTERNAL_RELAY_TRANSIT_EMAIL, uploadTotal: '10', downloadTotal: '20' },
-        { userUuid: INTERNAL_RELAY_TRANSIT_UUID, uploadTotal: '30', downloadTotal: '40' },
-        { userUuid: INTERNAL_SPEEDTEST_EMAIL, uploadTotal: '50', downloadTotal: '60' },
-        { userUuid: INTERNAL_SPEEDTEST_UUID, uploadTotal: '70', downloadTotal: '80' }
-      ]
+      protocolVersion: 2, cpuUsage: 1, memoryUsage: 2, bandwidthRate: 3,
+      trafficSnapshots: credentials.map((value, index) => ({ userUuid: value, uploadTotal: String(index * 20 + 10), downloadTotal: String(index * 20 + 20) }))
     });
 
+    expect(lineCredentials.internalFingerprints).toHaveBeenCalledWith('node-2');
     expect(txTrafficCreateMany).not.toHaveBeenCalled();
+    expect(service.getBufferedTrafficHourlyMetrics()).toEqual([]);
     expect(txUserUpdate).not.toHaveBeenCalled();
     expect(txSubscriptionUpdate).not.toHaveBeenCalled();
     expect(txTrafficCursorUpsert).toHaveBeenCalledTimes(4);
-    expect(txTrafficCursorUpsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { nodeId_credential: { nodeId: 'node-2', credential: INTERNAL_SPEEDTEST_EMAIL } },
-      update: { uploadTotal: 50n, downloadTotal: 60n }
-    }));
-    expect((service as unknown as { trafficCounterResetCount: number }).trafficCounterResetCount).toBe(0);
+    for (const [index, value] of credentials.entries()) {
+      expect(txTrafficCursorUpsert).toHaveBeenCalledWith(expect.objectContaining({
+        where: { nodeId_credential: { nodeId: 'node-2', credential: value } },
+        update: { uploadTotal: BigInt(index * 20 + 10), downloadTotal: BigInt(index * 20 + 20) }
+      }));
+    }
+    expect((service as unknown as { trafficCounterResetCount: number }).trafficCounterResetCount).toBe(resetCount);
+  });
+
+  it.each(internalAccountingScopes)('$relayMode 落地注册身份在其他节点携带正确线路后缀仍不能豁免计费', async ({ sourceLineId, targetLineId, inboundLineId }) => {
+    const { credential } = confirmedRelay(sourceLineId, { targetLineId });
+    // 即使某普通用户快照匹配同一标识，也只能由当前节点和实际入站线路共同决定豁免。
+    txUserFindMany.mockResolvedValue([{ ...user, uuid: credential.uuid }]);
+    txSubscriptionFindMany.mockResolvedValue([{ id: 'sub-1', userId: user.id }]);
+    const reportCredential = formatInboundUserName({ uuid: credential.uuid }, inboundLineId);
+    await service.handleHeartbeat('node-1', {
+      protocolVersion: 2, cpuUsage: 1, memoryUsage: 2, bandwidthRate: 3,
+      trafficSnapshots: [{ userUuid: reportCredential, uploadTotal: '10', downloadTotal: '20' }]
+    });
+    expect(lineCredentials.internalFingerprints).toHaveBeenCalledWith('node-1');
+    expect(txUserUpdate).toHaveBeenCalledWith({ where: { id: user.id }, data: { trafficUsedBytes: { increment: 30n } } });
+    expect(txSubscriptionUpdate).toHaveBeenCalledWith({ where: { id: 'sub-1' }, data: { trafficUsedBytes: { increment: 30n } } });
+    expect(service.getBufferedTrafficHourlyMetrics()).toEqual([expect.objectContaining({ nodeId: 'node-1', userId: user.id, lineId: inboundLineId, upload: 10n, download: 20n })]);
+    expect(txTrafficCursorUpsert).toHaveBeenCalledWith(expect.objectContaining({ where: { nodeId_credential: { nodeId: 'node-1', credential: reportCredential } } }));
+  });
+
+  it.each(internalAccountingScopes)('$relayMode 同节点的已登记身份使用错线路后缀不能豁免计费', async ({ sourceLineId, targetLineId, inboundLineId }) => {
+    const { credential } = confirmedRelay(sourceLineId, { targetLineId });
+    // 另一条线路也在同一节点登记，但其身份不能与本线路的身份交叉组合。
+    confirmedRelay('other-registered-line');
+    const wrongLineIds = ['other-registered-line', ...(targetLineId ? [sourceLineId] : [])];
+    const wrongCredentials = wrongLineIds.flatMap(lineId => [
+      formatInboundUserName(credential, lineId),
+      formatInboundUserName({ uuid: credential.uuid }, lineId),
+      formatAuthUserName(credential, lineId),
+      formatAuthUserName({ uuid: credential.uuid }, lineId)
+    ]);
+    const correctCredential = formatInboundUserName(credential, inboundLineId);
+    txUserFindMany.mockResolvedValue([{ ...user, uuid: credential.uuid, email: credential.email }]);
+    txSubscriptionFindMany.mockResolvedValue([{ id: 'sub-1', userId: user.id }]);
+    txLineFindMany.mockResolvedValue(wrongLineIds.map(id => ({ id, trafficRate: 2, entryNodeId: 'node-2' })));
+    await service.handleHeartbeat('node-2', {
+      protocolVersion: 2, cpuUsage: 1, memoryUsage: 2, bandwidthRate: 3,
+      trafficSnapshots: [...wrongCredentials, correctCredential].map(userUuid => ({ userUuid, uploadTotal: '10', downloadTotal: '20' }))
+    });
+    const billedBytes = BigInt(wrongCredentials.length) * 60n;
+    expect(lineCredentials.internalFingerprints).toHaveBeenCalledWith('node-2');
+    expect(txUserUpdate).toHaveBeenCalledTimes(1);
+    expect(txUserUpdate).toHaveBeenCalledWith({ where: { id: user.id }, data: { trafficUsedBytes: { increment: billedBytes } } });
+    expect(txSubscriptionUpdate).toHaveBeenCalledWith({ where: { id: 'sub-1' }, data: { trafficUsedBytes: { increment: billedBytes } } });
+    expect(service.getBufferedTrafficHourlyMetrics()).toEqual(wrongLineIds.map(lineId => expect.objectContaining({ nodeId: 'node-2', userId: user.id, lineId, upload: 40n, download: 80n, billedBytes: 240n })));
+    expect(txTrafficCursorUpsert).toHaveBeenCalledTimes(wrongCredentials.length + 1);
+    for (const reported of [...wrongCredentials, correctCredential]) {
+      expect(txTrafficCursorUpsert).toHaveBeenCalledWith(expect.objectContaining({
+        where: { nodeId_credential: { nodeId: 'node-2', credential: reported } },
+        update: { uploadTotal: 10n, downloadTotal: 20n }
+      }));
+    }
+  });
+
+  it.each(internalAccountingScopes)('$relayMode 已登记身份缺少实际入站线路后缀时不能豁免计费', async ({ sourceLineId, targetLineId }) => {
+    const { credential } = confirmedRelay(sourceLineId, { targetLineId });
+    txUserFindMany.mockResolvedValue([{ ...user, email: credential.email, uuid: credential.uuid }]);
+    txSubscriptionFindMany.mockResolvedValue([{ id: 'sub-1', userId: user.id }]);
+    prisma.line.findFirst.mockResolvedValue({ id: 'fallback-line', trafficRate: 1 });
+    await service.handleHeartbeat('node-2', {
+      protocolVersion: 2, cpuUsage: 1, memoryUsage: 2, bandwidthRate: 3,
+      trafficSnapshots: [credential.email, credential.uuid].map(userUuid => ({ userUuid, uploadTotal: '10', downloadTotal: '20' }))
+    });
+    expect(lineCredentials.internalFingerprints).toHaveBeenCalledWith('node-2');
+    expect(txUserUpdate).toHaveBeenCalledWith({ where: { id: user.id }, data: { trafficUsedBytes: { increment: 60n } } });
+    expect(txSubscriptionUpdate).toHaveBeenCalledWith({ where: { id: 'sub-1' }, data: { trafficUsedBytes: { increment: 60n } } });
+    expect(service.getBufferedTrafficHourlyMetrics()).toEqual([expect.objectContaining({ nodeId: 'node-2', userId: user.id, lineId: 'fallback-line', upload: 20n, download: 40n })]);
+    expect(txTrafficCursorUpsert).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['正常用户', 'subscriber@example.com'],
+    ['未登记 relay 前缀', 'relay-unregistered@example.com'],
+    // 旧固定值只作为“不再享有计费豁免”的负例。
+    ['旧中继名称', '__riricloud_relay_transit__'],
+    ['旧中继 UUID', '00000000-0000-4000-8000-000000000002'],
+    ['旧测速名称', '__riricloud_speedtest_probe__'],
+    ['旧测速 UUID', '00000000-0000-4000-8000-000000000003']
+  ])('%s 未登记时必须按实际用户及订阅计量', async (_name, identifier) => {
+    confirmedRelay('registered-relay');
+    txUserFindMany.mockResolvedValue([{ ...user, email: identifier }]);
+    txSubscriptionFindMany.mockResolvedValue([{ id: 'sub-1', userId: user.id }]);
+    const reported = formatAuthUserName({ email: identifier }, 'billing-line');
+    await service.handleHeartbeat('node-2', {
+      protocolVersion: 2, cpuUsage: 1, memoryUsage: 2, bandwidthRate: 3,
+      trafficSnapshots: [{ userUuid: reported, uploadTotal: '10', downloadTotal: '20' }]
+    });
+    expect(txUserUpdate).toHaveBeenCalledWith({ where: { id: user.id }, data: { trafficUsedBytes: { increment: 30n } } });
+    expect(txSubscriptionUpdate).toHaveBeenCalledWith({ where: { id: 'sub-1' }, data: { trafficUsedBytes: { increment: 30n } } });
+    expect(service.getBufferedTrafficHourlyMetrics()).toEqual([expect.objectContaining({ nodeId: 'node-2', userId: user.id, lineId: 'billing-line', upload: 10n, download: 20n })]);
+    expect(txTrafficCursorUpsert).toHaveBeenCalledTimes(1);
   });
 
   it('心跳跨过流量周期边界时先重置再计入新周期，且只重置一次', async () => {
@@ -1392,7 +1603,7 @@ describe('AgentGatewayService', () => {
 
     it('显式Mixed代理池注入线路派生ProxyKey与来源IP规则，不下发旧裸Key', async () => {
       prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [mixedLine()], landingLines: [] });
-      prisma.user.findMany.mockResolvedValue([user]);
+      grantSubscription();
       const login = formatProxyLineUsername(rawKeyForTest, '11111111-1111-4111-8111-111111111111');
       poolBindings.getNodeBindings.mockResolvedValue([{ lineId: '11111111-1111-4111-8111-111111111111', keyId: 'key-1', userId: 'user-1', username: login, password: 'pwd-a', whitelistIps: ['203.0.113.10'] }] as never);
 
@@ -1430,7 +1641,7 @@ describe('AgentGatewayService', () => {
 
     it('无可用 ProxyKey 时不生成白名单路由规则，仍保留订阅用户鉴权', async () => {
       prisma.node.findUnique.mockResolvedValue({ id: 'node-1', serverHost: '198.51.100.10', status: 'ONLINE', configOverride: null, entryLines: [mixedLine()], landingLines: [] });
-      prisma.user.findMany.mockResolvedValue([user]);
+      grantSubscription();
       proxyKeyFindMany.mockResolvedValue([]);
 
       const { singboxConfig } = await service.buildConfigSync('node-1');

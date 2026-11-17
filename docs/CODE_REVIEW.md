@@ -16,16 +16,22 @@ RiriCloud 分三个应用：`apps/server`（NestJS）、`apps/web`（React）、
 
 ## 2. 质量门禁 (Quality Gates)
 
-任何 PR 合入 `main` 前必须全绿（工具链在 Phase 1 落地，见 [ROADMAP.md](./ROADMAP.md)）：
+任何 PR 合入 `main` 前必须通过根 `package.json` 的 `pnpm gate`（六类基础门禁 + 脚本回归）及适用的 CI 检查：
 
 | 应用 / 领域 | 门禁命令 |
 | :--- | :--- |
-| **版本与日志治理** | `pnpm gate:version`（SemVer 合规、单仓唯一版本源、PR 核心代码 [Unreleased] 日志校验、package.json/CHANGELOG/README 徽标一致性校验） |
-| **文档与规划治理** | `pnpm gate:docs`（根目录白名单、规划 Frontmatter、100% 完成归档阻断、代码-文档联动规则阻断） |
+| **版本与日志治理** | `pnpm gate:version`（Master/Agent 双轨 SemVer、对应核心路径的 [Unreleased]、两条版本源与各自定稿日志、Master README 徽标一致性） |
+| **文档与规划治理** | `pnpm gate:docs`（根目录白名单、规划 Frontmatter、100% 完成归档阻断、代码-文档联动、双轨版本规则与门禁清单一致性） |
+| **中文基准与国际化** | `pnpm gate:i18n`（TSX 硬编码中文拦截；非中文覆盖率通过 `pnpm i18n:report` 跟踪，不要求日常 PR 达到 100%） |
 | `apps/server` | `pnpm gate:server`（`tsc --noEmit` · ESLint · 单元测试） |
-| `apps/web` | `pnpm gate:web`（`tsc --noEmit` · ESLint · `vite build`） |
+| `apps/web` | `pnpm gate:web`（`node --test` 自动发现全部 `.test.mjs` 回归测试 · ESLint · `tsc --noEmit` · `vite build`） |
 | `apps/agent` | `pnpm gate:agent`（`go vet ./...` · `gofmt -l .` · `go test ./...` · `go build`） |
+| 脚本回归 | `pnpm test:scripts`（自动发现 `.test.mjs` / `.test.cjs`，由 `pnpm gate` 在六类门禁后执行） |
 | 跨端协议变更 | 必须附 WS 消息或 REST 契约的前后对照说明 |
+
+脚本回归使用 `pnpm test:scripts`，新增治理测试须进入该自动发现入口。真实内核验证独立运行，不加入常规本地 `pnpm gate`：`pnpm test:native` 使用 Node 22，准备固定校验和资源并显式开启 `RUN_NATIVE_CLIENT_TESTS=1`，以当前平台原生执行结果为准；交叉编译不等于原生运行通过。各平台结果及排除原因须保留，缺少资源不能当作成功。
+
+前端视觉验证继续仅在 Antigravity 环境按需执行，不进入 CI / Git hook；自动化回归测试不代替视觉验收。
 
 CI 未全绿禁止合并；本地提交前应先跑过同套命令。单人开发时**代码审查以自审 + 门禁代替**：合入前对照本文 §6 清单逐项自查，并在 PR 描述中留自查记录。
 
@@ -111,12 +117,12 @@ PrismaService（数据访问，全局唯一 PrismaClient 实例）
 | :--- | :--- |
 | **正确性** | 逻辑与文档描述一致？边界条件（空列表、超大数值、断线）处理了？BigInt 流量计算无精度丢失？ |
 | **架构** | 未违反 §3 任一硬约束？没有引入第二真相/复制粘贴的业务逻辑？ |
-| **安全** | §5 六项全部通过？ |
+| **安全** | §5 全部安全审查项通过？ |
 | **依赖** | 新依赖都有必要且理由充分？ |
-| **测试** | 新逻辑有对应测试？修 bug 的 PR 先有复现用例再有修复？ |
+| **测试** | 新逻辑有对应测试并进入自动发现入口？修 bug 的 PR 先有复现用例再有修复？真实内核场景是否实际运行并记录平台/版本/排除原因？ |
 | **性能** | 无 N+1 查询？列表接口分页？agent 侧无每秒级高频磁盘读写？ |
 | **可读性** | 命名达意、无超长函数（TS ≤ 80 行 / Go ≤ 60 行为软上限）？注释解释"为什么"？ |
-| **文档同步** | 按 AGENTS.md 的映射表检查：改了什么，对应文档同一 PR 更新了？CHANGELOG 追加了？ |
+| **文档同步** | 按 AGENTS.md 的映射表检查对应文档与 Master/Agent 各自 Unreleased；接口、鉴权、响应、节点生命周期或启动流程变更是否评估 `scripts/dev-e2e*`、E2E 与 fixture，并记录更新或无需更新的依据？ |
 | **提交规范** | 提交信息符合 [GIT_WORKFLOW.md](./GIT_WORKFLOW.md) §3？粒度原子？ |
 
 ---

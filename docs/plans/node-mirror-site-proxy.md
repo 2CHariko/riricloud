@@ -2,12 +2,17 @@
 title: "实时节点镜像站与 Agent 流式代理"
 type: plan
 status: active
-target_version: "v0.7.2+"
+target_version: "Unreleased"
+updated_at: "2026-11-17"
 created_at: "2026-09-09"
 author: "Codex & Maintainers"
 ---
 
 # 实时节点镜像站与 Agent 流式代理
+
+## 2026-11-17 复核口径
+
+本轮以实际源码、受控测试及本地工件更新勾选，不沿用原 93/123 直接推定完成。已实现/已有隔离测试与真实外部验收分别记录；下文历史门禁只描述其原阶段。真实节点出口、GitHub 现网、上线权限/监控和回滚统一转入 [镜像部署验收计划](./node-mirror-deployment-acceptance.md)，保持未完成。本轮不部署、不启用生产 PUBLIC，也不执行视觉测试。
 
 ## 目标与背景
 
@@ -128,10 +133,10 @@ Browser
 
 ### Master 流会话管理
 
-- [x] 新增 MirrorProxyService，维护 `taskId -> stream session` 映射和节点级并发配额。
+- [x] `MirrorService` / `MirrorTask` / `MirrorResponseStream` 与网关会话表共同管理 `taskId` 生命周期；Agent 入口限制每节点 4 个活动任务并返回 `BUSY`；Master 统一限制全局 16 任务、每节点 4 任务，按每流 1 MiB 预留正文缓冲，总 16 MiB。
 - [x] 将 Agent 头部帧映射为 HTTP status/header，再将二进制帧写入 Express response。
 - [x] 客户端断开时可靠触发 `mirror_cancel`，并在 finally 中删除会话、释放计数和清理定时器。
-- [x] Master 重启不恢复进行中的镜像流；请求方收到 502/503，不能留下不可清理的后台任务。
+- [x] Master 会话只存于内存且不跨进程恢复，正常模块关闭会取消任务；异常退出依赖 WS 断开回收，客户端可能收到断流，不能保证始终返回 502/503。真实进程重启验收见未完成测试项。
 - [x] 日志只记录镜像站 ID、节点 ID、目标 host、状态码、字节数、耗时和稳定错误码。
 
 ## 前端实施
@@ -143,7 +148,7 @@ Browser
 - [x] 新增分享 Token 一次性展示、复制、轮换确认和撤销后的状态提示。
 - [x] 新增测试结果抽屉/对话框，展示最终状态码、耗时、节点、目标 host 和脱敏错误。
 - [x] 遵循 shadcn/ui 和现有页面布局，使用统一 API 客户端，不直接调用 `fetch`。
-- [x] 补充 `docs/FRONTEND_UI_GUIDELINES.md` 或 `docs/VISUAL_VERIFICATION.md` 索引，并按需完成桌面/移动端视觉检查。
+- [x] 已维护 `docs/VISUAL_VERIFICATION.md` 的镜像页面索引；视觉验证按需且仅限 Antigravity，本轮未执行，不作为已通过记录。
 
 ## 安全与滥用控制
 
@@ -152,67 +157,85 @@ Browser
 - [x] 公开模式启用按 IP/镜像站限速、并发限制和失败请求审计；不得默认提供无限制匿名带宽。
 - [x] 管理员模式使用现有管理员鉴权；分享模式使用高熵随机 Token、过期和轮换；公开模式只能访问固定白名单上游。
 - [x] 过滤请求/响应 hop-by-hop headers、Cookie、Authorization、代理连接头和内部错误堆栈。
-- [x] 限制响应大小、请求时长、重定向次数、单节点并发和全局并发；达到限制时主动取消 Agent 请求。
-- [ ] 增加安全测试：内网地址、metadata 地址、DNS rebinding、跨域重定向、路径逃逸、Token 猜测和资源耗尽。
+- [x] 全局并发/内存配额：Master全局16任务、每节点4任务，每任务预留1MiB正文缓冲，总16MiB，无等待队列；启动未返回/等待drain继续占槽，配额测试通过。
+- [x] 增加受控安全测试：内网/metadata、混合 DNS 答案及重绑定、跨域/降级重定向、路径逃逸、Token 猜测与单流/单节点资源耗尽；证据见后文。
 - [x] 不把镜像站作为用户订阅线路，不纳入现有代理流量账务；如未来纳入用户套餐，另立规划调整权限/计费模型。
 
 ## 测试清单
 
 ### Server 单元与集成测试
 
-- [ ] MirrorSite 创建/更新校验：slug、URL、域名、节点、访问策略和重复数据。
-- [ ] 管理员、分享 Token、公开访问三种模式的正向与负向鉴权。
-- [ ] 路径、查询参数、Range、HEAD、条件请求和上游状态码透传。
-- [ ] 重定向白名单、重定向次数、非白名单域名和私网目标拒绝。
-- [ ] 节点离线、HTTP 节点、能力缺失、WS 断开、响应超限和客户端取消。
-- [ ] 分享 Token 过期、撤销、轮换和旧地址立即失效。
-- [ ] Master 进程重启后没有残留流会话、计数器或定时器。
+- [x] MirrorSite创建/更新完整回归：字段边界、合法创建编辑、重复slug与并发唯一约束均通过真实隔离SQLite迁移验证。
+- [x] 管理员、分享 Token、公开访问三种模式的正向与负向鉴权。
+- [x] 路径、查询参数、Range、HEAD、条件请求和上游状态码透传。
+- [x] 重定向白名单、次数、非白名单和私网拒绝由 Agent 受控 HTTP/TLS/DNS 测试覆盖；Server 校验初始目标并传递允许域名，不能称为单独的 Server 重定向实现。
+- [x] 节点离线、HTTP 节点、能力缺失、WS 断开、响应超限和客户端取消。
+- [x] 分享 Token 过期、撤销、轮换和旧地址立即失效。
+- [x] 三个隔离子进程验证正常关闭自然退出、异常终止后新PID重启、会话/容量/限频重建、旧taskId隔离及Agent断线清理；Service/Gateway真实，数据库与Agent使用受控夹具。
 
 ### Agent Go 测试
 
-- [ ] GET/HEAD 请求构造和请求头过滤。
-- [ ] IP 地址安全校验覆盖 loopback、私网、链路本地、metadata、IPv4-mapped IPv6 和公网地址。
-- [ ] 允许域名重定向、重定向循环、超时和 DNS 失败。
-- [ ] 响应头上限、响应体上限、单请求超时和 context 取消。
-- [ ] 二进制 chunk 帧 task ID 编码、损坏帧、未知 task、并发流和顺序保证。
-- [ ] Agent 连接关闭时所有镜像 goroutine 均可退出，满足 Go goroutine 生命周期约束。
+- [x] GET/HEAD 请求构造和请求头过滤。
+- [x] IP 地址安全校验覆盖 loopback、私网、链路本地、metadata、IPv4-mapped IPv6 和公网地址。
+- [x] 允许域名重定向、重定向循环、超时和 DNS 失败。
+- [x] 响应头上限、响应体上限、单请求超时和 context 取消。
+- [x] 二进制 chunk 帧 task ID 编码、损坏帧、未知 task、并发流和顺序保证。
+- [x] Agent 连接关闭时所有镜像 goroutine 均可退出，满足 Go goroutine 生命周期约束。
 
-### 端到端验收
+### 本轮新增流控与清理回归
 
-- [ ] 使用测试站点验证从不同节点访问时的出口 IP 确实发生变化。
-- [ ] 验证 GitHub Raw 文件、GitHub API、Release 下载和 Range 续传。
-- [ ] 验证 GitHub Release 允许域名重定向不会绕过指定节点直连。
-- [ ] 验证完整 GitHub HTML 页面不被错误宣称为“完整网站镜像”；未支持的 Cookie/内链行为有明确说明。
-- [x] 运行 `pnpm gate:server`、`pnpm gate:web`、`pnpm gate:agent`、`pnpm gate:docs` 和最终 `pnpm gate`。
+- [x] 写缓冲与排队分片合计 1 MiB、`drain` 恢复、慢客户端超限 `SLOW_CONSUMER`，不阻塞其他流与控制帧。
+- [x] 结束/错误/超时/关闭/撤销统一收尾一次，迟到启动句柄立即清理；Token 提交失败不提前撤销，成功撤销后活动流停止。
+- [x] 分享路由优先于 slug 通配路由；真实 Nest 路由用例覆盖 GET/HEAD 和通配路径数组。
+- [x] 本轮完整本地 `pnpm gate` 已退出 0，证据为 `artifacts/verification/gate-submission.log`；镜像输入、容量、进程及网关套件均 PASS，Agent 与脚本回归通过。
+- [ ] 将本轮输出绑定最终集成提交，并由主代理决定机械归档；工具链提交 `f982646` 已存在，其余集成尚未提交。本次不执行归档。
+
+### 外部端到端验收（独立承接）
+
+原“不同节点出口 IP”“GitHub Raw/API/Release/Range”“Release 重定向仍走指定节点”“HTML/Cookie/内链能力边界”四项迁至 [部署验收 A2—A5](./node-mirror-deployment-acceptance.md)，均未完成；测试站点应受维护者控制。隔离夹具不能替代公网实测。
+
+原已勾选门禁为历史记录，本轮完整本地 gate 与文档一致性核对均已通过；最终集成提交绑定与归档决定仍见未完成项。
 
 ## 文档与版本同步
 
 - [x] 更新 `docs/DATA_MODELS.md`：MirrorSite 字段、索引、分享 Token、节点能力和备份规则。
 - [x] 更新 `docs/API_AND_PROTOCOLS.md`：管理 API、镜像路由、访问策略、Agent 消息帧、二进制分片、限额和错误码。
-- [x] 更新 `docs/ARCHITECTURE.md`：Master-Mirror-Agent 数据流、断开/取消时序和 WS-only 兼容边界。
+- [x] 更新并核对 `docs/ARCHITECTURE.md`：Master-Mirror-Agent 数据流、断开/取消、WS-only 及全局 16 任务/16 MiB、每节点 4 任务配额与 API 文档、实现一致。
 - [x] 更新 `docs/DEPLOYMENT_GUIDE.md`：生产 HTTPS/WSS、公开模式限速、上游域名配置和日志隐私要求。
 - [x] 更新前端规范/视觉验证台账，记录镜像站页面与验证范围。
 - [x] 更新根 `CHANGELOG.md` 和必要的 `apps/agent/CHANGELOG.md` 的 `[Unreleased]`。
 - [x] 不在日常特性 PR 中修改版本号；发版时按版本治理流程固化版本。
-- [ ] 规划完成后执行 `pnpm plan:archive node-mirror-site-proxy.md`，不得将仍有未完成任务的文档归档。
+本代码计划未完成项清零、证据与最终提交匹配后，由主代理执行 `pnpm plan:archive node-mirror-site-proxy.md` 并刷新索引。部署验收计划独立保持未完成，不能同时归档。
 
-## 发布、回滚与运维
+## 发布、回滚与运维交接
 
-- [ ] 发布前备份 SQLite 主文件及对应 `-wal`、`-shm` 文件，确认 Master 加密密钥和 Agent Token 可用。
-- [ ] 发布顺序：先迁移/部署 Master，再滚动升级支持 `mirror_proxy` 的 Agent，最后开放镜像站管理入口。
-- [ ] 旧 Agent 不得接收镜像任务；节点能力未宣告时前端和 API 均应拒绝提交/执行。
-- [ ] 首次上线默认关闭 `PUBLIC`，先用 `ADMIN` 或 `SHARE` 验证节点出网、响应流和限额，再按站点逐个开放。
-- [ ] 监控镜像请求数、成功率、状态码、延迟、字节数、取消数、超限数、Agent 断线数和节点并发占用。
-- [ ] 发现滥用时优先禁用镜像站或轮换分享 Token，不通过修改代理边界临时放开任意 URL。
-- [ ] 回滚时关闭镜像入口并恢复旧 Master/Agent；进行中的流全部按失败处理，不要求跨版本恢复。
+原发布前备份、Master/Agent 滚动升级、旧 Agent 能力拒绝、先 ADMIN/SHARE 后 PUBLIC、运行监控、滥用处置和回滚七项已迁至 [部署验收 A6—A12](./node-mirror-deployment-acceptance.md)。其中代码已有能力拒绝、默认 disabled、撤销和清理回归，但部署行为本身没有执行证明；不得仅因代码通过而勾选生产项。
 
-## 验收记录
+## 验收记录（区分历史与本轮）
 
-- [x] 数据模型与迁移结果：已生成并部署 `20260909090000_mirror_sites`，包含 `Node.capabilitiesJson`、`MirrorSite`、唯一 slug、索引和级联关系。
-- [x] Server API/流式代理测试结果：新增镜像安全单测；全量 Server 门禁 54 个测试套件、371 个测试通过；运行态未知 `/mirror` 路由返回 404，管理 API 未登录返回 401。
-- [x] Agent 协议与 Go 测试结果：`go test ./...`、`go vet`、gofmt 和 Linux amd64 构建通过；新增 SSRF、映射地址和方法限制测试。
-- [ ] GitHub Raw/API/Release 联调结果：
-- [ ] 安全与滥用测试结果：
-- [ ] 前端视觉验证结果：
-- [x] 五合一门禁结果：`pnpm gate` 全绿；Web 构建仅保留既有 chunk size warning。
-- [ ] 生产灰度与回滚演练结果：
+- [x] 历史数据模型与迁移记录：已生成并部署 `20260909090000_mirror_sites`，包含 `Node.capabilitiesJson`、`MirrorSite`、唯一 slug、索引和级联关系。
+- [x] 历史 Server API/流式代理测试记录：新增镜像安全单测；全量 Server 门禁 54 个测试套件、371 个测试通过；运行态未知 `/mirror` 路由返回 404，管理 API 未登录返回 401。
+- [x] 历史 Agent 协议与 Go 测试记录：`go test ./...`、`go vet`、gofmt 和 Linux amd64 构建通过；新增 SSRF、映射地址和方法限制测试。
+GitHub Raw/API/Release 联调结果：待部署验收 A3，尚未取得外部证据。
+- [x] 本轮隔离安全与滥用回归已添加；Master 定向日志 3 套件/66 项通过，测试范围及最新 Go 门禁证据见下表。
+前端视觉验证结果：本轮未执行；不将其作为 CI 或本轮必需项，按需在 Antigravity 中另行记录。
+- [x] 历史五合一门禁记录：`pnpm gate` 全绿；Web 构建仅保留既有 chunk size warning。
+生产灰度与回滚演练：待部署验收 A6—A12，本轮未操作生产。
+
+
+### 本轮完成证据映射
+
+| 行为 | 实现与用例 | 已取得的证据/局限 |
+| :--- | :--- | :--- |
+| ADMIN/SHARE/PUBLIC、过期/撤销/轮换、地址/请求头/响应状态 | `apps/server/src/mirrors/mirror.service.spec.ts` | `.cache/mirror-server-final.log`：3 套件/66 项 PASS；最新 `artifacts/verification/gate-submission.log` 的镜像套件均 PASS |
+| 流控、单次结算、迟到回调、模块关闭 | `mirror-stream.ts` 与上述服务测试 | 1 MiB、drain、声明/实际正文超限、模块销毁、Token 并发变更已有断言；不证明全局配额或真实进程重启 |
+| Nest 路由、未知/损坏/跨节点帧 | `mirror-public.controller.spec.ts`、`mirror-gateway.spec.ts` | 包含在上述 66 项定向输出；路径及帧顺序回归通过 |
+| Agent 目标与流式执行 | `apps/agent/internal/mirror/network_test.go`、`stream_test.go`、`mirror_test.go` | 已核对重绑定、固定拨号 IP、64 KiB 响应头、HEAD 大长度元信息、压缩字节、重定向、取消与超时测试；最新 `artifacts/verification/gate-submission.log` 已记录 mirror/ws/poll 包通过及 Agent 门禁通过；不证明外部节点出口 |
+| Agent 接入与退出 | `apps/agent/internal/ws/client_test.go` | 已有立即取消、4 任务 admission、并发分片/控制帧、panic 和读循环等待退出用例；不宣称现网压测通过 |
+| 完整本地工程状态 | `artifacts/verification/gate-submission.log` | 完整 gate 退出 0；Server 124 套件/1597 项通过，另 11 套件/105 项 native 跳过；Web 144 项、脚本 106 项、维护 33 项通过，脚本另 4 项默认跳过；Agent 通过。旧 discovery/E2E storage 失败日志只作历史记录 |
+
+### 主代理待收口
+
+创建/更新与唯一约束、Master 全局配额、真实隔离进程重启/断线、完整本地 gate 及架构/API 文档一致性均已有本轮证据，旧缺口描述撤回。代码与隔离验收已满足本地完成条件，仅余最终集成提交绑定和主代理机械归档决定；本次只写计划、不提交，不因缺提交号提前归档。外部出口和部署 A1—A12 全部保持未完成。
+
+- 追加验收：镜像域6套件173项通过，原66项保留；scope ESLint、独立fixture语法检查通过，记录位于本地.cache/mirror-phase2-final.log。

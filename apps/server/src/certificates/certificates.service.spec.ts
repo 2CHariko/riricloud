@@ -75,6 +75,7 @@ describe('手动证书生命周期与轻量 E2E', () => {
     base = (await app.getUrl()) + '/api/v1/admin/certificates';
   });
   beforeEach(async () => {
+    await prisma.subscription.deleteMany(); await prisma.plan.deleteMany();
     await prisma.line.updateMany({ data: { targetLineId: null } });
     await prisma.line.deleteMany(); await prisma.certificate.deleteMany(); await prisma.certificateConfigSnapshot.deleteMany();
     await prisma.systemSetting.deleteMany({ where: { key: { startsWith: 'certificateReminderDaily:' } } });
@@ -91,6 +92,19 @@ describe('手动证书生命周期与轻量 E2E', () => {
   const create = (fixture = first) => service.create({ name: '测试证书', certificatePem: fixture.certificatePem, privateKeyPem: fixture.privateKeyPem });
   async function bind(id: string, extra: Record<string, unknown> = {}) {
     return prisma.line.create({ data: { name: '测试线路', entryNodeId: 'entry', entryPort: 443, certificateId: id, paramsJson: '{"tls":{"mode":"tls","enabled":true,"serverName":"example.com"}}', ...extra } });
+  }
+  async function grantLineSubscription(lineId: string) {
+    // 仅真实下发生命周期案例授予权益，其他证书校验与无权案例维持无订阅状态。
+    const user = await prisma.user.update({ where: { email: 'user@example.com' }, data: { isActive: true, emailVerifiedAt: new Date() } });
+    const plan = await prisma.plan.create({ data: {
+      name: '证书下发测试套餐', durationDays: 30, trafficLimitBytes: 100000n,
+      lineMatchMode: 'EXPLICIT', lineIdsJson: JSON.stringify([lineId])
+    } });
+    await prisma.subscription.create({ data: {
+      userId: user.id, planId: plan.id, status: 'ACTIVE', trafficLimitBytes: plan.trafficLimitBytes,
+      trafficUsedBytes: 0n, expireAt: new Date(Date.now() + 30 * 86400_000)
+    } });
+    return user;
   }
   async function request(path = '', method = 'GET', body?: unknown, token = adminToken) {
     return fetch(base + path, { method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -233,6 +247,7 @@ describe('手动证书生命周期与轻量 E2E', () => {
   });
   it('HTTP 超时至少三轮询周期，同修订配置推进可重新确认，旧快照不能覆盖新修订', async () => {
     const { certificate } = await create(); const line = await bind(certificate.id, { entryNodeId: 'landing' });
+    await grantLineSubscription(line.id);
     await tracking.capture('landing', config(line.id, 20)); await tracking.sent('landing', 20);
     await prisma.certificateDeployment.updateMany({ data: { sentAt: new Date(Date.now() - 121_000) } });
     expect((await service.deployments(certificate.id, {})).data[0].state).toBe('SENT');
@@ -249,6 +264,14 @@ describe('手动证书生命周期与轻量 E2E', () => {
     expect((await service.deployments(certificate.id, {})).data[0].state).toBe('WAITING');
     expect((await service.deployments(certificate.id, {})).data.some(row => row.state === 'SUPERSEDED')).toBe(true);
   });
+  it('无订阅权益时不生成证书业务入站并标记未控制', async () => {
+    const { certificate } = await create(); const line = await bind(certificate.id, { entryNodeId: 'landing' });
+    const payload = await agent.buildConfigSync('landing');
+    expect(payload.singboxConfig.inbounds).toEqual([]);
+    await tracking.capture('landing', payload);
+    expect((await service.deployments(certificate.id, {})).data[0].state).toBe('UNMANAGED');
+    expect(payload.singboxConfig.inbounds).not.toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'line-' + line.id })]));
+  });
   it('高级配置替换证书/私钥或移除入站，标记未控制；盲转发入口不误判', async () => {
     const { certificate } = await create(); const line = await bind(certificate.id);
     await tracking.capture('entry', config(line.id, 1, first.certificatePem, second.privateKeyPem));
@@ -259,10 +282,14 @@ describe('手动证书生命周期与轻量 E2E', () => {
   });
   it('HTTP 实际返回配置才计发送；WS 发送、旧Agent无法确认、离线重连后可运行确认', async () => {
     const { certificate } = await create(); const line = await bind(certificate.id, { entryNodeId: 'landing' });
+    const subscriber = await grantLineSubscription(line.id);
     await agent.pushConfig('landing');
     expect((await service.deployments(certificate.id, {})).data[0].state).toBe('WAITING');
     const poll = await agent.poll('landing-token', { ...heartbeat, appliedConfigVersion: 0 });
     expect(poll.singboxConfig).toBeDefined();
+    expect(poll.singboxConfig?.inbounds).toEqual(expect.arrayContaining([expect.objectContaining({
+      tag: 'line-' + line.id, users: [{ uuid: subscriber.uuid, name: subscriber.email + '::' + line.id }]
+    })]));
     expect((await service.deployments(certificate.id, {})).data[0].state).toBe('SENT');
     await agent.poll('landing-token', { ...heartbeat, appliedConfigVersion: poll.version });
     expect((await service.deployments(certificate.id, {})).data[0].state).toBe('CONFIRMED');

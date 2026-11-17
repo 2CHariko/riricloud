@@ -1,13 +1,46 @@
+import { randomBytes, randomUUID } from 'node:crypto';
 import { AgentService } from './agent-gateway.service';
 import { saveEgressProxy } from '../common/line-egress';
 import { formatProxyLineUsername } from '../proxy-pool/proxy-key.util';
+import { formatInboundUserName, type InboundUserCredential } from '../common/inbound';
+import type { LineCredentialsService } from '../line-credentials/line-credentials.service';
+import type { RelayCredentialView } from '../line-credentials/line-credential.types';
 
 const proxy = { protocol: 'SOCKS5' as const, serverHost: '127.0.0.1', serverPort: 1080, authEnabled: true, username: 'warp', password: 'egress-secret' };
 const line = { id: '11111111-1111-4111-8111-111111111111', name: 'Line', type: 'DIRECT', relayMode: null as string | null, tag: 'business', listen: '0.0.0.0', protocolType: 'MIXED', paramsJson: '{"usersEnabled":true}', entryNodeId: 'entry', entryPort: 24443, landingNodeId: null as string | null, landingPort: null as number | null, certificate: null, status: 'ACTIVE', isPublic: true, tagsJson: '[]', egressProxyJson: saveEgressProxy(proxy, null) };
-function setup(node: Record<string, unknown>, bindings: unknown[] = []) {
-  const prisma = { node: { findUnique: jest.fn(async () => node) }, user: { findMany: jest.fn(async () => []) } };
-  const service = new AgentService(prisma as never, undefined, undefined, undefined, { getNodeBindings: async () => bindings } as never);
-  return service;
+const subscriber = { id: 'subscriber', uuid: randomUUID(), email: 'subscriber@example.com', password: 'subscriber-secret', isActive: true, role: 'USER', emailVerifiedAt: new Date('2026-01-01T00:00:00.000Z'), extraLineGrants: [] };
+function credentialFixture() {
+  const views = new Map<string, RelayCredentialView & { credential: InboundUserCredential }>();
+  const forLine = (lineId: string) => {
+    const previous = views.get(lineId);
+    if (previous) return previous;
+    // 每条线路生成独立材料，两端共用同一测试注册表以校验实际出入站匹配。
+    const view = {
+      lineId, rotationId: 'rotation-' + lineId, operationId: randomUUID(), stage: 'CONFIRMED', targetVersion: 1,
+      entryNodeId: 'entry', landingNodeId: 'exit', previousEntryNodeId: null, previousLandingNodeId: null, targetLineId: null, entryEnabled: true,
+      credential: { uuid: randomUUID(), email: 'relay-' + randomBytes(24).toString('hex'), credential: randomBytes(32).toString('base64url') }
+    };
+    views.set(lineId, view);
+    return view;
+  };
+  const service = {
+    setDispatcher: jest.fn(),
+    prepare: jest.fn(async (lineIds: string[], _nodeId?: string) => new Map(lineIds.map(lineId => [lineId, forLine(lineId)]))),
+    remember: jest.fn()
+  } satisfies Pick<LineCredentialsService, 'setDispatcher' | 'prepare' | 'remember'>;
+  return { service, forLine };
+}
+function setup(node: Record<string, unknown>, bindings: unknown[] = [], credentials = credentialFixture()) {
+  const prisma = {
+    node: { findUnique: jest.fn(async () => ({ configOverride: null, ...node })) },
+    subscription: { findMany: jest.fn(async () => [{
+      id: 'subscription', userId: subscriber.id, status: 'ACTIVE', expireAt: null,
+      trafficLimitBytes: 100000n, trafficUsedBytes: 0n, user: subscriber,
+      plan: { lineMatchMode: 'EXPLICIT', lineTagsJson: '[]', lineIdsJson: JSON.stringify([line.id]) }
+    }]) },
+    user: { findMany: jest.fn(async () => []) }
+  };
+  return new AgentService(prisma as never, undefined, undefined, undefined, { getNodeBindings: async () => bindings } as never, undefined, credentials.service as unknown as LineCredentialsService);
 }
 const rulesOf = (config: Record<string, unknown>) => (config.route as { rules: Array<Record<string, unknown>> }).rules;
 describe('Agent最终落地配置', () => {
@@ -22,11 +55,23 @@ describe('Agent最终落地配置', () => {
     expect(config.route).not.toHaveProperty('final');
   });
   it.each(['BLIND_FORWARD', 'PROTOCOL_PROXY'])('%s中继仅向落地下发秘密', async relayMode => {
-    const relay = { ...line, type: 'RELAY', relayMode, protocolType: 'VLESS', paramsJson: '{"tls":{"mode":"none"}}', landingNodeId: 'exit', landingPort: 24444, landingNode: { serverHost: '198.51.100.2', status: 'ONLINE' } };
-    const entry = (await setup({ id: 'entry', status: 'ONLINE', serverHost: '198.51.100.1', entryLines: [relay], landingLines: [] }).buildConfigSync('entry')).singboxConfig;
+    const credentials = credentialFixture();
+    const relay = { ...line, type: 'RELAY', relayMode, protocolType: 'VLESS', paramsJson: JSON.stringify({ tls: { enabled: true, mode: 'tls', serverName: 'relay.example.com', certificatePath: '/certificate.pem', keyPath: '/key.pem' } }), landingNodeId: 'exit', landingPort: 24444, landingNode: { serverHost: '198.51.100.2', status: 'ONLINE', configOverride: null } };
+    const entry = (await setup({ id: 'entry', status: 'ONLINE', serverHost: '198.51.100.1', entryLines: [relay], landingLines: [] }, [], credentials).buildConfigSync('entry')).singboxConfig;
+    expect(entry.inbounds).toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'business-entry', listen_port: 24443 })]));
     expect(JSON.stringify(entry)).not.toContain(proxy.password);
     expect(JSON.stringify(entry)).not.toContain('egress-out');
-    const exit = (await setup({ id: 'exit', status: 'ONLINE', serverHost: '198.51.100.2', entryLines: [], landingLines: [relay] }).buildConfigSync('exit')).singboxConfig;
+    const exit = (await setup({ id: 'exit', status: 'ONLINE', serverHost: '198.51.100.2', entryLines: [], landingLines: [relay] }, [], credentials).buildConfigSync('exit')).singboxConfig;
+    if (relayMode === 'PROTOCOL_PROXY') {
+      const { credential } = credentials.forLine(line.id);
+      expect(entry.inbounds).toEqual(expect.arrayContaining([expect.objectContaining({ users: [{ uuid: subscriber.uuid, name: formatInboundUserName(subscriber, line.id) }] })]));
+      expect(entry.outbounds).toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'relay-out-' + line.id, uuid: credential.uuid })]));
+      expect(exit.inbounds).toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'business-landing', users: [{ uuid: credential.uuid, name: formatInboundUserName(credential, line.id) }] })]));
+      expect(credentials.service.prepare).toHaveBeenNthCalledWith(1, [line.id], 'entry');
+      expect(credentials.service.prepare).toHaveBeenNthCalledWith(2, [line.id], 'exit');
+    } else {
+      expect(exit.inbounds).toEqual(expect.arrayContaining([expect.objectContaining({ tag: 'business-landing', users: [{ uuid: subscriber.uuid, name: formatInboundUserName(subscriber, line.id) }] })]));
+    }
     expect(JSON.stringify(exit)).toContain(proxy.password);
     expect(rulesOf(exit).at(-1)).toMatchObject({ inbound: ['business-landing'], outbound: `egress-out-${line.id}` });
   });

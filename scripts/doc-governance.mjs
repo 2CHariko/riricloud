@@ -11,11 +11,12 @@
  * 4. sync: 自动扫描并同步 docs/plans/README.md 的进行中与归档表格
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -215,6 +216,110 @@ ${archiveTableRows}
   console.log(`[doc-governance] 索引台账已同步: docs/plans/README.md`);
 }
 
+// 只保护现行规范的少量关键契约；历史路线图与 plans/archive 不参与旧表述扫描。
+const POLICY_FILES = [
+  'AGENTS.md', 'README.md', 'docs/PROJECT_CONSTRAINTS.md',
+  'docs/GIT_WORKFLOW.md', 'docs/CODE_REVIEW.md', 'docs/VERSIONING.md',
+];
+const REQUIRED_GATES = ['version', 'docs', 'i18n', 'server', 'web', 'agent'].map(name => 'gate:' + name);
+
+function readPolicyFile(file, errors) {
+  try {
+    return fs.readFileSync(path.join(ROOT_DIR, file), 'utf8');
+  } catch {
+    errors.push('[规范文件缺失] ' + file + ' 无法读取。');
+    return '';
+  }
+}
+
+function policySection(content, heading) {
+  const match = content.match(new RegExp('^##\\s+[^\\r\\n]*' + heading + '[^\\r\\n]*\\r?$', 'm'));
+  return match ? content.slice(match.index + match[0].length).split(/^##\s+/m)[0] : '';
+}
+
+/**
+ * 表格只核对四行契约标识，不锁定说明文案、具体发行版本或整篇 Markdown。
+ */
+function checkVersionPolicy(documents, errors) {
+  const obsoletePolicies = [
+    /三应用共用[^\n。]*统一版本号/,
+    /全局唯一真实源|单仓唯一版本源|统一版本号策略/,
+    /核心代码变更强制递增|PR\s*级连续递增/,
+    /核心代码变更[^\n。]*必须执行[^\n。]*pnpm\s+bump/,
+    /不使用[^\n。]*release\s*分支/i,
+  ];
+  for (const [file, content] of documents) {
+    for (const pattern of obsoletePolicies) {
+      if (pattern.test(content)) errors.push('[版本模式漂移] ' + file + ' 仍含已废弃的统一版本/每 PR bump/禁止 release 分支规则；请遵循双轨 Unreleased + Release PR 流程。');
+    }
+  }
+
+  const table = policySection(documents.get('docs/VERSIONING.md'), '双轨');
+  const rows = table.split(/\r?\n/).filter(line => /^\s*\|/.test(line)).map(line => line.split('|').slice(1, -1));
+  const contract = [
+    ['版本源', ['package.json'], ['apps/agent/VERSION']],
+    ['日志缓冲', ['CHANGELOG.md', '[Unreleased]'], ['apps/agent/CHANGELOG.md', '[Unreleased]']],
+    ['自增命令', ['pnpm bump'], ['pnpm bump:agent']],
+    ['发布 Tag', ['vX.Y.Z'], ['agent-vA.B.C']],
+  ];
+  for (const [label, master, agent] of contract) {
+    const row = rows.find(cells => cells[0].replace(/[*\s]/g, '') === label.replace(/\s/g, ''));
+    const codes = cell => [...(cell || '').matchAll(/\x60([^\x60]+)\x60/g)].map(match => match[1].trim());
+    if (!row || row.length !== 3 || !master.every(value => codes(row[1]).includes(value)) || !agent.every(value => codes(row[2]).includes(value))) {
+      errors.push('[双轨版本契约] docs/VERSIONING.md 的“' + label + '”行须分别描述 Master (' + master.join(', ') + ') 与 Agent (' + agent.join(', ') + ')。');
+    }
+  }
+}
+
+/**
+ * 门禁集合从实际总入口读取，清单按章节核对，不能用别处提及掩盖遗漏。
+ */
+function checkGatePolicy(documents, errors) {
+  let scripts;
+  try {
+    scripts = JSON.parse(readPolicyFile('package.json', errors)).scripts || {};
+  } catch {
+    errors.push('[门禁集合漂移] package.json 无法解析。');
+    return;
+  }
+  const actual = [...new Set([...String(scripts.gate || '').matchAll(/\bpnpm\s+(?:run\s+)?(gate:[\w-]+|test:scripts)/g)].map(match => match[1]))];
+  const missing = REQUIRED_GATES.filter(gate => !actual.includes(gate));
+  const undefinedGates = actual.filter(gate => typeof scripts[gate] !== 'string' || !scripts[gate].trim());
+  if (missing.length || undefinedGates.length) {
+    errors.push('[门禁集合漂移] package.json scripts.gate 缺少必要门禁或引用未定义命令：' + [...missing, ...undefinedGates].join(', '));
+  }
+
+  const catalogs = new Map([
+    ['AGENTS.md', policySection(documents.get('AGENTS.md'), '常用命令')],
+    ['README.md', policySection(documents.get('README.md'), '质量门禁')],
+    ['docs/CODE_REVIEW.md', policySection(documents.get('docs/CODE_REVIEW.md'), '质量门禁')],
+    ['docs/GIT_WORKFLOW.md', documents.get('docs/GIT_WORKFLOW.md').match(/^\|[^\r\n]*合并前门禁[^\r\n]*\|\s*$/m)?.[0] || ''],
+  ]);
+  for (const [file, content] of catalogs) {
+    const declared = new Set(content.match(/\b(?:gate:[\w-]+|test:scripts)/g) || []);
+    const absent = actual.filter(gate => !declared.has(gate));
+    const extra = [...declared].filter(gate => !actual.includes(gate));
+    if (!content || absent.length || extra.length) {
+      errors.push('[门禁集合漂移] ' + file + ' 门禁清单与 package.json scripts.gate 不一致（缺少：' + (absent.join(', ') || '无') + '；多余：' + (extra.join(', ') || '无') + '）。');
+    }
+  }
+  for (const [file, content] of documents) {
+    if (/五(?:合一|项|端)?(?:质量)?门禁/.test(content)) {
+      errors.push('[门禁集合漂移] ' + file + ' 仍使用五门禁表述，请同步包含 i18n 的六项门禁。');
+    }
+  }
+  const webRow = catalogs.get('docs/CODE_REVIEW.md').match(/^\|[^\r\n]*apps\/web[^\r\n]*\|\s*$/m)?.[0] || '';
+  if (/\btest\b/.test(scripts['gate:web'] || '') && !/\btest\b/.test(webRow)) {
+    errors.push('[Web 测试契约] docs/CODE_REVIEW.md 的 apps/web 门禁须包含 node --test 回归测试。');
+  }
+}
+
+function checkPolicyConsistency(errors) {
+  const documents = new Map(POLICY_FILES.map(file => [file, readPolicyFile(file, errors)]));
+  checkVersionPolicy(documents, errors);
+  checkGatePolicy(documents, errors);
+}
+
 /**
  * 校验逻辑 (check)
  */
@@ -320,7 +425,10 @@ function runCheck() {
     errors.push(`[索引缺失] docs/plans/README.md 索引台账不存在，请运行 pnpm plan:sync 生成。`);
   }
 
-  // 5. 校验代码-文档联动同步规则 (Coupled Doc-Code Governance)
+  // 5. 关键规范始终检查，不能通过代码-文档同步豁免绕过。
+  checkPolicyConsistency(errors);
+
+  // 6. 校验代码-文档联动同步规则 (Coupled Doc-Code Governance)
   checkDocCodeCoupling(errors, warnings);
 
   // 输出警告
@@ -338,6 +446,14 @@ function runCheck() {
   }
 
   console.log('✅ [doc-governance] 文档治理门禁校验全绿！所有规划、归档与代码文档联动符合规范。');
+}
+
+/**
+ * 比较真实元数据，避免 scripts 变更旁边的 diff 上下文误触发依赖联动。
+ */
+export function dependencyMetadataChanged(before, after) {
+  return ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies', 'engines', 'packageManager']
+    .some(field => !isDeepStrictEqual(before[field], after[field]));
 }
 
 /**
@@ -384,19 +500,19 @@ const COUPLED_RULES = [
       const hasGoMod = changedFiles.some(f => f === 'apps/agent/go.mod' || f === 'apps/agent/go.sum');
       if (hasGoMod) return ['apps/agent/go.mod'];
 
-      const hasPkg = changedFiles.some(f => f === 'package.json' || f === 'apps/server/package.json' || f === 'apps/web/package.json');
-      if (!hasPkg) return [];
-
-      try {
-        const diffTarget = baseRef ? (typeof baseRef === 'object' ? baseRef.mergeBase : baseRef) : 'HEAD';
-        const pkgDiff = execSync(`git diff ${diffTarget} -- package.json apps/server/package.json apps/web/package.json`, { encoding: 'utf-8', cwd: ROOT_DIR });
-        if (/(?:dependencies|devDependencies|peerDependencies|engines|packageManager)/i.test(pkgDiff)) {
-          return changedFiles.filter(f => f === 'package.json' || f.endsWith('package.json'));
+      const packageFiles = changedFiles.filter(file => ['package.json', 'apps/server/package.json', 'apps/web/package.json'].includes(file));
+      const diffTarget = baseRef ? (typeof baseRef === 'object' ? baseRef.mergeBase : baseRef) : 'HEAD';
+      return packageFiles.filter(file => {
+        try {
+          const before = JSON.parse(execFileSync('git', ['show', diffTarget + ':' + file], { encoding: 'utf8', cwd: ROOT_DIR, stdio: 'pipe' }));
+          const fullPath = path.join(ROOT_DIR, file);
+          const after = fs.existsSync(fullPath) ? JSON.parse(fs.readFileSync(fullPath, 'utf8')) : {};
+          return dependencyMetadataChanged(before, after);
+        } catch {
+          // 新文件或不可解析的基准按需同步文档，不能静默豁免真实依赖变化。
+          return true;
         }
-      } catch {
-        return [];
-      }
-      return [];
+      });
     },
     requiredDocs: ['docs/TECH_STACK.md'],
   },
@@ -607,9 +723,9 @@ function runNew(nameArg) {
 title: "${title}"
 type: plan
 status: active
-target_version: "v0.4.0"
+target_version: "Unreleased"
 created_at: "${today}"
-author: "Antigravity & Maintainers"
+author: "Contributors & Maintainers"
 ---
 
 # ${title}
@@ -649,24 +765,26 @@ author: "Antigravity & Maintainers"
   syncIndex();
 }
 
-// 主命令行路由
-const args = process.argv.slice(2);
-const command = args[0] || 'check';
+// 直接执行才路由命令；测试导入纯比较函数不会扫描或改写工作区。
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  const args = process.argv.slice(2);
+  const command = args[0] || 'check';
 
-switch (command) {
-  case 'check':
-    runCheck();
-    break;
-  case 'archive':
-    runArchive(args[1]);
-    break;
-  case 'new':
-    runNew(args[1]);
-    break;
-  case 'sync':
-    syncIndex();
-    break;
-  default:
-    console.error(`未知命令: ${command}。支持命令: check, archive <file>, new <name>, sync`);
-    process.exit(1);
+  switch (command) {
+    case 'check':
+      runCheck();
+      break;
+    case 'archive':
+      runArchive(args[1]);
+      break;
+    case 'new':
+      runNew(args[1]);
+      break;
+    case 'sync':
+      syncIndex();
+      break;
+    default:
+      console.error(`未知命令: ${command}。支持命令: check, archive <file>, new <name>, sync`);
+      process.exit(1);
+  }
 }

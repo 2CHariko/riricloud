@@ -13,6 +13,7 @@ import { TabsContent } from '@/components/ui/tabs';
 import { SettingsInput, SettingsSwitch, SettingsSelect, SettingsTextarea, SettingsEditor, SetOriginButton, SectionTitle } from './settings-fields';
 import { TimezoneSettingField } from './timezone-setting-field';
 import { GithubMirrorSettingsField } from './github-mirror-settings-field';
+import { SpeedtestUserField } from './speedtest-user-field';
 import { ProbePresetEditor } from './probe-preset-editor';
 import { SpeedTierEditor } from './speed-tier-editor';
 import { LandingSettingsTab } from './landing-settings-tab';
@@ -141,6 +142,7 @@ export function SettingsTabs({ publicPlans, defaultTemplate, dbStatsQuery, vacuu
                   <p className="text-xs text-muted-foreground">{t('admin:latencyTest.settings.description')}</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2 min-w-0">
+                  <SpeedtestUserField />
                   <SettingsSwitch name="lineSpeedtestEnabled" label={t('admin:latencyTest.settings.enabled')} description={t('admin:latencyTest.settings.enabledHelp')} className="sm:col-span-2" />
                   <SettingsInput name="lineSpeedtestIntervalMins" label={t('admin:latencyTest.settings.interval')} type="number" min={1} max={1440} description={t('admin:latencyTest.settings.intervalHelp')} />
                   <SettingsInput name="lineSpeedtestTimeoutMs" label={t('admin:latencyTest.settings.timeout')} type="number" min={500} max={30000} description={t('admin:latencyTest.settings.timeoutHelp')} />

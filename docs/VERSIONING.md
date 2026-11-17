@@ -24,7 +24,7 @@
 
 1. **默认动作是 PATCH**：一个变更只要没有引入新能力、没有破坏任何既有行为，就一律按 PATCH 递增。修文案、调样式、优化日志、重构内部实现均属此类。
 2. **MINOR 只在「用户可感知的新能力」时递增**：新增 API 端点、新增订阅输出格式、面板新增页面、WS 协议新增消息类型（且旧 Agent 能安全忽略）。
-3. **MAJOR 只在「不升级就坏」时递增**：破坏 REST/WS 协议兼容、Prisma 迁移需要人工介入、配置文件格式不兼容导致旧 Agent 无法工作、统一版本号策略下的任一子应用发生破坏性变更（见 §4）。
+3. **MAJOR 只在「不升级就坏」时递增**：破坏 REST/WS 协议兼容、Prisma 迁移需要人工介入、配置文件格式不兼容导致旧 Agent 无法工作、Master 或 Agent 对各自消费者造成破坏性变更（见 §4）。
 4. **拿不准时的裁决顺序**：按 PATCH → MINOR → MAJOR 的顺序逐级自查，最低满足者即为答案；仍无法判断时在 PR 中提出讨论，而非直接选高版本。
 
 ### 2.1 0.x 阶段的特殊规则
@@ -44,7 +44,7 @@
 为了兼顾主控系统的快速迭代与边缘节点守护程序的稳定性，RiriCloud 采用 **Master 与 Agent 解耦的双轨独立版本管理体系**：
 
 1. **Master 体系（Server + Web + 控制面）**：
-   - **版本源**：根目录 `package.json` 的 `version` 字段。
+   - **版本源**：根目录 `package.json` 的 `version` 字段；`apps/server` 与 `apps/web` 不声明独立 `version`。
    - **更新日志**：根目录 `CHANGELOG.md`。
    - **自增命令**：`pnpm bump [patch|minor|major]`。
    - **Git Tag**：`vX.Y.Z`（如 `v0.6.14`）。
@@ -133,11 +133,15 @@ flowchart TD
     end
 ```
 
-### 6.1 核心代码判定与免增规则
+### 6.1 核心路径与日志判定
 
-- **Master 核心路径**：`apps/server/`、`apps/web/`、`prisma/`。变更时必须维护根 `CHANGELOG.md`。
-- **Agent 核心路径**：`apps/agent/`（除文档与测试外）。变更时必须维护 `apps/agent/CHANGELOG.md`。
-- **免增放行**：纯文档（`docs/`）、开发脚本（`scripts/`）、本地配置微调且不改变运行时逻辑时，`pnpm gate:version` 允许免增放行。
+日常 PR 均保持版本号不变；以下规则决定对应 `[Unreleased]` 是否必须更新，不能理解为每个核心 PR 都需要 bump。`scripts/version-governance.mjs check` 按路径与基准差分判定，不根据提交 type 推断：
+
+- **Master 核心路径**：`apps/server/`、`apps/web/`、`prisma/` 下的变更，维护根 `CHANGELOG.md`。当前脚本没有针对这些路径内文档或测试的通用豁免。
+- **Agent 核心路径**：`apps/agent/` 下除 `VERSION`、`CHANGELOG.md` 之外的变更，维护 `apps/agent/CHANGELOG.md`；Agent 文档与测试并未普遍豁免。
+- **跨端变更**：同时满足上述两条路径规则时，两处 `[Unreleased]` 均须维护。
+- **非核心路径**：仅 `docs/`、`scripts/` 或根级工程配置变更不触发上述核心路径日志检查，也不因此单独发布；用户可感知变化仍应记录。
+- **发版模式**：相应版本相对基准递增时，校验该轨道的定稿版本与日志；禁止版本倒退。Release PR 负责 bump，合入后的发布脚本不修改版本文件。
 
 ### 6.2 工具链与多重防线
 
@@ -146,7 +150,9 @@ flowchart TD
   - `pnpm bump:agent` / `pnpm bump:agent:minor` / `pnpm bump:agent:major`：Agent 版本自增与 `apps/agent/CHANGELOG.md` 固化。
 - **多重防线**：
   1. **本地质量门禁**：`pnpm gate:version`（严格比对当前分支与基准分支差异，确保改动与更新日志严格对应）。
-  2. **CI 门禁阻断**：GitHub Actions PR 阶段双重核查。
+  2. **CI 门禁阻断**：GitHub Actions PR 阶段再次核查。
+  3. **推送前检查**：`.husky/pre-push` 拦截直推 main/master，并执行版本门禁；不得使用 `--no-verify`。
+  4. **规范防漂移**：`pnpm gate:docs` 核对 §3 的版本源、日志、bump 命令与 Tag 四行契约，阻断已废弃规则回流；不锁定历史计划中的版本号。
 
 ### 6.3 正式发布 (Release)
 
@@ -163,11 +169,11 @@ Master 与 Agent 的 Release 发布流程与产物附件完全解耦独立；**�
 
 ## 8. 应用版本与可分发二进制资源版本
 
-RiriCloud 使用两种互不替代的版本生命周期：
+RiriCloud 区分双轨应用发布与可分发资源的版本生命周期：
 
 | 版本类型 | 来源 | 作用 | 变更条件 |
 | :--- | :--- | :--- | :--- |
-| Master 应用版本 | 根 `package.json` | 主控面板、API 与完整系统版本 | 通过 `pnpm bump` 统一变更 |
+| Master 应用版本 | 根 `package.json` | 主控面板与 API 版本 | 在 Master Release PR 中通过 `pnpm bump` 变更 |
 | Agent 程序版本 | `apps/agent/VERSION` | 边缘守护程序与 TUI 控制台版本 | 通过 `pnpm bump:agent` 独立变更 |
 | 二进制资源版本 | `BinaryRelease.upstreamVersion + revision` | Sing-box/Agent 可分发文件的逻辑资源版本 | 真实二进制、构建标签或兼容约束变化时创建新资源 |
 

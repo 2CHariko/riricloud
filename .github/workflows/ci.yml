@@ -30,6 +30,8 @@ jobs:
         run: pnpm gate:version
       - name: 文档治理门禁
         run: pnpm gate:docs
+      - name: 中文基准与前端文本门禁
+        run: pnpm gate:i18n
 
   server:
     name: Server 门禁（tsc / lint / test / build）
@@ -49,6 +51,8 @@ jobs:
         run: pnpm --filter @riricloud/server lint
       - name: 单元测试
         run: pnpm --filter @riricloud/server test
+      - name: 备份维护与隔离恢复回归
+        run: pnpm test:maintenance
       - name: 构建
         run: pnpm --filter @riricloud/server build
 
@@ -102,8 +106,83 @@ jobs:
         run: pnpm audit --audit-level high
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: apps/agent/go.mod
       - name: Go 漏洞扫描（仅可达漏洞计入）
         run: |
           cd apps/agent
           go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  scripts:
+    name: 工程脚本回归（Node 22 / 串行）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm/action-setup 从根 packageManager 读取精确版本，不使用 latest。
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 运行全部工程脚本测试
+        run: node scripts/run-script-tests.mjs
+
+  native-kernels:
+    name: 原生内核验收 (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: windows-amd64
+            runner: windows-2022
+          - target: darwin-amd64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUN_NATIVE_CLIENT_TESTS: '1'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/agent/go.mod
+          cache-dependency-path: apps/agent/go.sum
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      # 仅缓存有固定 SHA 的下载资源，每次使用均重新校验；定制内核在当前 runner 重编。
+      - uses: actions/cache@v4
+        with:
+          path: artifacts/native-downloads
+          key: native-assets-${{ matrix.target }}-${{ hashFiles('Dockerfile', 'Dockerfile.agent', 'scripts/client-kernel-assets.json') }}
+      - name: 原生构建、校验并串行执行真实内核套件
+        run: node scripts/run-native-client-tests.mjs --target ${{ matrix.target }}
+      - name: 保存平台、内核版本与执行证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-evidence-${{ matrix.target }}
+          path: |
+            artifacts/native/${{ matrix.target }}/summary.json
+            artifacts/native/${{ matrix.target }}/resources.json
+            artifacts/native/${{ matrix.target }}/jest-results.json
+            artifacts/native/${{ matrix.target }}/native-scripts.tap
+          if-no-files-found: warn
+          retention-days: 14

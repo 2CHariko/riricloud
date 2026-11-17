@@ -92,11 +92,11 @@ Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最�
 
 #### 节点管理
 - `GET /admin/nodes`：获取所有节点详情（不返回 AgentToken，包含遥测状态、承载线路摘要与派生端口）。返回字段包含网络可达性 `reachability`（`PUBLIC` | `NAT`）。启动 bootstrap 会自动创建 `isLocal=true` 的 `Master-Local` 系统节点；Docker/发行包默认由 Master 内置 Agent 自动上线。⭐
-- `GET /admin/nodes/:id`：获取单个节点详情（含承载线路、入口/出口角色、派生端口、安装命令、Agent/内核版本画像与最近探针快照）。⭐ 响应节点对象包含加性字段 `pendingVersionConfirm`（可选，向后兼容）：升级任务完成但心跳上报的 `agentVersion` 尚未达到目标版本时的待确认信息 `{ taskId, expectedVersion, completedAt }`，用于提示“Agent 重启可能失败”；版本对账窗口为主控侧 15 分钟，确认或超时后字段回到 `null`。同时返回 `singboxLogMode`（`NORMAL`/`INFO`/`DEBUG`，已过期诊断会折算为 `NORMAL`）、`singboxLogModeUntil`、`supportsSingboxLogCapture` 与 `supportsAgentLogRotation`。WS 协议契约本身无变更。安装命令的公开地址优先使用系统设置 `publicBaseUrl`，其次使用 `RIRICLOUD_PUBLIC_URL`，最后使用当前请求的 `X-Forwarded-Proto` + `X-Forwarded-Host`/`Host` 自动匹配。
+- `GET /admin/nodes/:id`：获取单个节点详情（含承载线路、入口/出口角色、派生端口、安装命令、Agent/内核版本画像与最近探针快照）。⭐ 响应节点对象包含加性字段 `pendingVersionConfirm`（可选，向后兼容）：升级任务完成但心跳上报的 `agentVersion` 尚未达到目标版本时的待确认信息 `{ taskId, expectedVersion, completedAt }`，用于提示“Agent 重启可能失败”；版本对账窗口为主控侧 15 分钟，确认或超时后字段回到 `null`。同时返回 `singboxLogMode`（`NORMAL`/`INFO`/`DEBUG`，已过期诊断会折算为 `NORMAL`）、`singboxLogModeUntil`、`supportsSingboxLogCapture` 与 `supportsAgentLogRotation`。WS 协议契约本身无变更。普通详情与列表不返回 AgentToken 明文、密文或哈希，详情安装命令使用终端输入凭据，保留独立且需管理员鉴权的预配置脚本/离线包下载入口。安装命令的公开地址优先使用系统设置 `publicBaseUrl`，其次使用 `RIRICLOUD_PUBLIC_URL`，最后使用当前请求的 `X-Forwarded-Proto` + `X-Forwarded-Host`/`Host` 自动匹配。
 - `GET /admin/nodes/:id/offline-package?platform=<os-arch>`：管理员下载指定节点的完整 Agent 离线安装包（流式压缩包：Windows `.zip`，Linux/macOS `.tar.gz`）。⭐ 需管理员 JWT 鉴权；内嵌该节点预配置的 `config.yaml`、平台二进制与全自动化免交互安装/卸载脚本。
 - `GET /admin/nodes/:id/install-script?platform=<os-arch>&format=bat|sh|ps1`：管理员下载指定节点的预编排免交互安装脚本（Windows 默认为 `.bat`，Linux/macOS 为 `.sh`）。⭐ 需管理员 JWT 鉴权；内嵌固化该节点的 AgentToken 与 MasterUrl，响应附加 `Content-Disposition: attachment` 供浏览器或脚本一键下载。
 - `POST /admin/nodes`：创建节点基础信息（生成 AgentToken 与多目标安装命令）。⭐ 请求 `{ name?, serverHost?, reachability?: "PUBLIC"|"NAT", communicationMode?: "WS"|"HTTP" }`；`reachability` 默认为 `PUBLIC`，当为 `NAT` 时 `serverHost` 可选（默认回退为 `127.0.0.1`）；NAT 节点仅可作为中继落地出口节点，禁止作为直连入站或中继入口节点。线路通过 `/admin/lines` 独立管理，创建后响应 `{ node, agentToken, installCommand, installCommands, uninstallCommand, windowsUninstallCommand }`，其中 AgentToken 仅在本次创建响应中返回一次。命令中的下载 URL、HTTP 轮询地址和 WS/WSS 地址使用同一公开地址解析结果。`installCommands` 结构：`{ ws, http, dockerWs, dockerHttp, adminScriptUrl, native: { linux, macos, windows }, portable: { linux, macos, windows }, offline: { packageDownloadUrl, adminPackageUrl, windows, linux } }`（每项均为 `{ ws, http }` 命令对，`adminScriptUrl` 为专属免交互脚本下载路径）：`ws/http` 为兼容保留的 POSIX 原生安装键；`native.windows` 为 Windows CMD 与 PowerShell 跨终端通用的免交互安装命令（拉取并执行预编排自提权 `.bat` 批处理，支持直接双击运行）；`native.linux` / `native.macos` 为预编排免交互 shell 命令（`curl | sudo sh`）；`portable.*` 为免安装直接运行命令；`offline.*` 包含各操作系统终端一键 curl/unzip/install 离线部署命令。`windowsUninstallCommand` 为 Windows 管理员 PowerShell 卸载命令。
-- `POST /admin/nodes/:id/rotate-token`：轮换远程节点 AgentToken。⭐ 管理员确认后立即使旧凭证失效、断开在线 Agent 并将节点标记为 `OFFLINE`；响应 `{ nodeId, agentToken, installCommand, installCommands, uninstallCommand, windowsUninstallCommand }`（`installCommands` 结构同创建节点），新 Token 仅在本次响应中返回一次，安装命令通过终端隐藏输入 Token，不在命令或 URL 中内嵌凭证。`isLocal=true` 的 `Master-Local` 返回 `409`，必须通过主控配置重置凭证。
+- `POST /admin/nodes/:id/rotate-token`：轮换远程节点 AgentToken。⭐ 管理员确认后立即使旧凭证失效、断开在线 Agent 并将节点标记为 `OFFLINE`；响应 `{ nodeId, agentToken, installCommand, installCommands, uninstallCommand, windowsUninstallCommand }`（`installCommands` 结构同创建节点），新 Token 及含凭据的预配置命令仅在本次轮换响应中返回；普通节点详情使用需输入 Token 的安装命令。`isLocal=true` 的 `Master-Local` 返回 `409`，必须通过主控配置重置凭证。
 - `PATCH /admin/nodes/:id`：部分更新。⭐ 请求任意子集 `{ name?, serverHost?, reachability?: "PUBLIC"|"NAT", configOverride?(string|null) }`；若节点被现有直连线路或中继入口引用，修改为 `NAT` 将返回 `409`；`configOverride` 为高级模式完整 sing-box 配置顶层覆盖 JSON（须为合法 JSON 对象，传 `null` 清除；合并语义见 `docs/DATA_MODELS.md` §3.2）；保存成功后若节点在线即向其推送 `config_sync`。
 - `DELETE /admin/nodes/:id`：删除远程节点。⭐ 先断开该节点在线 Agent（close 4001），再硬删除；承载线路与 `TrafficLog` 级联删除；残留 Agent 重连时按无效 AgentToken 拒绝。`isLocal=true` 的 `Master-Local` 为系统保留节点，删除请求返回 `409`，只能通过禁用内置 Agent 或停止 Master 进程使其离线。
 - `POST /admin/nodes/:id/reload`：向指定节点的 Agent 发送热重载指令。⭐
@@ -383,7 +383,7 @@ Agent 通过握手 Header `X-Agent-Token: <AGENT_TOKEN>` 鉴权；URL 不携带�
 
 #### 2. 配置全量同步 (`config_sync`) —— Master -> Agent
 当节点首次连接成功、或主控端发生用户/线路变动时，Master 向 Agent 实时推送最新的 Sing-box 运行配置。
-`PROTOCOL_PROXY` 与 `TARGET_LINE` 的跨节点出站统一使用系统内部中继凭证，不借用任何普通用户凭证；对应出口入站仅注入该内部凭证（`TARGET_LINE` 追加到目标直连入站）。内部凭证固定为 `email=__riricloud_relay_transit__`、`uuid=00000000-0000-4000-8000-000000000002`、密码 `riricloud-internal-relay-transit-secret`，仅允许在 Master 生成的节点配置中使用。Master 在生成各协议入站时，普通用户的 `name` 字段编码为复合标签 `<email_or_uuid>::<lineId>`，使 Sing-box 的 V2Ray stats API 原生支持按线路精准切分用户流量统计；内部中继凭证保持固定不变。Agent 上报该复合凭证后，Master 端自动拆解用户与所属线路，精准落库 `TrafficLog` 并按线路倍率折算扣除套餐配额，彻底解决单节点多入站与中转线路归属问题。`experimental.v2ray_api.stats` 的 `users` 自动注册所有生成的复合标签，并下发 `inbounds` 入站 Tag 列表。
+`PROTOCOL_PROXY` 与 `TARGET_LINE` 的跨节点出站使用按源线路和版本隔离的随机中继凭据，不借用普通用户凭据；凭据由 `LineCredentialsService` 生成并以 AES-GCM 保存。落地入站仅增加实际引用它的源线路身份，`TARGET_LINE` 同时保留目标直连线路自身的合法用户。初始化及轮换按维护状态机停用入口、确认落地新版本运行后恢复入口；不再生成全局固定测速或 transit 身份。Master 为普通用户编码 `<email_or_uuid>::<lineId>` 统计标签，按实际线路与倍率累计套餐用量；内部中继统计免计费必须同时匹配上报节点、落地入站线路和凭据哈希，不能仅凭名称前缀判断。`experimental.v2ray_api.stats` 注册当前实际配置的统计身份及入站 Tag；撤销的认证密文清空后可保留历史统计指纹。完整维护契约见 §6。
 用户名密码协议不能把含冒号统计标签放进Basic userinfo：普通订阅登录名为riri_login_编码并还原用户/lineId；ProxyKey实际登录为pk_line_编码原始Key/lineId，账号uuid、系统内部凭据与外部直发原用户名不变。两类本地身份都由服务端统一编解码，禁止客户端拼裸统计标签。
 Agent 收到后原子落盘（临时文件 + rename），并与最近一次配置做字节比对：内容变化则优雅重启内核使配置生效（sing-box 无原生 reload，重启即热应用）；内容相同且内核存活则跳过，避免无谓重启。
 ```json
@@ -462,9 +462,9 @@ Agent 收到后原子落盘（临时文件 + rename），并与最近一次配�
 > 
 > 线路参数更新语义：线路更新接口（`PUT /api/lines/:id`）对 `params` 采取以提交参数为准的全量替换策略，彻底解决取消勾选（如停用多路复用、清空流控混淆等）时旧参数因递归深合并残留的问题；对于 Reality 私钥、ShadowTLS 内层密码等敏感机密，若更新入参未提供则按需安全继承历史数据。
 
-> 用户注入规则（与订阅输出一致，见 `docs/DATA_MODELS.md` §3.1）：vless/tuic 用 `User.uuid` 登录；hy2 密码取 `User.password ?? User.uuid`；ss 为入站共享密码不注入用户。各节点入站同时包含内部专用测速探针凭据（`INTERNAL_SPEEDTEST_UUID` / `INTERNAL_SPEEDTEST_SECRET`）。
+> 用户注入规则与订阅输出及 `evaluateSubscriptionEntitlement` 一致：只交付当前有效、未耗尽且具有线路权限的真实用户身份；没有合法用户或绑定时不生成可认证业务入站。协议代理落地额外注入按源线路隔离的中继身份；不追加固定测速探针用户。
 
-> 中继与测速凭证流量规则：协议代理/异构桥接出站使用上述内部中继凭证，Master 测速探针使用内部测速凭据；各节点上的内部专用凭证流量仅维护 `TrafficCursor` 基线，不生成 `TrafficLog`，不扣减任何普通用户或订阅配额。
+> 中继与测速计量规则：内部中继身份只有在节点、入站线路和登记的哈希匹配时才仅维护统计游标；合法订阅拨测直接使用管理员指定账号的真实身份，按正常线路倍率和套餐配额计费，未配置或权益不可用时拒绝执行。
 
 中继配置示例：盲转发线路在入口节点生成如下端口转发入站；协议代理线路生成与 Line 协议对应的入口入站、出口 outbound 以及 route rule；`TARGET_LINE` 则将 outbound 的协议、参数、目标地址和端口取自所引用的直连线路；`UPSTREAM_NODE` 则将所引用外部上游节点的内部驼峰参数（`UpstreamNode.paramsJson`）严格归一化编译为 Sing-box 标准下划线出站结构（如 VMess `alter_id`、Hysteria2 `up_mbps`/`down_mbps`/`obfs`、TUIC `congestion_control`/`zero_rtt_handshake`、TLS `server_name`/`utls`/`reality`、gRPC `service_name` 等），禁止将内部驼峰字段直接透传至 Sing-box `outbounds`。
 ```json
@@ -817,18 +817,26 @@ Master 订阅编译引擎（`builders.ts`）支持通过 `SubscriptionTemplate` 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
 | `GET` | `/api/v1/admin/mirrors` | 查询镜像站及节点能力摘要 |
-| `GET` | `/api/v1/admin/mirrors/:id` | 查看镜像站详情 |
+| `GET` | `/api/v1/admin/mirrors/:id` | 查看镜像站详情；不返回分享 Token 或其哈希 |
 | `POST` | `/api/v1/admin/mirrors` | 创建镜像站；`SHARE` 模式仅在响应中返回一次明文 Token |
-| `PATCH` | `/api/v1/admin/mirrors/:id` | 更新镜像配置 |
-| `DELETE` | `/api/v1/admin/mirrors/:id` | 删除并撤销镜像站 |
-| `POST` | `/api/v1/admin/mirrors/:id/rotate-share-token` | 轮换分享 Token，旧 Token 立即失效 |
-| `POST` | `/api/v1/admin/mirrors/:id/test` | 通过指定节点执行受限 HEAD 测试 |
+| `PATCH` | `/api/v1/admin/mirrors/:id` | 更新镜像配置；保存成功后撤销该镜像的活动任务 |
+| `DELETE` | `/api/v1/admin/mirrors/:id` | 删除成功后撤销该镜像的活动任务 |
+| `POST` | `/api/v1/admin/mirrors/:id/rotate-share-token` | 轮换分享 Token；保存成功后旧地址失效并撤销活动任务，新 Token 仅在本次响应返回 |
+| `POST` | `/api/v1/admin/mirrors/:id/test` | 经指定节点执行 30 秒预算的 HEAD 测试；收到上游响应头即结束探测，成功取得响应不等于上游状态码为 2xx |
 
-实时访问路由不使用 API 前缀，避免被 SPA fallback 接管：`GET/HEAD /mirror/:slug/*path` 由镜像配置决定 `ADMIN`、`SHARE` 或 `PUBLIC` 鉴权；分享地址为 `GET/HEAD /mirror/share/:token/*path`。目标 URL 由服务端保存的基址、路径和原始查询参数拼接，客户端不能覆盖 scheme 或 host。第一版仅允许 GET/HEAD，请求头只允许 `Range`、条件请求、`Accept` 和 `Accept-Encoding`；响应只转发内容类型、长度/范围、缓存协商、ETag、Last-Modified、Vary 和 Content-Encoding 等安全字段，不转发 Cookie、Authorization、Set-Cookie 或 hop-by-hop headers。
+实时访问路由不使用 API 前缀，避免被 SPA fallback 接管：`GET/HEAD /mirror/:slug` 及其 `/*path` 路由由镜像配置决定鉴权；分享地址为 `GET/HEAD /mirror/share/:token` 及其 `/*path` 路由。静态 `share` 前缀必须先于 slug 通配路由登记，避免分享 Token 被误当作普通路径。
 
-### 4.2 Master-Agent WS 消息
+- `ADMIN`：仅管理员可访问。`PUBLIC`：无需登录，但只能访问配置好的上游。`SHARE`：必须携带当前有效 Token，管理员身份不代替分享 Token；数据库只保存 SHA-256 哈希，拒绝缺失、猜测、已过期及已轮换的 Token。未知访问模式默认拒绝。
+- `enabled=false` 阻止非管理员访问；管理员仍须满足当前访问策略。`PUBLIC/SHARE` 使用进程内计数，按镜像 ID 与来源 IP 限制为每 60 秒 60 次，超限返回 403。节点须在线、使用 WS/WSS 且宣告 `mirror_proxy`，否则拒绝启动；HTTP 轮询节点不承载实时镜像。
+- 配置更新（包括禁用、访问策略变更）、删除和 Token 轮换持久化成功后，活动代理流及管理员 HEAD 测试统一按 `REVOKED` 结束；保存失败不提前撤销。访问配置读取期间若发生撤销，Master 重读配置，避免用旧授权启动新流。活动分享流到达 Token 到期时间时按 `TOKEN_EXPIRED` 结束。
 
-Agent 心跳可携带 `capabilities: string[]`；能力包含 `mirror_proxy` 的在线 WS 节点可承载镜像任务，能力包含 `singbox_log_capture` 的在线节点才允许管理员开启临时 Sing-box 诊断，能力包含 `agent_log_rotation` 的节点支持 Master 下发本地日志轮转策略。旧 Agent 缺少该能力时仍可继续通信和承载业务，但管理端应提示升级：
+目标 URL 由保存的基址、已解码路径和原始查询参数拼接。兼容 Express 通配路径数组，各路径段重新编码；拒绝目录穿越、多重编码逃逸、控制字符、反斜杠及绝对 URL，客户端不能覆盖 scheme、host 或 port。原始查询参数保留，不将分享 Token 或完整请求 URL 写入镜像请求日志。
+
+仅支持 GET/HEAD。请求头白名单为 `Range`、`If-None-Match`、`If-Modified-Since`、`If-Range`、`Accept`、`Accept-Encoding`；响应头白名单为 `Content-Type`、`Content-Length`、`Content-Range`、`Accept-Ranges`、`ETag`、`Last-Modified`、`Cache-Control`、`Expires`、`Vary`、`Content-Encoding`。请求与响应均剔除 `Connection` 额外点名的逐跳字段，不转发 Cookie、Authorization、Set-Cookie 或代理认证头。Agent 使用固定 User-Agent，不自动请求 gzip 或解压上游响应；压缩字节与 Content-Encoding 保持一致。上游 206、304、404、416、500 等最终 HTTP 状态码按原值透传，HTTP 错误状态本身不等同于传输失败；HEAD、204、304 不向浏览器输出正文。
+
+### 4.2 Master-Agent WS 消息与收尾
+
+Agent 心跳的 `capabilities` 含 `mirror_proxy` 才表示支持镜像代理。旧 Agent 缺少该能力时仍可承载其他业务；日志诊断与轮转分别由 `singbox_log_capture`、`agent_log_rotation` 独立表示。既有镜像消息结构保持不变：
 
 ```json
 { "type": "mirror_request", "data": { "taskId": "...", "method": "GET", "url": "https://github.com/...", "allowedHosts": ["github.com", "objects.githubusercontent.com"], "requestHeaders": {}, "timeoutMs": 600000, "maxBytes": 268435456 } }
@@ -838,11 +846,54 @@ Agent 心跳可携带 `capabilities: string[]`；能力包含 `mirror_proxy` 的
 { "type": "mirror_error", "data": { "taskId": "...", "code": "REDIRECT_BLOCKED", "message": "safe error" } }
 ```
 
-响应体使用 WS 二进制帧，不做 Base64：前 2 字节为大端序 `taskId` 长度，随后是 UTF-8 `taskId`，剩余内容为 body chunk。所有 Agent 写操作复用连接写锁；Master 对每个 taskId 维护会话，浏览器断开、超时或节点断线都会发送 `mirror_cancel` 并清理会话。
+正文使用 WS 二进制帧，不做 Base64：前 2 字节为大端序 `taskId` 字节长度，随后是 UTF-8 `taskId`，剩余内容为 body chunk。task ID 长度为 1～128 字节，Agent 单个正文分片不超过 32 KiB。Master 忽略长度损坏、未知 task ID 和跨节点帧，终态会话移除后不再接收该任务的迟到分片或事件。
 
-### 4.3 限额与错误码
+Agent 在 WS 读循环内同步登记任务后再启动协程，使紧邻请求到达的取消帧可找到任务。超过 4 个活动任务直接返回 `BUSY`，不先派生无界等待协程；重复 task ID 返回 `DUPLICATE_TASK`。所有写帧复用既有连接写锁。读循环退出时取消连接上下文、关闭 WS、取消全部镜像任务并等待协程退出；镜像协程异常也回收登记与取消资源。
 
-Agent 默认单请求超时 10 分钟、响应上限 256 MiB、单节点镜像并发上限 4、最多跟随 5 次重定向。目标 URL 和每次重定向都必须通过 HTTP/HTTPS、允许域名、公网 DNS/IP 与无凭据校验；拒绝 loopback、私网、链路本地、保留地址、IPv4-mapped 私网和云 metadata 地址。稳定错误码包括 `INVALID_URL`、`PRIVATE_ADDRESS`、`DNS_ERROR`、`REDIRECT_BLOCKED`、`REDIRECT_LIMIT`、`RESPONSE_TOO_LARGE`、`TIMEOUT`、`CANCELED`、`NODE_DISCONNECTED` 和 `UPSTREAM_ERROR`。
+Master 在异步启动之前登记任务。正常结束、Agent 错误、超时、客户端关闭、写入失败、节点断线、撤销和模块关闭共用幂等收尾，清理计时器、响应监听器、排队分片及任务登记；代理请求的摘要写入与日志结算各触发一次。启动句柄迟到时立即停止，启动失败不遗留任务；连接仍可用时尽力发送 `mirror_cancel`，已断线时不承诺取消帧送达。日志仅记录站点/节点 ID、最终主机、状态、耗时、写入字节和错误码，不记录凭据或正文。
+
+`mirror_response_end` 到达后仍须排空本流队列，HTTP 响应触发完成事件后才记录传输成功。HTTP 完成不代表客户端已落盘。进行中的流只存在内存，不跨 Master 重启恢复。
+
+### 4.3 限额、安全与错误码
+
+| 限制 | 当前行为 |
+| :--- | :--- |
+| 普通代理总预算 | Master 与 Agent 默认 10 分钟；Agent 允许请求指定更短预算，初始 DNS 与等待执行槽均计入；Master 的分享流预算还受 Token 到期时间限制 |
+| 管理员 HEAD 测试 | 30 秒；取得上游响应头即收尾并取消剩余任务 |
+| Agent 连接阶段 | 拨号及 TLS 握手分别最多 15 秒，等待上游响应头最多 30 秒，均受更短的请求上下文预算约束 |
+| Agent 上游响应头 | 最多 64 KiB；超限以 `UPSTREAM_ERROR` 失败 |
+| 正文大小 | 默认及最大 256 MiB；Agent 可接受更小的 `maxBytes`，Master 独立检查自身上限；HEAD 不读取正文，允许 Content-Length 元数据大于正文上限 |
+| 单节点并发与重定向 | 最多 4 个活动镜像任务；最多跟随 5 次重定向 |
+| Master 单流待发送缓冲 | 阈值 1 MiB，合计 Node HTTP 原生写缓冲与本流排队字节；写前及写后检查，超限立即取消本流并记录 `SLOW_CONSUMER` |
+
+`response.write()` 返回 false 后仅暂存本流后续分片，收到 `drain` 才按原顺序继续写入。等待 drain 不暂停共享 WS 的消息消费；其他镜像流和心跳继续处理。总预算在等待浏览器排空期间仍有效，Agent 已结束并不会免除超时与客户端断开检查。Master 另外限制所有节点合计最多 16 个活动任务和 16 MiB 正文缓冲预留；每节点仍最多 4 个任务。容量在异步查询前预留，无等待队列，未完成的启动或 drain 仍占用槽，满载返回 `503/BUSY`。
+
+目标 URL 与每次重定向均检查 HTTP/HTTPS、无内嵌凭据及允许域名；允许域名匹配自身与其子域，不接受相似后缀。Master 配置校验在生产环境要求 HTTPS；Agent 始终拒绝 HTTPS 重定向降级到 HTTP，并保持证书验证。Agent 在 URL 前检及实际拨号时解析 DNS，只要任一答案为非公网地址就拒绝整组结果，拨号仅使用该次已校验的具体 IP。拒绝 loopback、私网、链路本地、保留/组播地址、IPv4-mapped 私网及非公网 metadata 地址，避免混合答案或重解析绕过。生产实现不提供私网测试绕过开关。
+
+流任务错误码按来源分组：
+
+| 错误码 | 含义 |
+| :--- | :--- |
+| `INVALID_REQUEST`、`METHOD_NOT_ALLOWED`、`INVALID_URL` | Agent 拒绝无效任务、非 GET/HEAD 或非法 URL |
+| `PRIVATE_ADDRESS`、`DNS_ERROR` | 地址校验失败或 DNS 查询失败 |
+| `REDIRECT_BLOCKED`、`REDIRECT_LIMIT` | 域名不在允许范围、HTTPS 降级或重定向次数超限 |
+| `BUSY`、`DUPLICATE_TASK` | Agent 活动任务已满或 task ID 重复 |
+| `RESPONSE_TOO_LARGE`、`SLOW_CONSUMER` | 正文超过限制或 Master 本流待发送缓冲超过阈值 |
+| `TIMEOUT`、`CANCELED`、`NODE_DISCONNECTED` | 预算耗尽、Agent 上下文取消或节点 WS 断开 |
+| `REVOKED`、`TOKEN_EXPIRED` | 已保存的配置/Token 变更撤销活动任务，或活动分享流到期 |
+| `START_FAILED`、`INVALID_RESPONSE` | Master 异步启动失败，或响应状态/头部/事件顺序无效；缺少响应头就结束按 `UPSTREAM_ERROR` 处理 |
+| `CLIENT_DISCONNECTED`、`CLIENT_ERROR` | 浏览器连接关闭或 HTTP 写入失败 |
+| `UPSTREAM_ERROR`、`UPSTREAM_READ_ERROR` | 上游请求失败（包括响应头超限、受控协程异常）或正文读取失败/截断 |
+
+HTTP 入站鉴权及配置校验仍按既有 400/403/404/409 异常返回，并不承诺上述流错误码。流启动后，尚未向浏览器发出 HTTP 头部时，Master 自身总计时器超时返回 504，活动流撤销/Token 到期返回 403，其他流错误（包括 Agent 上报的 TIMEOUT）通常返回 502，JSON 为 `{ message, code }` 且 `Cache-Control: no-store`。已准备但尚未发出的上游 Content-Length、Content-Encoding 等元数据会被清除；HTTP 头部已发出后直接关闭连接，错误码仅用于内部结算，不能再改写已发送状态或追加 JSON。客户端已经断开时仅清理和记录。
+
+Master同时最多16个活动任务，每节点最多4个；异步查询开始前预留每流1MiB正文缓冲，总预算16MiB，无等待队列。取消但启动尚未返回、等待drain仍占用槽；容量不足返回503/BUSY。每流最多1024个排队分片，复制到独立Buffer避免视图保留大帧。限频60次/60秒按站点、IP、站点/IP及已登录用户分别执行。
+
+### 4.4 本地回归证据与验收边界
+
+2026-11-17 本地定向回归：Server 镜像域 3 个套件、66 项测试通过，覆盖真实 Nest GET/HEAD 分享路由、三种访问策略、Token 轮换/撤销/到期、路径与头部、流控和幂等收尾，并直接验证既有 Gateway 的分片路由。Go `internal/mirror`、`internal/ws`、`internal/poll` 测试通过，其中 mirror/ws 连续 3 轮通过；受控 HTTP/TLS/WS 服务与注入式解析/拨号覆盖重定向、DNS 重解析、限额、上下文取消、分片顺序、心跳及协程退出。定向 ESLint、Go vet 与 Server `tsc --noEmit` 均通过。
+
+追加创建/更新真实SQLite、全局容量与三个真实子进程重启回归后，镜像域为6套件173项通过。上述证据限于本地受控测试与依赖注入，不代表真实外部节点出口、GitHub 现网下载、部署环境或生产验收完成，也不替代全量六门禁。相关未完成验收继续保留在既有镜像专项计划中。
 
 ---
 
@@ -884,3 +935,30 @@ Agent 默认单请求超时 10 分钟、响应上限 256 MiB、单节点镜像�
 `GET /admin/proxy-pool/overview` 保留凭据规模/流量/endpointCount/endpoints，并新增 `nodeCapacities:[{nodeId,nodeName,used,limit,excluded}]`；管理Key分页/启停/删除接口保持原路径与ADMIN限制。
 
 升级顺序：停止旧Master→备份双库→追加迁移→升级Master/Web→核对Agent应用新配置→重新导出客户端。迁移仅新增开关并回填旧公开启用的有效DIRECT/MIXED，不开放中继、不删除Key/余额/游标；回滚配套数据库备份，不能仅降级前端。
+
+## 6. 管理员线路凭据维护与合法订阅拨测
+
+### 6.1 拨测账号
+
+管理员设置增加 lineSpeedtestUserId: string | null（默认 null）；该字段不进入公开设置。通过既有用户查询选择实际 User.id，不能填写代理 UUID。保存与每次执行分别验证账号启用、当前邮箱策略、ACTIVE/CANCELED 剩余订阅权益、有效期、配额及线路授权，正常使用计划快照和额外线路授权。自建线路以真实用户 UUID/认证材料执行 Master 端 Mihomo URLTest，流量经过既有用户/订阅账务；不再生成隐藏系统测速用户，不自动借用其他账号。上游节点和 EXTERNAL 维持原有上游凭据。
+
+手动、批量、定时仍使用异步202任务与 MASTER / MIHOMO_URL_TEST 口径。固定错误码为 SPEEDTEST_USER_NOT_CONFIGURED、SPEEDTEST_USER_UNAVAILABLE、SPEEDTEST_LINE_UNAUTHORIZED、SPEEDTEST_IDENTITY_CHANGED。前端只映射白名单本地化文案，不展示原始错误。排队快照绑定选择的身份；写回事务重验权益及认证材料，变更后不写成成功。正常流量增长不会使有效快照失效，耗尽配额则拒绝。
+
+### 6.2 凭据维护接口
+
+| 接口 | 行为 |
+| :--- | :--- |
+| POST /admin/lines/:id/credentials/rotate | ADMIN、UUID路径校验，返回202；创建或重试同一线路的维护式轮换，进行中重复调用沿用 operationId 与候选版本。停用线路拒绝发起。 |
+| GET /admin/lines/:id/credentials/status | ADMIN；只返回 lineId、operationId、state、activeVersion、targetVersion、errorCode、failedStage、当前/原入口落地节点、entryStopConfirmed、accepted、deadlineAt、confirmedAt；不返回认证材料。 |
+
+仅 PROTOCOL_PROXY / TARGET_LINE 自建中继适用。公开入口只由合法订阅身份组成；目标直连入站接受自己的合法用户和逐源线路中继身份，不把桥接源用户合并为目标直接访问资格。独立落地的共享 Shadowsocks 使用该源线路随机密码；共享目标 Shadowsocks 必须支持逐用户凭据，不能用目标公共密码伪装隔离。
+
+### 6.3 维护状态与确认
+
+通常按 STOPPING_ENTRY → APPLYING_LANDING → RESTORING_ENTRY → CONFIRMED 推进。变更节点或入站Tag时，先执行 STOPPING_PREVIOUS_ENTRY → RETIRING_PREVIOUS_LANDING，确认旧端点撤销后再进入常规流程。首次初始化入口保持停用，不接受旧固定凭据兼容分支。
+
+每阶段120秒；错误进入FAILED，保留失败阶段及候选版本，期望停用入口，显式重试重新确认停止。超时或迟到回执必须匹配 operationId、阶段、预期配置版本、节点与期限才能改变状态。Master重启保留材料与阶段，但清空进程旧回执并重新下发配置对账。配置版本由现有 config_sync 提供；config_apply_result 只表示接受，heartbeat 中匹配 appliedConfigVersion、kernelRunning=true 且无运行错误才推进。
+
+最终发送配置须证明对应阶段的入站撤销、落地认证或入口出站/路由关系；自定义覆盖接管 inbounds/outbounds/route 时不生成虚假成功。维护期间线路关键变更、节点地址/连通模式/高级覆盖、节点删除和Token轮换在写入事务内检查冲突。网络分区只能报告期望停用及未确认，不能承诺远端立即停机。
+
+凭据保存在按源线路隔离的AES-GCM记录中，UUID/用户名指纹和实际落地节点、入站线路ID共同确认内部统计身份，不按字符串前缀豁免。撤销版本删除认证密文、保留统计指纹；普通合法拨测用户仍正常计量。配置错误、心跳错误与节点日志在进入回执跟踪/日志前按实际下发秘密脱敏；按发生配置版本保留有界历史（最多4096份、秘密文本总计8MiB），未知或已淘汰配置版本只保留安全摘要，不把延迟日志套用新版本秘密集合。

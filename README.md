@@ -28,6 +28,8 @@
 - **边缘节点端 (Edge Node Agent)**：基于 Go 编写的跨平台单静态二进制守护程序（`riri-agent`），托管 Sing-box 代理内核。支持通过 WebSocket (WSS) 长连接或 HTTP 定时轮询与主控端通信，负责内核进程生命周期管理、配置原子更新、网络探针诊断与用户流量统计采集。
 - **客户端订阅引擎**：根据用户的套餐权限与模板策略，统一输出 Clash Meta (Mihomo)、Sing-box Client JSON 以及通用 Base64/URI 链接，并在响应头中返回 `Subscription-Userinfo` 流量与有效期元数据。
 
+**版本与发布**：Master（Server/Web）使用根 [package.json](./package.json) 版本，顶部徽标跟踪 Master；Agent 使用独立的 [apps/agent/VERSION](./apps/agent/VERSION)。日常 PR 维护各自 CHANGELOG 的 `[Unreleased]`，版本保持不变；短生命周期 Release PR 分别执行 `pnpm bump` / `pnpm bump:agent`，合入后发布 `vX.Y.Z` / `agent-vA.B.C`（见 [版本规范](./docs/VERSIONING.md)）。
+
 ---
 
 ## ✨ 项目演示
@@ -363,7 +365,7 @@ sudo systemctl reload nginx
 | **前端状态与表格** | Zustand + TanStack Query / Table | 全局状态管理、接口数据缓存与复杂数据表格 |
 | **边缘节点 (Agent)** | Go 1.26+ + Cobra + Bubble Tea + kardianos/service | 单静态二进制，`CGO_ENABLED=0`，跨平台系统服务与全屏 TUI |
 | **代理协议内核** | Sing-box | 支持 VLESS-Reality、Hysteria2、TUIC、Shadowsocks、ShadowTLS |
-| **工程架构治理** | pnpm Monorepo + Husky + Commitlint | Conventional Commits 规范，ESLint 9，Jest，五合一质量门禁 |
+| **工程架构治理** | pnpm Monorepo + Husky + Commitlint | Conventional Commits 规范，ESLint 9，Jest / Node 原生测试，六类基础门禁与脚本回归 |
 
 ---
 
@@ -379,33 +381,39 @@ riricloud/
 │   └── plans/             # 实施计划总台账与归档目录
 ├── scripts/               # 环境、门禁、构建与发布脚本
 ├── artifacts/             # 【gitignore】统一的本地 Agent、Release 与 Docker 产物目录
-│   ├── dev/agent/         # 本地构建的 Agent 二进制
-│   ├── releases/          # scripts/release.sh 生成的发行包与校验和
+│   ├── binaries/agent/    # 按平台输出的 Agent 二进制
+│   ├── packages/          # master/ 与 agent/ 发行包及校验和
 │   └── docker/            # scripts/docker-build.sh 导出的 Docker 离线镜像
 ├── .cache/                # 【gitignore】Windows 兼容缓存与临时构建缓存
 ├── .tools/                # 【gitignore】Windows 兼容工具链与临时构建资源
 ├── AGENTS.md              # AI 代理与协作者工作规范
 ├── CHANGELOG.md           # 遵循 Keep a Changelog 的版本变更日志
-└── package.json           # Monorepo 统一版本管理与全局 scripts
+└── package.json           # Master 版本源、Workspace 与全局 scripts
 ```
 
 ---
 
 ## 🛡️ 质量门禁与工程规范
 
-代码合入前必须通过五合一质量门禁：
+代码合入前必须通过根 `package.json` 定义的六类基础门禁、脚本回归及适用的 CI 检查：
 
 ```bash
-# 运行全部门禁检查
+# 六类基础门禁后追加脚本回归
 pnpm gate
 
 # 单独检查各端
-pnpm gate:version  # 校验版本号合规性与 PR 递增约束
-pnpm gate:docs     # 校验文档治理与规划归档机械约束
+pnpm gate:version  # 校验 Master/Agent 双轨版本与各自 Unreleased/定稿日志
+pnpm gate:docs     # 文档联动、规划归档、版本规则与门禁清单一致性
+pnpm gate:i18n     # 以 zh-CN 为基准，阻断未国际化的 TSX 中文文案
 pnpm gate:server   # 后端：TypeScript 类型检查 + ESLint + Jest 单元测试
-pnpm gate:web      # 前端：TypeScript 类型检查 + ESLint + Vite 生产构建
-pnpm gate:agent    # 节点：go vet + gofmt + go test + 跨平台构建
+pnpm gate:web      # 前端：自动发现全部 .test.mjs 测试 + ESLint + 类型检查 + Vite 构建
+pnpm gate:agent    # 节点：go vet + gofmt + go test + 当前目标构建
+pnpm test:scripts  # 自动发现 scripts 下全部 .test.mjs / .test.cjs 回归
 ```
+
+`pnpm test:scripts` 已包含在常规本地 `pnpm gate`。真实内核验收使用 Node 22 独立执行 `pnpm test:native`，该入口按当前宿主平台准备固定资源并开启 `RUN_NATIVE_CLIENT_TESTS=1`，不加入常规本地 gate。原生运行证据与交叉编译分开记录，资源缺失或用例跳过不能当作通过。
+
+非中文词条可异步补齐并回退至中文，`pnpm i18n:report` 用于查看覆盖率，日常 PR 不要求英日文 100%。视觉验证仅在 Antigravity 环境按需执行，不接入 CI / Git hook。
 
 ---
 
@@ -422,7 +430,7 @@ pnpm gate:agent    # 节点：go vet + gofmt + go test + 跨平台构建
 | [前端 UI 设计规范 (FRONTEND_UI_GUIDELINES.md)](./docs/FRONTEND_UI_GUIDELINES.md) | shadcn/ui 组件分层、暗黑模式预设与表格/表单规范 |
 | [部署与运维指南 (DEPLOYMENT_GUIDE.md)](./docs/DEPLOYMENT_GUIDE.md) | 主控端生产部署、Agent 原生 CLI 安装与运维排错 |
 | [实施路线图 (ROADMAP.md)](./docs/ROADMAP.md) | 迭代里程碑、模块开发步骤与各阶段验收标准 |
-| [版本管理规范 (VERSIONING.md)](./docs/VERSIONING.md) | SemVer 最小递增原则、统一版本号与发版流程 |
+| [版本管理规范 (VERSIONING.md)](./docs/VERSIONING.md) | SemVer 最小递增原则、Master/Agent 双轨与 Release PR 流程 |
 | [Git 工作流规范 (GIT_WORKFLOW.md)](./docs/GIT_WORKFLOW.md) | GitHub Flow 分支模型与 Conventional Commits 规范 |
 | [代码审查与约束 (CODE_REVIEW.md)](./docs/CODE_REVIEW.md) | 质量门禁清单、三端分层硬约束与审查清单 |
 | [项目全局硬约束 (PROJECT_CONSTRAINTS.md)](./docs/PROJECT_CONSTRAINTS.md) | 技术栈锁定、零外部依赖红线与安全规范 |
@@ -438,7 +446,7 @@ pnpm gate:agent    # 节点：go vet + gofmt + go test + 跨平台构建
 - [x] **Phase 4: Go 边缘 Agent 基线与生命周期** (WSS/HTTP 双通信 / 指数退避重连 / Sing-box 内核进程守护 / 动态配置原子落盘 / 用户流量统计采集)
 - [x] **Phase 5: Agent 现代化 CLI 与 TUI** (Cobra 命令行 / Bubble Tea 全屏控制台 TUI / 跨平台系统服务适配 / Doctor 环境诊断 / 日志跟踪)
 - [x] **Phase 6: 部署套件与升级分发** (Master Docker Compose 编排 / 离线镜像双标签导出 / 探针快照与自包含升级分发 / 管理员引导与安全重置)
-- [ ] **Phase 7: 进阶演进 (v0.5.0+)** (真实客户端自动化连通性验证套件 / 远程规则集动态订阅与自更新生态 / 高级账单与支付网关对接)
+- [ ] **Phase 7: 进阶演进与验收**：Mihomo / Sing-box 客户端编译、原生配置检查和真实代理请求回归已实现；五平台完整原生验收证据、生产网络验证、规则集动态更新及支付网关仍需完成。本轮 Windows amd64 原生入口已通过，其余平台须补实际运行证据。既有 Windows / WSL Linux amd64 测试证据及能力边界见 [技术栈能力矩阵](./docs/TECH_STACK.md#61-能力与验证证据矩阵)，各专项收尾见 [路线图](./docs/ROADMAP.md) 与 [计划台账](./docs/plans/README.md)。
 
 ---
 

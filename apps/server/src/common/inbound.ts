@@ -1,33 +1,18 @@
 import { BadRequestException } from '@nestjs/common';
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
-import {
-  INTERNAL_RELAY_TRANSIT_EMAIL,
-  INTERNAL_RELAY_TRANSIT_UUID,
-  INTERNAL_SPEEDTEST_EMAIL,
-  INTERNAL_SPEEDTEST_UUID,
-  ProtocolType,
-  TRAFFIC_CREDENTIAL_DELIMITER
-} from './constants';
+import { ProtocolType, TRAFFIC_CREDENTIAL_DELIMITER } from './constants';
 import { decryptSecret, encryptSecret, isEncryptedSecret } from './secret-crypto';
 import { parseProxyLineUsername } from '../proxy-pool/proxy-key.util';
 
 export { TRAFFIC_CREDENTIAL_DELIMITER };
 
-// 格式化入站用户名：若提供 lineId 且非系统内部中继或测速凭证，则注入复合标识以供 Sing-box 区分线路
+// 所有身份统一绑定实际入站线路；内部流量归属由已登记的凭据指纹判断。
 export function formatInboundUserName(
   user: { email?: string; uuid?: string },
   lineId?: string
 ): string {
   const baseName = user.email || user.uuid || '';
   if (!lineId || !baseName) return baseName;
-  if (
-    baseName === INTERNAL_RELAY_TRANSIT_EMAIL ||
-    baseName === INTERNAL_RELAY_TRANSIT_UUID ||
-    baseName === INTERNAL_SPEEDTEST_EMAIL ||
-    baseName === INTERNAL_SPEEDTEST_UUID
-  ) {
-    return baseName;
-  }
   return `${baseName}${TRAFFIC_CREDENTIAL_DELIMITER}${lineId}`;
 }
 

@@ -97,7 +97,7 @@ test('subscription/upstream/line display sites use the shared renderer', () => {
   for (const [path, text] of [
     ['../components/shared/line-card.tsx', 'line.name'],
     ['../pages/admin/upstream/components/upstream-nodes-sheet.tsx', 'node.name'],
-    ['../pages/admin/lines/index.tsx', 'line.name'],
+    ['../pages/admin/lines/components/lines-table.tsx', 'line.name'],
     ['../pages/user/proxy-pool/components/proxy-endpoint-selection.tsx', 'endpoint.name'],
     ['../components/shared/probe-task-dialog.tsx', "title ?? t('admin:latencyTest.title')"],
     ['../pages/admin/lines/components/line-form-controls.tsx', 'option.label']
