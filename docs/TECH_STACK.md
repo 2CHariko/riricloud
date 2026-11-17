@@ -135,16 +135,16 @@ Docker 与发行包中的 Sing-box 使用 `with_v2ray_api,with_utls,with_quic,wi
 
 下表是当前固定版本的验证证据，不承诺每种参数组合或每个平台均已实测。能力层对未知参数和不可表达项明确拒绝；网络或配置失败不能扩大回退白名单。
 
-| 连接/组合 | 默认客户端 | 当前 Windows / WSL Linux amd64 原生证据 | 回退边界 |
+| 连接/组合 | 默认客户端 | 当前五平台原生证据 | 回退边界 |
 | :--- | :--- | :--- | :--- |
 | HTTP 鉴权、VLESS/WS、SS AEAD、Hysteria2、TUIC | Mihomo | 真实 HTTP 204 请求，错误凭据拒绝；WS 错路径拒绝 | 不允许失败后回退 |
 | VMess/WS、Trojan/gRPC、SS2022、SS obfs、ShadowTLS v3、TLS SOCKS5、HTTPS 代理 | Mihomo | 固定版本原生配置检查；不代表全部真实链路实测 | 不允许运行错误回退 |
 | SOCKS4 / SOCKS4a | Sing-box 显式兼容 | 原生配置检查及真实代理 HTTP 204；MIHOMO_ONLY 返回 UNSUPPORTED | `MIHOMO_SOCKS_VERSION_UNSUPPORTED`，还须 Sing-box 能力可表达 |
 | TLS 自定义证书信任 | Sing-box 显式兼容 | 原生检查及 HTTPS 代理鉴权真实请求，错误密码拒绝 | `MIHOMO_CERTIFICATE_UNSUPPORTED`；未白名单额外限制同时存在则拒绝 |
-| NaiveProxy | Sing-box 显式兼容 | Windows 依赖不可用；WSL Linux/Cronet 真实 TLS HTTP/2 CONNECT + padding + 鉴权请求 204，通过；错误密码/不可信证书/错误 SNI/500 拒绝 | `MIHOMO_NAIVE_UNSUPPORTED`；MIHOMO_ONLY 启动前拒绝，依赖缺失报环境错误 |
+| NaiveProxy | Sing-box 显式兼容 | Linux amd64/arm64的Cronet真实TLS HTTP/2 CONNECT + padding + 鉴权请求204通过；错误密码/不可信证书/错误SNI/500拒绝；Windows/macOS按能力边界排除 | `MIHOMO_NAIVE_UNSUPPORTED`；MIHOMO_ONLY 启动前拒绝，依赖缺失报环境错误 |
 | httpupgrade、自定义 HTTP headers、特定 TLS/mux/packet 参数 | 按能力明确拒绝 Mihomo | 单元拒绝与独立编译契约 | 不在回退白名单，不可静默丢弃参数 |
 
-内部严格请求拒绝非预期 200/500/302、超时/取消及不可信/主机名不匹配的目标证书；测试 CA 下的严格 HTTPS 通过。普通 URLTest 单独以真实 HEAD/鉴权/超时/取消/HTTPS 不可信证书与原域名传递用例验收，不承诺严格状态。WSL2 Debian 13 amd64 系统 Node20/Node22 的既有原生严格、HTTP/中继、Docker 和 Master 包验证仍保留；Linux arm64/macOS 只有资产校验，不宣称本次原生执行。
+内部严格请求拒绝非预期 200/500/302、超时/取消及不可信/主机名不匹配的目标证书；测试 CA 下的严格 HTTPS 通过。普通 URLTest 单独以真实 HEAD/鉴权/超时/取消/HTTPS 不可信证书与原域名传递用例验收，不承诺严格状态。最终提交0360c9e已在[CI run44055792504](https://github.com/2CHariko/riricloud/actions/runs/44055792504)完成五平台实际执行：Linux amd64/arm64各13套件117项，Windows amd64/macOS amd64/arm64各11套件102项，每平台另7项原生脚本全部通过。五平台均含37项通用落地认证、4项专用订阅账务及8项VMess两跳，Linux另含9项Naive认证。原生报告记录实际宿主、Node22、Go1.26.11构建工具链、Sing-box1.14.0-r2/Mihomo1.19.30及SHA256；Naive/Cronet只在Linux两架构执行，未声称覆盖每种协议/参数的真实两跳或生产网络。逐平台job与报告字段见[双内核验收记录](./plans/archive/2026-11-17-mihomo-client-probe-separation.md)。历史WSL严格、HTTP/中继、Docker及Master包验证单独保留原环境口径。
 
 固定 Mihomo 启动时 listener 监听早于内部 Running 状态，版本 API/TCP 不足以判定数据面就绪；两种执行路径共享独立回环 HTTP 204 自检屏障（DIRECT 仅属于该自检 listener），不访问业务目标、不计业务延迟。业务 listener 固定代理无 DIRECT 兜底，日常结果来自指定 proxy URLTest；自检共享连接槽/启动预算并在 finally 回收。
 

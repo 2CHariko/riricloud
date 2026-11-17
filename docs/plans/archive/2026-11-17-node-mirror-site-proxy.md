@@ -2,6 +2,7 @@
 title: "实时节点镜像站与 Agent 流式代理"
 type: plan
 status: completed
+pr: "#269"
 target_version: Unreleased
 updated_at: "2026-11-17"
 created_at: "2026-09-09"

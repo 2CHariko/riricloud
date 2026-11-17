@@ -6,7 +6,7 @@
 
 ## 📅 阶段任务拆解
 
-> **当前进度**：Phase 1 ~ Phase 6 基础能力、直连代理池、主客户端职责分离与异步拨测已落地。Master 与 Agent 独立迭代，当前版本分别读取根 [package.json](../package.json) 与 [apps/agent/VERSION](../apps/agent/VERSION)；下文的历史里程碑版本不代表当前发行版本。日常 PR 使用各自 Unreleased，发版使用 Release PR。流量协议 v2 累计快照、`TrafficCursor` 差分和写入调度已有实现，生产部署观察仍是 [流量账务计划](./plans/traffic-accounting-sqlite-optimization.md) 的独立待验收项。真实客户端已有原生用例与部分平台证据，跨平台完整验收见 [双内核计划](./plans/mihomo-client-probe-separation.md)。视觉验证仍仅在 Antigravity 环境按需执行，不接入 CI / Git hook。
+> **当前进度**：Phase 1 ~ Phase 6 基础能力、直连代理池、主客户端职责分离与异步拨测已落地。Master 与 Agent 独立迭代，当前版本分别读取根 [package.json](../package.json) 与 [apps/agent/VERSION](../apps/agent/VERSION)；下文的历史里程碑版本不代表当前发行版本。日常 PR 使用各自 Unreleased，发版使用 Release PR。流量协议 v2 累计快照、`TrafficCursor` 差分和写入调度已有实现，生产部署观察仍是 [流量账务计划](./plans/traffic-accounting-sqlite-optimization.md) 的独立待验收项。真实客户端五平台原生CI已通过，逐平台证据与能力边界见[双内核验收记录](./plans/archive/2026-11-17-mihomo-client-probe-separation.md)。视觉验证仍仅在 Antigravity 环境按需执行，不接入 CI / Git hook。
 
 ### Phase 1: 基础设施与 Monorepo 脚手架搭建
 - [x] ⭐ 初始化 pnpm Monorepo 根工程 (`package.json`, `pnpm-workspace.yaml`, `.gitignore`)。
@@ -117,8 +117,8 @@
 - [x] ⭐ Agent Cobra CLI、Bubble Tea 全屏 TUI 控制台、CGO 禁用静态编译与多架构跨平台适配。
 
 ### Phase 7: 进阶演进与待验收能力
-- [x] **真实客户端编译、检查与受控请求回归**：已有 Mihomo / Sing-box 客户端编译器、原生配置检查、URLTest/严格 HTTP/TLS、协议鉴权与取消清理用例。通过 `RUN_NATIVE_CLIENT_TESTS=1` 显式执行；已有 Windows / WSL Linux amd64 证据及未覆盖组合见 [TECH_STACK.md §6.1](./TECH_STACK.md#61-能力与验证证据矩阵)，普通 URLTest 成功不代表严格 HTTP 状态校验。
-- [ ] **五平台完整原生验收**：Linux amd64/arm64、Windows amd64、macOS amd64/arm64 分别保存实际内核版本与运行结果。本轮已配置五平台 CI；2026-11-17 的 Windows amd64 原生入口记录为 PASSED（Node 22，8 套件 / 53 项 Jest、7 项脚本测试；Naive/Cronet 按 Linux 专属能力排除）。其余平台仍须实际执行，配置矩阵、下载资产或交叉编译均不代替通过证据。
+- [x] **真实客户端编译、检查与受控请求回归**：Mihomo / Sing-box编译、原生配置检查、URLTest/严格HTTP/TLS、协议鉴权、合法订阅账务、VMess两种模式真实两跳与取消清理均有受控用例。通过原生入口独立执行，证据及未覆盖组合见[TECH_STACK.md §6.1](./TECH_STACK.md#61-能力与验证证据矩阵)；普通URLTest成功不代表严格HTTP状态校验。
+- [x] **五平台完整原生验收**：最终0360c9e、CI run44055792504共11项检查全部通过。Linux amd64/arm64各13套件117项，Windows amd64/macOS amd64/arm64各11套件102项，每平台另7项原生脚本通过；报告保存实际平台、Node、Go1.26.11构建工具链、Sing-box1.14.0-r2/Mihomo1.19.30及资产SHA256。Naive/Cronet仅Linux两架构执行，Windows/macOS明确排除对应两套件，无非许可跳过；逐平台job见[归档验收记录](./plans/archive/2026-11-17-mihomo-client-probe-separation.md)。
 - [ ] **生产网络与真实外部出口验收**：在部署环境验证真实客户端与节点出口，保留流量游标、写队列及升级后观察证据；受控回环夹具不代替现网验收。
 - [ ] **分流规则集生态与自更新**：引入远程 Rule-Set / Geosite / GeoIP 动态拉取、定时更新与订阅模板动态注入。
 - [x] **订阅邮件通知**：支持流量多阈值预警与套餐到期阶段提醒、用户级退订、持久投递去重与失败重试。

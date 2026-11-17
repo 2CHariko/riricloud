@@ -1,18 +1,19 @@
 ---
-title: "双内核职责解耦与统一端到端拨测"
+title: 双内核职责解耦与统一端到端拨测
 type: plan
-status: active
-target_version: "Unreleased"
+status: completed
+pr: "#269"
+target_version: Unreleased
 updated_at: "2026-11-17"
 created_at: "2026-10-01"
 author: "Maintainers & PI-Desktop"
+archived_at: "2026-11-17"
 ---
-
 # Mihomo 主客户端与端到端拨测
 
 ## 2026-11-17 本轮边界
 
-日常 PR 不据本计划自动递增 MINOR；版本由后续 Release PR 按真实变更判定。以下历史实施记录保留，但不等于当前分支的五平台 CI 已通过。本轮专用订阅拨测与维护式轮换以 [凭据安全计划](./security-audit-public-relay-credentials.md) 为准。
+日常 PR 不据本计划自动递增 MINOR；版本由后续 Release PR 按真实变更判定。最终集成提交0360c9e已完成五平台真实内核CI，以下区分最终证据与历史阶段记录。本轮专用订阅拨测与维护式轮换以[凭据安全计划](./2026-11-17-security-audit-public-relay-credentials.md)为准。
 
 当前日常线路延迟测试采用 `MASTER / MIHOMO_URL_TEST`，自建线路使用管理员明确选择且有合法订阅权益的账号，正常计量。严格 CONNECT/TLS/HTTP 状态验证路径保留用于其明确用途，不能将历史严格探针实验结论套到普通 URLTest 的成功结果上。
 
@@ -20,7 +21,7 @@ author: "Maintainers & PI-Desktop"
 
 Sing-box 保持服务端入站、鉴权、统计与中继出口。Mihomo 默认用于主要客户端编译、验证和真实拨测；Sing-box 客户端只进行能力白名单限定的兼容回退，不能因超时、鉴权失败或环境缺失静默回退。保留现有 URI/Base64/Sing-box JSON 辅助格式。拨测改为异步任务，不保留 TCP 成功或旧同步批量响应语义。
 
-任务全局 4 连接、2 进程，批次最多 32；排队最多 20、单管理员最多 2 活跃任务、单任务最多 10000 资源和 30 分钟期限，完成状态内存保留 15 分钟。端到端快照条件写回防旧结果覆盖，配置变更/失效/删除后标 STALE。只新增安全测量元信息并失效旧派生延迟，不清业务资源/账务，不新增 Agent 协议/外部服务。不自动提交、推送或发布。
+任务全局 4 连接、2 进程，批次最多 32；排队最多 20、单管理员最多 2 活跃任务、单任务最多 10000 资源和 30 分钟期限，完成状态内存保留 15 分钟。端到端快照条件写回防旧结果覆盖，配置变更/失效/删除后标 STALE。只新增安全测量元信息并失效旧派生延迟，不清业务资源/账务，不新增 Agent 协议/外部服务。按本轮用户授权执行提交、PR与合并；生产部署和正式发版留待独立授权。
 
 ## 执行清单
 
@@ -38,34 +39,38 @@ Sing-box 保持服务端入站、鉴权、统计与中继出口。Mihomo 默认�
 - [x] 五平台原生 CI 入口与固定资源准备脚本已加入 `.github/workflows/ci.yml`；实现不等于执行通过。
 - [x] Windows amd64 本轮阶段性原生报告：8 套件/53 项 Jest、7 项脚本全部通过，报告时间见下表。
 - [x] Windows amd64 新增中继认证原生报告：`artifacts/native/windows-amd64/relay-credentials/summary.json` 与 `windows-jest.json` 记录 37 项通过、0 跳过、0 openHandles。
-- [ ] 对本轮最终集成版本完成 linux-amd64、linux-arm64、windows-amd64、darwin-amd64、darwin-arm64 五项原生 CI；含后来新增的凭据/计量套件，不以旧 Windows 报告或交叉编译替代。
-- [ ] 记录同一提交的五平台 workflow/job、内核清单与完整结果；常规门禁、依赖审计通过后再由主代理归档。
+- [x] 最终提交0360c9e五平台原生CI全部通过，包含新增凭据/订阅计量/真实两跳及临时端口清理回归。
+- [x] 同一提交五平台workflow/job、内核清单及结果已核对，常规门禁与既定安全门禁通过；PR #269实际合并后机械归档。
 
 ## 固定版本实验
 
 本机 Mihomo v1.19.30 已确认：HTTP 出站使用 CONNECT。正确鉴权的 /delay 对 HTTP 204、200、500、302 都返回 delay，`expected=204` 未使其拒绝非预期状态；错误代理密码返回 503。该实验支持内部严格 HTTP 请求路径的状态/证书检查。当前普通 URLTest 仅承诺内核延迟结果；严格路径与普通延迟结果分开解释，不把 delay 数字当成严格状态校验通过。
 
-## 本轮可复核原生证据
+## 本轮最终原生证据（2026-11-17）
 
-| 平台 | 工件/配置 | 当前判定 |
-| :--- | :--- | :--- |
-| Windows amd64 | `artifacts/native/windows-amd64/summary.json`、`jest-results.json`、`native-scripts.tap`、`resources.json` | `PASSED`；北京时间 2026-11-17 04:44:35 至 04:45:26，Node 22.23.5，Sing-box 1.14.0、Mihomo 1.19.30，8 套件/53 项 + 7 项脚本；0 失败/跳过 |
-| Linux amd64 | CI runner `ubuntu-24.04` | 本轮无最终成功工件；下面历史 WSL 记录不能替代 |
-| Linux arm64 | CI runner `ubuntu-24.04-arm` | 已配置，尚无本轮原生执行证据 |
-| macOS amd64 | CI runner `macos-15-intel` | 已配置，尚无本轮原生执行证据 |
-| macOS arm64 | CI runner `macos-15` | 已配置，尚无本轮原生执行证据 |
+最终工作流为[run 44055792504](https://github.com/2CHariko/riricloud/actions/runs/44055792504)，head为`0360c9ebebfd86bcef5a9f010f693a15d285cdb5`，11项检查全部成功。各平台在对应宿主串行执行真实内核，无非许可skip/todo。PR #269于北京时间2026-11-17 17:38:17合并为`98dcf4a1b66569127166ef9b65f96a1413dcb610`，与CI提交文件内容一致。
 
-Windows CI runner 是 `windows-2022`，上述已存在报告是本机原生执行，不是远端 CI 通过凭证；报告只包含当时发现的 8 套件，不包含后来新增的 `relay-credentials.native.spec.ts` 与 `probe-subscription-accounting.native.spec.ts`。Naive/Cronet 的 Linux 专属排除在 summary 中明确登记，不能记作 Windows 覆盖。
+| 平台 / runner | Job ID | Node | Jest套件/测试 | 原生脚本 |
+| :--- | :--- | :--- | :--- | :--- |
+| linux-amd64 / ubuntu-24.04 | 133944706675 | 22.23.4 | 13 / 117 | 7通过 |
+| linux-arm64 / ubuntu-24.04-arm | 133944706821 | 22.23.4 | 13 / 117 | 7通过 |
+| windows-amd64 / windows-2022 | 133944706826 | 22.23.4 | 11 / 102 | 7通过 |
+| darwin-amd64 / macos-15-intel | 133944706884 | 22.23.2 | 11 / 102 | 7通过 |
+| darwin-arm64 / macos-15 | 133944706782 | 22.23.4 | 11 / 102 | 7通过 |
 
-另已核对 `artifacts/native/windows-amd64/relay-credentials/summary.json` 与 `windows-jest.json`：北京时间 2026-11-17 10:03:03 完成，Node 22.23.5，VLESS/VMess/Trojan/Hysteria2/TUIC 共 37 项全部通过，包含旧固定值、错密码/身份、跨线路及轮换旧值拒绝。该补充报告不包含 Linux Naive，也不替代五平台最终 CI 或专用账号真实流量计量。
+每个平台保存`native-evidence-<target>`，包含`summary.json`、`jest-results.json`、`native-scripts.tap`和`resources.json`。本地副本位于`artifacts/verification/ci/run-44055792504/`；本仓构建的Sing-box为1.14.0-r2、Go工具链1.26.11，Mihomo固定1.19.30，Agent版本0.8.7；资源报告记录平台、来源及二进制SHA256。Windows/macOS仅排除两份明确Linux专属的Naive/Cronet套件，Linux两种架构全部执行。
 
-本轮完整本地 `pnpm gate` 已退出 0，证据为 `artifacts/verification/gate-submission.log`：Server 124 套件/1597 项通过，11 套件/105 项 native 跳过；Web 144 项通过；脚本 106 项通过/4 项默认跳过；维护 33 项通过。早期 discovery/E2E storage 失败只作历史排障。Go 实际基线为 1.26.11（工具链提交 `f982646`），三目标源码扫描无可达漏洞，但二进制仍有 3 项保守第三方告警、exit 3，作为分析边界保留；本轮既定 pnpm audit high 与源码可达性门禁均通过（主代理确认），不要求范围外依赖升级或全部 advisory 清零。普通 gate 不替代五平台原生 CI；其余集成尚未提交。
+五平台均执行VLESS/VMess/Trojan/Hysteria2/TUIC共37项落地认证，Linux另有9项Naive认证；旧固定值、错身份、跨线及轮换旧值拒绝通过。生产配置生成的VMess真实两跳在`PROTOCOL_PROXY`与`TARGET_LINE`各4项、每平台8/8通过；专用订阅真实账务每平台4/4通过。该证据不扩展为每种协议/传输/参数组合的多节点生产验收。
 
-本次只核对工件，没有运行 CI。五平台补验统一使用 Node 22 的 `node scripts/run-native-client-tests.mjs --target <platform>`；验收必须同时核对全部当前套件、无非许可跳过、宿主平台、固定资产与退出码，不只查看 summary 的旧成功状态。
+同一CI的Server为126套件1775项通过，普通gate按设计跳过12套件113项native，其执行结果由上表独立证明；Web145项，工程脚本107项通过（4项条件跳过），维护33项通过，Agent vet/gofmt/test/build及既定安全门禁通过。英日各4246/4246词条。Go源码可达性扫描通过；独立二进制扫描仍有3项保守第三方告警、exit3，未新增忽略。
+
+Node22.23.5完整Master隔离smoke为15阶段/16项通过，含真实AppModule/双库迁移、HTTP/WS/Cookie、维护重启/重试、Header-only安装鉴权、节点关系脱敏、拒绝计数及共享SS拨号前拒绝；该smoke的Agent内核端为模拟，真实内核由上表证明。证据为`artifacts/verification/remediation-smoke.json`与`remediation-smoke-test.log`。
+
+早期Windows53项报告与候选run44048133049只保留为历史；后者Linux amd64临时端口清理失败没有计作整轮通过。最终夹具以实际rebind为先，仅Linux TCP在可读/proc表证明同端口只有TIME_WAIT且无LISTEN时接受清理；活动监听与未知错误仍失败。确定性旧失败/新通过、IPv4/IPv6/UDP负例及最终五平台复跑已覆盖。
 
 ## 历史验收记录（原阶段，非本轮最终验收）
 
-实现、Windows 本机及 WSL Linux/Docker/发行包验收已完成；macOS/其他架构原生验收受环境限制，保留进行中计划，不将其伪记完成或归档。
+以下记录形成时macOS/其他架构尚无实测；该历史限制已由上方最终五平台CI补齐，原阶段记录保留原有实验环境与结论。
 
 - 最终 `pnpm gate` 六门禁全绿：后端 86 套件、760 项通过，34 项 opt-in 原生测试在普通门禁跳过；前端类型/ESLint/构建、Agent vet/格式/测试/构建通过。Vite 大 chunk 与非基准语言待翻译为非阻断警告。
 - WSL Linux Node22 `RUN_NATIVE_CLIENT_TESTS=1` 最终 13 套件/83 项全部通过：HTTP、VLESS/WS、SS、Hy2、TUIC、严格状态/TLS、取消、冷启动，以及各编译格式；包含 SOCKS4/4a、自定义证书和 Naive/Cronet HTTP/2 padding/鉴权真实 Sing-box 回退。MIHOMO_ONLY 拒绝兼容项，主客户端失败不换内核；监听器回归归零。
