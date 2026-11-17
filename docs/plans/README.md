@@ -25,7 +25,7 @@
 | [NAT 落地 WireGuard 未来扩展](./nat-wireguard-future.md) | `未排期（未来扩展）` | 2026-11-17 | 0/4 (0%) |
 | [节点镜像外部出口与部署验收](./node-mirror-deployment-acceptance.md) | `部署验收待排期` | 2026-11-17 | 0/12 (0%) |
 | [实时节点镜像站与 Agent 流式代理](./node-mirror-site-proxy.md) | `Unreleased` | 2026-09-09 | 111/112 (99%) |
-| [公开线路与中继落地凭据安全整改](./security-audit-public-relay-credentials.md) | `Unreleased` | 2026-09-08 | 35/43 (81%) |
+| [公开线路与中继落地凭据安全整改](./security-audit-public-relay-credentials.md) | `Unreleased` | 2026-09-08 | 36/43 (84%) |
 | [流量账务与 SQLite 写入链路优化](./traffic-accounting-sqlite-optimization.md) | `现网验收待排期` | 2026-09-03 | 19/20 (95%) |
 
 ---

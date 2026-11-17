@@ -75,11 +75,11 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
     if (evidence.phases.at(-1)?.status !== 'PASSED') { if (!continueOnFailure) throw new Error('Smoke phase failed: ' + name); }
     else log.push('PASS ' + name);
   };
-  const request = async (route, { method = 'GET', body, auth = cookie, status = 200, headers = {} } = {}) => {
+  const request = async (route, { method = 'GET', body, auth = cookie, status = 200, headers = {}, raw = false } = {}) => {
     const response = await globalThis.fetch(base + '/api/v1' + route, { method, headers: { ...(auth ? { Cookie: auth } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined, signal: globalThis.AbortSignal.timeout(15_000) });
     const text = await response.text();
     if (response.status !== status) throw new Error(method + ' ' + route.replace(/[a-f0-9-]{36}/g, ':id') + ' expected ' + status + ', got ' + response.status + ': ' + sanitize(text).slice(0, 700));
-    return { body: text ? JSON.parse(text) : null, headers: response.headers };
+    return { body: raw ? text : text ? JSON.parse(text) : null, headers: response.headers };
   };
   const startMaster = async () => {
     instance = spawnNode([join(server, 'prisma/maintenance-start.js'), '--build-dir', join(buildDirectory, 'dist')], { controlled: true, timeout: 200_000 });
@@ -170,7 +170,7 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       const schema = await readFile(join(server, 'prisma/schema.prisma'), 'utf8');
       const migration = await readFile(join(server, 'prisma/migrations/20261117040000_line_credentials/migration.sql'), 'utf8');
       check(schema.includes('landingCredentialVersion') && migration.includes('landingCredentialVersion'), 'Final rotation migration is not available yet');
-      const sourceFiles = ['prisma/schema.prisma', 'prisma/migrations/20261117040000_line_credentials/migration.sql', 'src/line-credentials/line-credentials.service.ts', 'src/agent-gateway/agent-gateway.service.ts', 'src/nodes/nodes.service.ts'];
+      const sourceFiles = ['prisma/schema.prisma', 'prisma/migrations/20261117040000_line_credentials/migration.sql', 'src/line-credentials/line-credentials.service.ts', 'src/agent-gateway/agent-gateway.service.ts', 'src/nodes/nodes.service.ts', 'src/binaries/binaries.controller.ts', 'src/line-credentials/line-auth-rejections.ts', 'src/system-logs/masking.util.ts'];
       const fingerprint = async () => Object.fromEntries(await Promise.all(sourceFiles.map(async file => [file, createHash('sha256').update(await readFile(join(server, file))).digest('hex')])));
       evidence.sourceBeforeBuild = await fingerprint();
       const config = await createServerBuild(server); buildDirectory = dirname(config);
@@ -232,6 +232,11 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       entry = (await request('/admin/nodes', { method: 'POST', body: { name: 'smoke WS entry', serverHost: '203.0.113.11', communicationMode: 'WS' }, status: 201 })).body;
       landing = (await request('/admin/nodes', { method: 'POST', body: { name: 'smoke HTTP landing', serverHost: '203.0.113.12', communicationMode: 'HTTP' }, status: 201 })).body;
       secrets.add(entry.agentToken); secrets.add(landing.agentToken);
+      check(!/[?&]token=/.test(JSON.stringify([entry.installCommands, landing.installCommands])), 'Generated installers must not put credentials in URLs');
+      await request('/downloads/agent-installer?token=' + encodeURIComponent(entry.agentToken), { auth: null, status: 401 });
+      await request('/downloads/agent-installer?token=' + encodeURIComponent(entry.agentToken), { auth: null, headers: { 'X-Agent-Token': entry.agentToken }, status: 401 });
+      const installer = await request('/downloads/agent-installer?platform=linux-amd64&format=sh', { auth: null, headers: { 'X-Agent-Token': entry.agentToken }, raw: true });
+      check(installer.body.includes(entry.agentToken) && installer.headers.get('cache-control') === 'no-store', 'Header-authorized preset installer must remain functional and uncacheable');
       await connectEntry(); await poll();
       await request('/agent/poll', { method: 'POST', body: heartbeat(), auth: null, headers: { 'X-Agent-Token': secret() }, status: 401 });
       line = (await request('/admin/lines', { method: 'POST', body: { name: 'smoke protocol relay', tag: 'smoke-relay', type: 'RELAY', relayMode: 'PROTOCOL_PROXY', protocolType: 'VMESS', params: { tls: { enabled: false, mode: 'none' } }, entryNodeId: entry.node.id, entryPort: 23455, landingNodeId: landing.node.id, landingPort: 23456, isPublic: true }, status: 201 })).body.line;
@@ -303,6 +308,13 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       check(records.length === 2 && records[0].status === 'REVOKED' && records[0].encryptedPayload === null && records[1].status === 'ACTIVE', 'Old authentication material was not revoked after confirmation');
       check(records[1].encryptedPayload?.startsWith('enc:v1:') && !records[1].encryptedPayload.includes(confirmed.candidate), 'Active credential must remain encrypted at rest');
     });
+    await step('落地拒绝通过真实 HTTP 日志通道按配置与线路计数，重试不重复', async () => {
+      const config = await poll(); rememberConfigSecrets(config.singboxConfig);
+      check(config.needUpdate && typeof config.version === 'number', 'Expected a captured landing configuration');
+      const rejection = { source: 'SINGBOX', level: 'ERROR', module: 'Singbox', message: 'inbound/vmess[smoke-relay-landing]: process connection from 127.0.0.1:40000: bad request', metadata: { configVersion: config.version }, agentInstanceId: 'smoke-auth-rejection', sequence: 1 };
+      await poll(config.version, true, { logs: [rejection, rejection, { ...rejection, sequence: 2 }] });
+      evidence.authRejections = { lineId: line.id, configVersion: config.version, reported: 3, expectedUnique: 2 };
+    });
     await step('节点详情 API 不在安装命令中重新暴露一次性 Agent Token', async () => {
       const detail = (await request('/admin/nodes/' + landing.node.id)).body;
       const exposedPaths = [];
@@ -334,7 +346,10 @@ test('完整 Master 隔离启动、Cookie、WS/HTTP 配置维护冒烟', { skip:
       await stopMaster();
       check(lockPaths.every(file => !existsSync(file)), 'Owned storage lock remained after graceful shutdown');
       for (const text of rawServerLogs) verifyNoSecrets(text);
-      const logs = await telemetry.$queryRawUnsafe('SELECT message, metadata FROM SystemLog');
+      const logs = await telemetry.$queryRawUnsafe('SELECT module, message, metadata FROM SystemLog');
+      const authCounters = logs.filter(item => item.module === 'LineCredentialAuth').map(item => JSON.parse(item.metadata));
+      check(authCounters.reduce((total, item) => total + item.count, 0) === 2 && authCounters.every(item => item.lineId === line.id && item.port === 23456 && item.configVersion === evidence.authRejections.configVersion), 'Landing authentication counters lost scope or duplicated a retried event');
+      evidence.authRejections.persistedUnique = authCounters.reduce((total, item) => total + item.count, 0);
       verifyNoSecrets(logs);
       evidence.logRecordsChecked = logs.length;
       evidence.cleanup = { gracefulShutdown: true, storageLocksReleased: true };

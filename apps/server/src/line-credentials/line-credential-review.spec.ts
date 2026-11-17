@@ -6,7 +6,7 @@ import { PrismaClient, type Prisma, type LineCredentialRotation } from '@prisma/
 import type { PrismaService } from '../prisma/prisma.service';
 import type { TelemetryPrismaService } from '../prisma/telemetry-prisma.service';
 import { AgentService } from '../agent-gateway/agent-gateway.service';
-import type { ConfigSyncData, HeartbeatData } from '../agent-gateway/agent-message';
+import type { AgentLogItem, ConfigSyncData, HeartbeatData } from '../agent-gateway/agent-message';
 import { SystemLogsService } from '../system-logs/system-logs.service';
 import { SSEHubService } from '../system-logs/sse-hub.service';
 import { LinesService } from '../lines/lines.service';
@@ -60,7 +60,7 @@ describe('Independent relay credential security review', () => {
     await prisma.subscription.create({ data: { id: 'review-subscription', userId: 'review-user', planId: 'review-plan', trafficLimitBytes: 1_000_000n } });
     hub = new SSEHubService();
     logs = new SystemLogsService({ systemLog: { createMany: persisted } } as unknown as TelemetryPrismaService, prisma as PrismaService, hub);
-    credentials = new LineCredentialsService(prisma as PrismaService);
+    credentials = new LineCredentialsService(prisma as PrismaService, logs);
     gateway = new AgentService(prisma as PrismaService, undefined, logs, undefined, undefined, undefined, credentials);
     credentials.setDispatcher(dispatch);
   });
@@ -218,6 +218,33 @@ describe('Independent relay credential security review', () => {
     }
     await prisma.node.update({ where: { id: 'entry' }, data: { configOverride: JSON.stringify({ log: { level: 'warn' } }) } });
     await complete();
+  });
+
+  it('relay landing rejection counts use the captured node/version/tag and never persist supplied identity text', async () => {
+    await complete();
+    const payload = await generated('landing');
+    const entryPayload = await generated('entry');
+    const tag = (await row()).landingTag;
+    const identity = await material(1);
+    const rejected: AgentLogItem = { source: 'SINGBOX', level: 'ERROR', module: 'Singbox', message: 'inbound/vmess[' + tag + ']: process connection from 127.0.0.1:40000: bad request', metadata: { configVersion: payload.version }, sequence: 1, agentInstanceId: 'counter-fixture' };
+    const broadcast = jest.spyOn(hub, 'publish');
+    await gateway.handleLogReport('entry', { logs: [{ ...rejected, metadata: { configVersion: entryPayload.version } }] });
+    await gateway.handleLogReport('landing', { logs: [{ ...rejected, source: 'AGENT' }, { ...rejected, metadata: { configVersion: payload.version + 999 } }, { ...rejected, sequence: undefined, agentInstanceId: undefined }] });
+    await gateway.handleLogReport('landing', { logs: [rejected, rejected, { ...rejected, sequence: 2 }] });
+    await credentials.onModuleDestroy();
+    await logs.flush();
+    const calls = persisted.mock.calls as unknown as Array<[{ data: Array<{ module: string; message: string; metadata: string }> }]>;
+    const writes = calls.flatMap(([call]) => call.data);
+    const counters = writes.filter(log => log.module === 'LineCredentialAuth');
+    expect(counters.length).toBeGreaterThan(0);
+    expect(counters.reduce((total, log) => total + Number(JSON.parse(log.metadata).count), 0)).toBe(2);
+    for (const log of counters) {
+      expect(JSON.parse(log.metadata)).toMatchObject({ lineId: RELAY, port: 25101, protocol: 'vmess', configVersion: payload.version });
+      expect(log.message).toBe('Relay landing authentication rejected');
+    }
+    const output = JSON.stringify({ counters, broadcasts: broadcast.mock.calls });
+    expect(output).not.toContain(identity.credential);
+    expect(JSON.stringify(counters)).not.toContain('40000');
   });
 
   it('control: shared target keeps another source and its users while one source rotates', async () => {

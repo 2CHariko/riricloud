@@ -1648,6 +1648,8 @@ export class AgentService implements OnModuleDestroy, OnModuleInit {
       const source = item.source === 'SINGBOX' ? 'SINGBOX' : 'AGENT';
       const itemSeverity = this.logSeverity(item.level);
       const isSingbox = source === 'SINGBOX';
+      // 认证拒绝仅保留安全计数摘要，避免原始错误中出现客户端尝试的身份。
+      if (this.lineCredentials?.observeAuthenticationRejection?.(nodeId, item)) continue;
       if (isSingbox && itemSeverity < minimumSeverity) {
         this.systemLogsService.recordFiltered?.();
         continue;

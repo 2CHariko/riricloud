@@ -91,6 +91,7 @@
 Agent 心跳写入 `TrafficLog` 时，Master 会优先关联该节点排序最靠前的 ACTIVE 入口线路；没有匹配线路时保留 `lineId=null`。聚合历史流水时会按节点首选 ACTIVE 入口线路回退归组，仍无法归属的数据标记为“未分配线路（节点直连）”。
 
 #### 节点管理
+- `GET /downloads/agent-installer`：仅通过 `X-Agent-Token` Header 鉴权，按 `platform/mode/format` 渲染预配置安装脚本并返回 `Cache-Control: no-store`；存在 `token` query 时直接返回 `401`，即使同时带有效 Header 也拒绝，避免凭据进入 URL、历史与访问日志。创建/轮换响应中的原生一键命令使用 Header 下载，保留免交互预配置功能。
 - `GET /admin/nodes`：获取所有节点详情（不返回 AgentToken，包含遥测状态、承载线路摘要与派生端口）。返回字段包含网络可达性 `reachability`（`PUBLIC` | `NAT`）。启动 bootstrap 会自动创建 `isLocal=true` 的 `Master-Local` 系统节点；Docker/发行包默认由 Master 内置 Agent 自动上线。⭐
 - `GET /admin/nodes/:id`：获取单个节点详情（含承载线路、入口/出口角色、派生端口、安装命令、Agent/内核版本画像与最近探针快照）。⭐ 响应节点对象包含加性字段 `pendingVersionConfirm`（可选，向后兼容）：升级任务完成但心跳上报的 `agentVersion` 尚未达到目标版本时的待确认信息 `{ taskId, expectedVersion, completedAt }`，用于提示“Agent 重启可能失败”；版本对账窗口为主控侧 15 分钟，确认或超时后字段回到 `null`。同时返回 `singboxLogMode`（`NORMAL`/`INFO`/`DEBUG`，已过期诊断会折算为 `NORMAL`）、`singboxLogModeUntil`、`supportsSingboxLogCapture` 与 `supportsAgentLogRotation`。WS 协议契约本身无变更。普通详情与列表不返回 AgentToken 明文、密文或哈希，详情安装命令使用终端输入凭据，保留独立且需管理员鉴权的预配置脚本/离线包下载入口。安装命令的公开地址优先使用系统设置 `publicBaseUrl`，其次使用 `RIRICLOUD_PUBLIC_URL`，最后使用当前请求的 `X-Forwarded-Proto` + `X-Forwarded-Host`/`Host` 自动匹配。
 - `GET /admin/nodes/:id/offline-package?platform=<os-arch>`：管理员下载指定节点的完整 Agent 离线安装包（流式压缩包：Windows `.zip`，Linux/macOS `.tar.gz`）。⭐ 需管理员 JWT 鉴权；内嵌该节点预配置的 `config.yaml`、平台二进制与全自动化免交互安装/卸载脚本。
@@ -962,3 +963,11 @@ Master同时最多16个活动任务，每节点最多4个；异步查询开始�
 最终发送配置须证明对应阶段的入站撤销、落地认证或入口出站/路由关系；自定义覆盖接管 inbounds/outbounds/route 时不生成虚假成功。维护期间线路关键变更、节点地址/连通模式/高级覆盖、节点删除和Token轮换在写入事务内检查冲突。网络分区只能报告期望停用及未确认，不能承诺远端立即停机。
 
 凭据保存在按源线路隔离的AES-GCM记录中，UUID/用户名指纹和实际落地节点、入站线路ID共同确认内部统计身份，不按字符串前缀豁免。撤销版本删除认证密文、保留统计指纹；普通合法拨测用户仍正常计量。配置错误、心跳错误与节点日志在进入回执跟踪/日志前按实际下发秘密脱敏；按发生配置版本保留有界历史（最多4096份、秘密文本总计8MiB），未知或已淘汰配置版本只保留安全摘要，不把延迟日志套用新版本秘密集合。
+
+### 6.4 落地拒绝计数与脱敏告警
+
+沿用 Agent 的 log_report/轮询日志，不新增消息或外部告警服务。Master 只从已捕获配置中登记实际使用受管凭据的落地入站，按 nodeId、configVersion、真实 Tag、监听端口及协议匹配；共享 TARGET_LINE 按目标入站线路归组，不能把失败身份猜成某条源线路。
+
+已知 SINGBOX WARN/ERROR 拒绝分支（VLESS 未知 UUID、VMess 认证首包 bad request、Trojan 无回退认证首包、TUIC 未知用户/令牌不符、Naive authorization failed、SS2022 invalid request）只生成固定 SERVER/WARN/LineCredentialAuth 摘要。摘要含 event=relay_landing_auth_rejected、nodeId、lineId、port、protocol、configVersion、count 和 windowStartedAt/windowEndedAt；不保存原始错误、尝试的 UUID/密码、来源 IP 或 URL。首次拒绝立即告警，之后30秒合并增量，5秒维护扫描刷出到期窗口，停机强制刷出；最多1024桶，容量淘汰先结算未发增量。
+
+计数要求 Agent 提供 agentInstanceId/sequence，按进程内最多4096事件、2分钟窗口去重。未知配置、不匹配入站、普通网络/TLS/超时错误、缺失事件身份均不计数。现有内核 Hysteria2 认证失败可走静默 HTTP/3 伪装分支，无法从日志准确统计；没有告警不表示没有拒绝。该观测沿用日志采集/队列的有限容量和尽力投递，不承诺跨 Master 重启或日志丢失后的精确审计账本。

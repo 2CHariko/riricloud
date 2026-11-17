@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, NotFoundException, Optional, Param, Patch, Post, Query, Req, Res, StreamableFile, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, NotFoundException, Optional, Param, Patch, Post, Query, Req, Res, StreamableFile, UnauthorizedException, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { createReadStream } from 'node:fs';
@@ -78,8 +78,8 @@ export class BinariesController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response
   ) {
-    const token = queryToken || headerToken;
-    const node = await this.binaries.findNodeByToken(token);
+    if (queryToken !== undefined) throw new UnauthorizedException('AgentToken 仅允许通过 X-Agent-Token Header 传递');
+    const node = await this.binaries.findNodeByToken(headerToken);
     const target = platformQuery ? `agent-${platformQuery}` : this.binaries.resolveAgentTarget(userAgent);
     const platform = target.replace(/^agent-/, '');
     const requestBaseUrl = getRequestBaseUrl(request);
@@ -95,7 +95,7 @@ export class BinariesController {
       : appendPublicPath(toWebSocketBaseUrl(publicBaseUrl), 'ws/agent');
 
     const preset = {
-      agentToken: token,
+      agentToken: headerToken,
       masterUrl,
       mode
     };

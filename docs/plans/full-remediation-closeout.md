@@ -51,7 +51,7 @@ author: "Codex & Maintainers"
 - [x] 拆分NAT未来WireGuard并逐项复核主线；撤回无证据的历史勾选，保留未完成生产验收记录。
 - [x] 本地完整门禁、脚本回归、维护测试及隔离恢复验收；以gate-submission与维护报告为准。
 - [x] 本轮既定安全门禁通过：pnpm audit high已通过（主代理确认），Go 1.26.11的Windows amd64及Linux amd64/arm64源码可达性扫描均无可达漏洞、exit 0。二进制3项保守告警保留为明确边界，不等同本次门禁失败，不追加全部第三方advisory清零或范围外依赖升级要求。
-- [x] Node 22.23.5全量隔离smoke复跑通过：13阶段全通过、总测试14/14；普通详情/list无Token，轮换一次性新Token及旧401/新201、日志脱敏与停机解锁均通过。
+- [x] Node 22.23.5全量隔离smoke复跑通过：14阶段全通过、总测试15/15；普通详情/list无Token，轮换一次性新Token及旧401/新201、日志脱敏与停机解锁均通过。
 - [ ] 五平台真实执行证据与CI全绿。
 - [ ] 原子提交、PR、自查及合并；完成后机械归档本计划。
 
@@ -74,3 +74,7 @@ author: "Codex & Maintainers"
 - Node 22.23.5维护基线：artifacts/maintenance-node22/result.json与test.log记录21项通过、exit 0；最新gate维护33项通过。artifacts/maintenance-review/run-9dlnWM/report.json为ok:true，包含发行包真实迁移/引导/HTTP 200、运行中拒绝冷备、停机解锁、BACKUP_CREATED→BACKUP_VERIFIED→RESTORE_READY、恢复启动迁移前拒绝及无外网尝试。源码/包/Docker接线由维护回归覆盖，不等于Linux发行包或Docker镜像实际启动通过。
 - artifacts/verification/remediation-smoke.json最新PASSED：Node 22.23.5，2026-11-17 12:37:17—12:37:49（北京时间），13阶段全通过；remediation-smoke-test.log记录总测试14/14。真实AppModule/双库迁移、Cookie、WS/HTTP、维护轮换与中途重启、普通详情/list无Token、轮换一次性返回新Token与旧Token 401/新Token 201通过；71条日志脱敏检查通过，优雅退出释放全部存储锁。Agent为模拟端、网络限制回环、未触及生产，不替代原生认证。旧12/13失败保留于remediation-smoke-red.json，node-token-red.log的2失败/22通过与green日志24/24共同保留复现链。
 - 本轮增量文档与两端Unreleased已维护，gate:docs通过；随后复核并确认主代理已修正文档遗留：DATA_MODELS.md统计凭据、API的固定transit/测速注入/免计费段落及ARCHITECTURE.md全局配额。CI入口专项脚本另有Node 22测试10/10通过（主代理确认），不替代远程CI。五平台远程CI、最终集成提交、PR与合并均未完成，本计划不归档。
+
+- 提交进展：工具链 f982646、主实现38b1d6f已通过钩子提交并推送草稿PR #269。首次CI治理/Web/Agent/安全/脚本及linux-amd64 native成功；Server鉴权夹具依赖本地JWT密钥已复现修复，其余平台原生就绪与macOS回环地址失败正在修正，不以首次失败计完成。新增拒绝计数定向161项及Node22完整Master smoke14阶段/15测试通过。
+
+- 安全增量最终本地gate-closeout.log退出0：Server126套件1757项通过（另11套件105项native单独执行），Web144、脚本107/默认跳过4、维护33全部通过。安装器Header-only回归先7项失败后37/37通过，完整Master smoke真实验证Header下载200与Query/混合凭据401。

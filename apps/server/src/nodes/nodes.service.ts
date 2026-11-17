@@ -562,8 +562,8 @@ export class NodesService {
     const modeParam = mode === 'HTTP' ? 'http' : 'ws';
     const temp = '/tmp/riri-agent-install.sh';
     if (agentToken) {
-      const fullUrl = `${scriptUrl}?token=${encodeURIComponent(agentToken)}&mode=${modeParam}&platform=${platform}`;
-      return `curl -fsSL --location -A 'riri-agent-installer/${platform}' '${fullUrl}' -o ${temp} && sudo sh ${temp}`;
+      const fullUrl = `${scriptUrl}?mode=${modeParam}&platform=${platform}`;
+      return `curl -fsSL --location -A 'riri-agent-installer/${platform}' -H "X-Agent-Token: ${agentToken}" '${fullUrl}' -o ${temp} && sudo sh ${temp}`;
     }
     return `read -r -s -p 'AgentToken: ' RIRI_AGENT_TOKEN; echo; export RIRI_AGENT_TOKEN; curl -fsSL --location -A 'riri-agent-installer/${platform}' -H "X-Agent-Token: $RIRI_AGENT_TOKEN" '${scriptUrl}?mode=${modeParam}' -o ${temp} && sh ${temp} --master='${master}' && rm -f ${temp}`;
   }
@@ -575,8 +575,8 @@ export class NodesService {
     const scriptUrl = this.buildInstallerScriptUrl(publicBaseUrl);
     const modeParam = mode === 'HTTP' ? 'http' : 'ws';
     if (agentToken) {
-      const fullUrl = `${scriptUrl}?token=${encodeURIComponent(agentToken)}&mode=${modeParam}&platform=${platform}&format=bat`;
-      return `powershell -NoProfile -ExecutionPolicy Bypass -Command "curl.exe -fsSL --location -A 'riri-agent-installer/${platform}' '${fullUrl}' -o \\"$env:TEMP\\\\riri-install.bat\\"; & \\"$env:TEMP\\\\riri-install.bat\\""`;
+      const fullUrl = `${scriptUrl}?mode=${modeParam}&platform=${platform}&format=bat`;
+      return `powershell -NoProfile -ExecutionPolicy Bypass -Command "curl.exe -fsSL --location -A 'riri-agent-installer/${platform}' -H 'X-Agent-Token: ${agentToken}' '${fullUrl}' -o \\"$env:TEMP\\\\riri-install.bat\\"; & \\"$env:TEMP\\\\riri-install.bat\\""`;
     }
     return `$Token = Read-Host 'AgentToken'; curl.exe -fsSL --location -A 'riri-agent-installer/${platform}' -H "X-Agent-Token: $Token" '${scriptUrl}?mode=${modeParam}' -o "$env:TEMP\\riri-install.ps1"; powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\\riri-install.ps1" -MasterUrl '${master}' -AgentToken $Token; Remove-Item "$env:TEMP\\riri-install.ps1" -ErrorAction SilentlyContinue`;
   }

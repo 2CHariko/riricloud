@@ -7,7 +7,7 @@ const correlationKey = randomBytes(32);
 const ANSI_CONTROL_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const SENSITIVE_KEY_PATTERN = /(password|passwd|pwd|token|secret|authorization|credential|cookie|privatekey|private.key|publickey|api[-_]?key|jwt|hash|uuid)/i;
 const TARGET_KEY_PATTERN = /^(?:target|host|hostname|serverHost|clientIp|ip|address|addresses|remoteAddress|destination|email)$/i;
-const CORRELATION_KEY_PATTERN = /^(?:agentInstanceId|kernelInstanceId|operationId|taskId|traceId|instanceId|nodeId|userId)$/;
+const CORRELATION_KEY_PATTERN = /^(?:agentInstanceId|kernelInstanceId|operationId|taskId|traceId|instanceId|nodeId|userId|lineId)$/;
 const DOMAIN_PATTERN = /(?<![@\w-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?![\w-])/gi;
 const LOG_IDENTITY_KEYS = new Set(['receivedAt', 'occurredAt', 'timeQuality', 'sequence', 'agentInstanceId', 'kernelInstanceId', 'operationId', 'taskId', 'event', 'configVersion', 'status', 'trigger']);
 

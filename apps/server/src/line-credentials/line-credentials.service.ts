@@ -3,9 +3,10 @@ import { Prisma, type LineCredentialRotation } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemLogsService } from '../system-logs/system-logs.service';
-import type { ConfigApplyResultData, ConfigSyncData, HeartbeatData } from '../agent-gateway/agent-message';
-import { proveRelayConfiguration } from './line-credential-config-proof';
+import type { AgentLogItem, ConfigApplyResultData, ConfigSyncData, HeartbeatData } from '../agent-gateway/agent-message';
+import { inboundUsesCredential, proveRelayConfiguration } from './line-credential-config-proof';
 import { configDiagnosticSecrets, redactConfigDiagnostic, type ConfigDiagnosticSecrets } from './line-credential-diagnostics';
+import { matchRelayAuthRejection, RelayAuthRejectionCounter, type LandingAuthTarget } from './line-auth-rejections';
 import { resolveLineTags } from '../common/line-tags';
 import { relayLineSelect, relayTopology, type RelayLine } from './line-credential-topology';
 import { credentialFingerprint, credentialVersionForRotation, expectedRotationNode, newRelayCredential, revealRelayCredential, ROTATION_STAGE_TIMEOUT_MS, RUNNING_ROTATION_STAGES, type RelayCredentialView } from './line-credential.types';
@@ -21,7 +22,9 @@ export class LineCredentialsService implements OnModuleInit, OnModuleDestroy {
   private stopped = false;
   private readonly lineLocks = new Map<string, Promise<LineCredentialRotation>>();
   private readonly snapshots = new WeakMap<ConfigSyncData, RelayCredentialView[]>();
-  private readonly diagnostics = new Map<string, { secrets: ConfigDiagnosticSecrets; bytes: number }>();
+  private readonly diagnostics = new Map<string, { secrets: ConfigDiagnosticSecrets; bytes: number; authTargets: Map<string, LandingAuthTarget> }>();
+  private readonly authRejections = new RelayAuthRejectionCounter();
+  private readonly observedAuthEvents = new Map<string, number>();
   private diagnosticBytes = 0;
   constructor(private readonly prisma: PrismaService, @Optional() private readonly logs?: SystemLogsService) {}
   setDispatcher(dispatcher: (ids: string[]) => Promise<void>) { this.dispatcher = dispatcher; }
@@ -32,7 +35,17 @@ export class LineCredentialsService implements OnModuleInit, OnModuleDestroy {
     this.timer = setInterval(() => { if (!this.work) this.work = this.sweep().catch(() => this.logger.warn('Relay credential reconciliation failed')).finally(() => { this.work = undefined; }); }, 5000);
     this.timer.unref();
   }
-  async onModuleDestroy() { this.stopped = true; if (this.timer) clearInterval(this.timer); await this.work; this.dispatcher = undefined; this.diagnostics.clear(); }
+  async onModuleDestroy() {
+    this.stopped = true;
+    if (this.timer) clearInterval(this.timer);
+    await this.work;
+    this.flushAuthenticationRejections(true);
+    await this.logs?.flush?.();
+    this.authRejections.clear();
+    this.observedAuthEvents.clear();
+    this.dispatcher = undefined;
+    this.diagnostics.clear();
+  }
 
   private async loadLine(lineId: string) {
     const line = await this.prisma.line.findUnique({ where: { id: lineId }, select: credentialLineSelect });
@@ -140,9 +153,23 @@ export class LineCredentialsService implements OnModuleInit, OnModuleDestroy {
   async capture(nodeId: string, payload: ConfigSyncData) {
     const views = this.snapshots.get(payload) ?? [];
     const verified: RelayCredentialView[] = [];
+    const authTargets = new Map<string, LandingAuthTarget>();
     for (const view of views) {
       const row = await this.prisma.lineCredentialRotation.findUnique({ where: { id: view.rotationId } });
       if (!row || row.operationId !== view.operationId || row.stage !== view.stage || row.targetVersion !== view.targetVersion) return false;
+      // 仅登记本次真实配置里确实使用受管凭据的落地入站；共享目标按目标线路归组。
+      if (row.landingNodeId === nodeId && view.credential && Array.isArray(payload.singboxConfig.inbounds)) {
+        for (const value of payload.singboxConfig.inbounds) {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+          const inbound = value as Record<string, unknown>;
+          const tag = inbound.tag;
+          if (typeof tag !== 'string' || (tag !== row.landingTag && tag !== row.landingTag + '-inner') ||
+              typeof inbound.type !== 'string' || typeof inbound.listen_port !== 'number' ||
+              !Number.isSafeInteger(inbound.listen_port) || inbound.listen_port < 1 || inbound.listen_port > 65535 ||
+              !inboundUsesCredential(inbound, view.credential)) continue;
+          authTargets.set(tag, { lineId: row.targetLineId ?? row.lineId, port: inbound.listen_port, protocol: inbound.type });
+        }
+      }
       if (view.stage === 'CONFIRMED' || expectedRotationNode(view) !== nodeId) continue;
       let oldCredential = null;
       if (row.stage === 'RETIRING_PREVIOUS_LANDING' && row.fromVersion !== null) {
@@ -159,10 +186,11 @@ export class LineCredentialsService implements OnModuleInit, OnModuleDestroy {
     if (!await this.recordConfig(nodeId, payload.version, verified)) return false;
     const key = nodeId + ':' + payload.version;
     const secrets = configDiagnosticSecrets(payload.singboxConfig);
-    const bytes = secrets.values.reduce((total, value) => total + Buffer.byteLength(value, 'utf8'), 0);
+    const bytes = secrets.values.reduce((total, value) => total + Buffer.byteLength(value, 'utf8'), 0) +
+      [...authTargets].reduce((total, [tag, target]) => total + Buffer.byteLength(tag + target.lineId + target.protocol, 'utf8') + 64, 0);
     this.diagnosticBytes -= this.diagnostics.get(key)?.bytes ?? 0;
     this.diagnostics.delete(key);
-    this.diagnostics.set(key, { secrets, bytes });
+    this.diagnostics.set(key, { secrets, bytes, authTargets });
     this.diagnosticBytes += bytes;
     // 历史配置按发生版本保护延迟日志；超过有界缓存的版本只能输出安全摘要。
     while (this.diagnostics.size > 4096 || this.diagnosticBytes > 8 * 1024 * 1024) {
@@ -190,6 +218,42 @@ export class LineCredentialsService implements OnModuleInit, OnModuleDestroy {
     }
     return true;
   }
+  observeAuthenticationRejection(nodeId: string, item: AgentLogItem): boolean {
+    if (this.stopped || item.source !== 'SINGBOX' || !['WARN', 'ERROR'].includes(item.level)) return false;
+    const version = item.metadata?.configVersion;
+    const sequence = item.sequence;
+    const instance = item.agentInstanceId;
+    if (typeof version !== 'number' || !Number.isSafeInteger(version) || version <= 0 ||
+        typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence < 0 ||
+        typeof instance !== 'string' || !instance || instance.length > 128) return false;
+    const known = this.diagnostics.get(nodeId + ':' + version);
+    if (!known?.secrets.complete) return false;
+    const target = matchRelayAuthRejection(item.message, known.authTargets);
+    if (!target) return false;
+    const now = Date.now();
+    // 重试去重仅保留有界时间窗，不把Agent提供的认证文本作为键或持久化内容。
+    for (const [key, time] of this.observedAuthEvents) {
+      if (now - time < 120_000) break;
+      this.observedAuthEvents.delete(key);
+    }
+    const key = JSON.stringify([nodeId, instance, sequence]);
+    if (this.observedAuthEvents.has(key)) return true;
+    if (this.observedAuthEvents.size >= 4096) this.observedAuthEvents.delete(this.observedAuthEvents.keys().next().value!);
+    this.observedAuthEvents.set(key, now);
+    this.emitAuthenticationRejections(this.authRejections.observe(nodeId, version, target, now));
+    return true;
+  }
+  private emitAuthenticationRejections(events: ReturnType<RelayAuthRejectionCounter['flush']>) {
+    for (const event of events) this.logs?.enqueue({
+      source: 'SERVER', level: 'WARN', module: 'LineCredentialAuth', nodeId: event.nodeId,
+      message: 'Relay landing authentication rejected',
+      metadata: { event: 'relay_landing_auth_rejected', ...event }, bypassMinIngestLevel: true
+    });
+  }
+  private flushAuthenticationRejections(force = false) {
+    this.emitAuthenticationRejections(this.authRejections.flush(Date.now(), force));
+  }
+
   sanitizeLog(nodeId: string, message: string, configVersion?: unknown) {
     const known = typeof configVersion === 'number' && Number.isSafeInteger(configVersion) ? this.diagnostics.get(nodeId + ':' + configVersion) : undefined;
     return known ? redactConfigDiagnostic(message, known.secrets) : 'Agent diagnostic unavailable for an unrecognized configuration version';
@@ -257,6 +321,7 @@ export class LineCredentialsService implements OnModuleInit, OnModuleDestroy {
     return { ...current, transitionApplied: changed.count > 0 };
   }
   async sweep() {
+    this.flushAuthenticationRejections();
     const rows = await this.prisma.lineCredentialRotation.findMany({ where: { stage: { not: 'CONFIRMED' } } });
     const targets = new Set<string>();
     for (const row of rows) {

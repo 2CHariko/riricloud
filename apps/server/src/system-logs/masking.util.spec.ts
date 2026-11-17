@@ -44,7 +44,7 @@ describe('masking.util', () => {
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiYWRtaW4ifQ.signature';
     expect(maskSensitiveString(`authentication failed ${credential} ${jwt}`)).not.toContain(credential);
     expect(maskSensitiveString(`authentication failed ${jwt}`)).not.toContain(jwt);
-    expect(sanitizeLogMetadata({ uuid: credential, hash: 'password-hash', operationId: credential, taskId: credential, kernelInstanceId: credential })).toEqual({ uuid: '***', hash: '***', operationId: credential, taskId: credential, kernelInstanceId: credential });
+    expect(sanitizeLogMetadata({ uuid: credential, hash: 'password-hash', operationId: credential, taskId: credential, kernelInstanceId: credential, lineId: credential })).toEqual({ uuid: '***', hash: '***', operationId: credential, taskId: credential, kernelInstanceId: credential, lineId: credential });
   });
   it('Cookie多项与非UUID形态uuid赋值也完整遮蔽', () => {
     const output = maskSensitiveString('Cookie: theme=dark; session=secret-session; csrf=secret-csrf');
