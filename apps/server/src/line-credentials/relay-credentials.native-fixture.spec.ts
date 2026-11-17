@@ -2,12 +2,15 @@ import { randomBytes } from 'node:crypto';
 import { createSocket } from 'node:dgram';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import network from 'node:net';
+import fileSystem from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KernelExecutionError, ManagedKernelProcess } from '../client-kernels/kernel-process';
 import { KernelReadiness } from '../probe/executors/kernel-readiness';
 import { reserveLoopbackPort } from '../probe/executors/proxy-http';
-import { RelayNativeFixture, type NativeRelayProtocol } from './relay-credentials.native-fixture';
+import { assertReleased, RelayNativeFixture, type NativeRelayProtocol } from './relay-credentials.native-fixture';
 
 type Port = { number: number; udp: boolean };
 type FixtureInternals = {
@@ -155,5 +158,79 @@ describe('relay native fixture startup barrier', () => {
     expect(ready).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledTimes(1);
     expect(managed.stop).toHaveBeenCalled();
+  });
+});
+
+describe('relay native fixture listener cleanup', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  afterEach(() => { Object.defineProperty(process, 'platform', platform); jest.restoreAllMocks(); });
+
+  function linuxBindConflict(code = 'EADDRINUSE') {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+    return jest.spyOn(network, 'createServer').mockImplementation(() => {
+      const server = new EventEmitter();
+      Object.assign(server, { listen: () => {
+        queueMicrotask(() => server.emit('error', Object.assign(new Error(code), { code })));
+        return server;
+      } });
+      return server as ReturnType<typeof createServer>;
+    });
+  }
+  const row = (port: number, state: string, ipv6 = false) =>
+    ' 0: ' + (ipv6 ? '00000000000000000000000001000000' : '0100007F') + ':' + port.toString(16).toUpperCase().padStart(4, '0')
+    + ' 0100007F:1234 ' + state + ' 0:0 0:0 0 0 0 0';
+  function tcpTables(ipv4: string[], ipv6: string[] = []) {
+    return jest.spyOn(fileSystem, 'readFile').mockImplementation(async file =>
+      ' sl local_address rem_address st\n' + (String(file) === '/proc/net/tcp' ? ipv4 : ipv6).join('\n') + '\n');
+  }
+
+  it('accepts free TCP and UDP ports using the original rebind assertion', async () => {
+    const port = await reserveLoopbackPort();
+    await expect(assertReleased({ number: port, udp: false })).resolves.toBeUndefined();
+    await expect(assertReleased({ number: port, udp: true })).resolves.toBeUndefined();
+  });
+  it('still rejects a real live TCP listener', async () => {
+    const server = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = (server.address() as { port: number }).port;
+      await expect(assertReleased({ number: port, udp: false })).rejects.toThrow('NATIVE_LISTENER_NOT_RELEASED');
+      expect(server.listening).toBe(true);
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+  it('still rejects a real live UDP socket', async () => {
+    const socket = createSocket('udp4');
+    await new Promise<void>(resolve => socket.bind(0, '127.0.0.1', resolve));
+    try {
+      await expect(assertReleased({ number: socket.address().port, udp: true })).rejects.toThrow('NATIVE_LISTENER_NOT_RELEASED');
+    } finally { await new Promise<void>(resolve => socket.close(resolve)); }
+  });
+  it('accepts a confirmed Linux TIME_WAIT bind conflict without extending the cleanup deadline', async () => {
+    const binding = linuxBindConflict();
+    const tables = tcpTables([row(23456, '06')]);
+    await expect(assertReleased({ number: 23456, udp: false })).resolves.toBeUndefined();
+    expect(binding).toHaveBeenCalledTimes(1);
+    expect(tables.mock.calls.map(([file]) => file)).toEqual(['/proc/net/tcp', '/proc/net/tcp6']);
+  });
+  it.each([false, true])('rejects TIME_WAIT when an IPv6=%s LISTEN still exists at the same port', async ipv6 => {
+    linuxBindConflict();
+    tcpTables([row(23456, '06'), ...(!ipv6 ? [row(23456, '0A')] : [])], ipv6 ? [row(23456, '0A', true)] : []);
+    await expect(assertReleased({ number: 23456, udp: false })).rejects.toThrow('NATIVE_LISTENER_NOT_RELEASED');
+  });
+  it('does not treat another port TIME_WAIT or an unexplained bind conflict as proof of cleanup', async () => {
+    linuxBindConflict();
+    tcpTables([row(23457, '06'), row(23456, '01')]);
+    await expect(assertReleased({ number: 23456, udp: false })).rejects.toThrow('NATIVE_LISTENER_NOT_RELEASED');
+  });
+  it('fails closed if either kernel socket table cannot be read', async () => {
+    linuxBindConflict();
+    jest.spyOn(fileSystem, 'readFile').mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(assertReleased({ number: 23456, udp: false })).rejects.toMatchObject({ code: 'EACCES' });
+  });
+  it('does not turn a bind permission error into successful TIME_WAIT cleanup', async () => {
+    linuxBindConflict('EACCES');
+    const tables = tcpTables([row(23456, '06')]);
+    await expect(assertReleased({ number: 23456, udp: false })).rejects.toMatchObject({ code: 'EACCES' });
+    expect(tables).not.toHaveBeenCalled();
   });
 });

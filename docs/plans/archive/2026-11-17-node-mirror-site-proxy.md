@@ -1,18 +1,18 @@
 ---
 title: "实时节点镜像站与 Agent 流式代理"
 type: plan
-status: active
-target_version: "Unreleased"
+status: completed
+target_version: Unreleased
 updated_at: "2026-11-17"
 created_at: "2026-09-09"
 author: "Codex & Maintainers"
+archived_at: "2026-11-17"
 ---
-
 # 实时节点镜像站与 Agent 流式代理
 
 ## 2026-11-17 复核口径
 
-本轮以实际源码、受控测试及本地工件更新勾选，不沿用原 93/123 直接推定完成。已实现/已有隔离测试与真实外部验收分别记录；下文历史门禁只描述其原阶段。真实节点出口、GitHub 现网、上线权限/监控和回滚统一转入 [镜像部署验收计划](./node-mirror-deployment-acceptance.md)，保持未完成。本轮不部署、不启用生产 PUBLIC，也不执行视觉测试。
+本轮以实际源码、受控测试及本地工件更新勾选，不沿用原 93/123 直接推定完成。已实现/已有隔离测试与真实外部验收分别记录；下文历史门禁只描述其原阶段。真实节点出口、GitHub 现网、上线权限/监控和回滚统一转入 [镜像部署验收计划](../node-mirror-deployment-acceptance.md)，保持未完成。本轮不部署、不启用生产 PUBLIC，也不执行视觉测试。
 
 ## 目标与背景
 
@@ -188,13 +188,13 @@ Browser
 - [x] 结束/错误/超时/关闭/撤销统一收尾一次，迟到启动句柄立即清理；Token 提交失败不提前撤销，成功撤销后活动流停止。
 - [x] 分享路由优先于 slug 通配路由；真实 Nest 路由用例覆盖 GET/HEAD 和通配路径数组。
 - [x] 本轮完整本地 `pnpm gate` 已退出 0，证据为 `artifacts/verification/gate-submission.log`；镜像输入、容量、进程及网关套件均 PASS，Agent 与脚本回归通过。
-- [ ] 将本轮输出绑定最终集成提交，并由主代理决定机械归档；工具链提交 `f982646` 已存在，其余集成尚未提交。本次不执行归档。
+- [x] 本轮镜像输出已绑定主实现38b1d6f与最终生产修复82c163e；镜像6套件173项、本地gate-final-ready及Agent/脚本通过，代码文档契约一致；外部部署验收保持独立未完成。本代码计划可按机械命令归档。
 
 ### 外部端到端验收（独立承接）
 
-原“不同节点出口 IP”“GitHub Raw/API/Release/Range”“Release 重定向仍走指定节点”“HTML/Cookie/内链能力边界”四项迁至 [部署验收 A2—A5](./node-mirror-deployment-acceptance.md)，均未完成；测试站点应受维护者控制。隔离夹具不能替代公网实测。
+原“不同节点出口 IP”“GitHub Raw/API/Release/Range”“Release 重定向仍走指定节点”“HTML/Cookie/内链能力边界”四项迁至 [部署验收 A2—A5](../node-mirror-deployment-acceptance.md)，均未完成；测试站点应受维护者控制。隔离夹具不能替代公网实测。
 
-原已勾选门禁为历史记录，本轮完整本地 gate 与文档一致性核对均已通过；最终集成提交绑定与归档决定仍见未完成项。
+原已勾选门禁为历史记录；本轮完整本地gate、最终集成提交绑定与文档一致性核对均已通过，外部验收仍由独立计划承接。
 
 ## 文档与版本同步
 
@@ -209,7 +209,7 @@ Browser
 
 ## 发布、回滚与运维交接
 
-原发布前备份、Master/Agent 滚动升级、旧 Agent 能力拒绝、先 ADMIN/SHARE 后 PUBLIC、运行监控、滥用处置和回滚七项已迁至 [部署验收 A6—A12](./node-mirror-deployment-acceptance.md)。其中代码已有能力拒绝、默认 disabled、撤销和清理回归，但部署行为本身没有执行证明；不得仅因代码通过而勾选生产项。
+原发布前备份、Master/Agent 滚动升级、旧 Agent 能力拒绝、先 ADMIN/SHARE 后 PUBLIC、运行监控、滥用处置和回滚七项已迁至 [部署验收 A6—A12](../node-mirror-deployment-acceptance.md)。其中代码已有能力拒绝、默认 disabled、撤销和清理回归，但部署行为本身没有执行证明；不得仅因代码通过而勾选生产项。
 
 ## 验收记录（区分历史与本轮）
 

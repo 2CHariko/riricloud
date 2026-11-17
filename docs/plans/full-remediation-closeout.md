@@ -51,32 +51,21 @@ author: "Codex & Maintainers"
 - [x] 拆分NAT未来WireGuard并逐项复核主线；撤回无证据的历史勾选，保留未完成生产验收记录。
 - [x] 本地完整门禁、脚本回归、维护测试及隔离恢复验收；以gate-submission与维护报告为准。
 - [x] 本轮既定安全门禁通过：pnpm audit high已通过（主代理确认），Go 1.26.11的Windows amd64及Linux amd64/arm64源码可达性扫描均无可达漏洞、exit 0。二进制3项保守告警保留为明确边界，不等同本次门禁失败，不追加全部第三方advisory清零或范围外依赖升级要求。
-- [x] Node 22.23.5全量隔离smoke复跑通过：14阶段全通过、总测试15/15；普通详情/list无Token，轮换一次性新Token及旧401/新201、日志脱敏与停机解锁均通过。
+- [x] Node 22.23.5全量隔离smoke复跑通过：15阶段全通过、总测试16/16；普通详情/list无Token，轮换一次性新Token及旧401/新201、日志脱敏与停机解锁均通过。
 - [ ] 五平台真实执行证据与CI全绿。
 - [ ] 原子提交、PR、自查及合并；完成后机械归档本计划。
 
 ## 验收记录
 
-- 起点：main 63e3c05，Master v0.9.19 / Agent v0.8.7。
-- 规划阶段：版本/文档/i18n检查通过；Web展开13文件102用例，95通过7失败。失败指向Zod适配器测试导入、设置工具依赖及代理池脆弱源码断言。
-- 生产流量账务观察、真实外部节点出口及WireGuard未来扩展保持独立未完成，不以隔离模拟或交叉编译替代。
+- 实施基线：main 63e3c05，Master v0.9.19 / Agent v0.8.7；本轮仅维护两端Unreleased，不发版。
+- 实施提交：f982646工具链、38b1d6f主实现、000eb91原生就绪、2ddf895拒绝计数及Header鉴权、82c163e拨测计量/节点关系脱敏与真实两跳。
+- 本地完整门禁：gate-final-ready.log退出0。Server126套件1766项通过，12套件113项native独立执行；Web145；脚本107通过、4项按条件默认跳过；维护33。英日各4246/4246，lint/build/Go全部通过。前一轮端口及夹具启动失败日志保留，原样完整重跑通过，不把失败计为成功。
+- 完整Master隔离smoke：Node22.23.5，15阶段、16/16；真实AppModule/双库全量迁移、Cookie、WS/HTTP、维护轮换、重启、失败重试、旧凭据拒绝、Header200/Query401、拒绝计数去重、共享SS执行前UNSUPPORTED、节点关系脱敏、停机解锁。Agent内核执行在此smoke为模拟端，真实内核另有native验收。
+- 原生证明：Windows中继认证37、订阅账务4、VMess PROTOCOL_PROXY/TARGET_LINE真实两跳8项分别通过。82c163e候选五平台均完成两跳各8/8与账务各4/4；Linux arm64原生117、Windows/macOS各102项全通过。Linuxamd64另有一次Trojan临时端口重绑定清理失败，后续修复及最终CI另记，不能把候选整轮称为成功。
+- 维护：33项冷备/校验/恢复回归，含双库/WAL/SHM、错误密钥/损坏/目录越界/符号链接/硬链接、互斥及隔离；maintenance-review/run-9dlnWM/report.json实际发行包迁移、HTTP200、冷备→校验→恢复隔离ok:true。Docker接线由回归覆盖，不声称本轮实际启动生产镜像。
+- 安全：等价人工静态审查覆盖生产调用链，两个原始固定身份发现关闭；补修安装器URL Token和节点关联paramsJson泄漏，并明确共享SS无逐用户计量能力时不执行。security-review-final.md/json及node-relation-red-green.json记录范围、快照和复现；未冒称运行Codex Security产品。Go1.26.11源码可达性扫描及pnpm high门禁通过；二进制仍有3项第三方保守告警，未新增忽略。
+- 交付：草稿PR #269已挂接，五平台最终CI及合并仍待当前剩余清理回归闭合。镜像代码计划已机械归档；生产账务观察、外部节点部署验收及NAT/WireGuard待办保持独立未完成。
 
-## 并行写入分工
+## 并行分工
 
-主代理负责凭据数据/网关/轮换与总集成。第一批代理分别处理专用账号拨测、镜像、备份CLI、CI/native、Web测试入口、英文；随后补日语、规范、UI与专项审查。共享package、基准语言、CHANGELOG、总计划由主代理统一集成，避免覆盖。
-
-- 实施复现：网关定向Jest两项均按预期失败，分别证明空订阅隐藏身份与跨中继共享身份。
-
-- 安全审查先复现5项失败，已修复：落地版本持久化防重试旧密钥复活；按配置版本保存有界诊断秘密、未知版本安全摘要；失败CAS未发生不重发。独立审查10项与凭据helper67项全部通过。实际Prisma+网关配置贯通、并发/重启/超时回归15项通过；真实JWT Cookie ADMIN维护API5项通过。
-- Windows原生新增中继凭据37项通过，覆盖VLESS/VMess/Trojan/Hysteria2/TUIC；Linux Naive9项已接入矩阵但仍待实际执行。专用订阅原生账务4项通过（真实Mihomo+受控HTTP代理+生产账务事务，不伪称Go Agent链路）。
-- 提交前最终完整本地gate已退出0（主代理确认，日志artifacts/verification/gate-submission.log）：Server 124套件/1597项通过，另11套件/105项native跳过；Web 144项通过；脚本106项通过/4项默认跳过；维护33项通过。英日各4245/4245覆盖。早期discovery/E2E storage失败已由本次成功日志取代；跳过不计作原生验收。
-- 实际Go工具链与正式构建基线为1.26.11，工具链提交f982646已存在；其余集成仍未提交。artifacts/verification/go1.26.11-audit/summary.json记录Windows amd64及Linux amd64/arm64条件源码扫描无可达漏洞，Linux构建为交叉编译；源码可达性门禁通过；二进制保留grpc/x/net三项保守告警、exit 3，属于记录的分析边界，不等同本轮既定安全门禁失败。
-- Node 22.23.5维护基线：artifacts/maintenance-node22/result.json与test.log记录21项通过、exit 0；最新gate维护33项通过。artifacts/maintenance-review/run-9dlnWM/report.json为ok:true，包含发行包真实迁移/引导/HTTP 200、运行中拒绝冷备、停机解锁、BACKUP_CREATED→BACKUP_VERIFIED→RESTORE_READY、恢复启动迁移前拒绝及无外网尝试。源码/包/Docker接线由维护回归覆盖，不等于Linux发行包或Docker镜像实际启动通过。
-- artifacts/verification/remediation-smoke.json最新PASSED：Node 22.23.5，2026-11-17 12:37:17—12:37:49（北京时间），13阶段全通过；remediation-smoke-test.log记录总测试14/14。真实AppModule/双库迁移、Cookie、WS/HTTP、维护轮换与中途重启、普通详情/list无Token、轮换一次性返回新Token与旧Token 401/新Token 201通过；71条日志脱敏检查通过，优雅退出释放全部存储锁。Agent为模拟端、网络限制回环、未触及生产，不替代原生认证。旧12/13失败保留于remediation-smoke-red.json，node-token-red.log的2失败/22通过与green日志24/24共同保留复现链。
-- 本轮增量文档与两端Unreleased已维护，gate:docs通过；随后复核并确认主代理已修正文档遗留：DATA_MODELS.md统计凭据、API的固定transit/测速注入/免计费段落及ARCHITECTURE.md全局配额。CI入口专项脚本另有Node 22测试10/10通过（主代理确认），不替代远程CI。五平台远程CI、最终集成提交、PR与合并均未完成，本计划不归档。
-
-- 提交进展：工具链 f982646、主实现38b1d6f已通过钩子提交并推送草稿PR #269。首次CI治理/Web/Agent/安全/脚本及linux-amd64 native成功；Server鉴权夹具依赖本地JWT密钥已复现修复，其余平台原生就绪与macOS回环地址失败正在修正，不以首次失败计完成。新增拒绝计数定向161项及Node22完整Master smoke14阶段/15测试通过。
-
-- 安全增量最终本地gate-closeout.log退出0：Server126套件1757项通过（另11套件105项native单独执行），Web144、脚本107/默认跳过4、维护33全部通过。安装器Header-only回归先7项失败后37/37通过，完整Master smoke真实验证Header下载200与Query/混合凭据401。
-
-- 最终本地集成gate-final-ready.log退出0：Server126套件1766项通过，12套件113项native独立执行；Web145、脚本107/默认跳过4、维护33全部通过。英日各4246/4246。此前gate-final-integration的一次端口/子进程启动失败如实保留，不计通过；当前原样完整重跑已通过。最终Master smoke15阶段16/16；节点原始paramsJson泄漏、Header-only安装器、共享SS不可计量、落地拒绝计数均覆盖。
+主代理负责总集成、凭据状态机与配置证明、真实Master联调和交付；子代理分别完成合法订阅拨测、镜像、备份恢复、CI/native、Web测试入口、英文/日文、规范、管理端交互、独立安全审查、规划核对与真实两跳。按互不重叠文件集协作，最终由主代理审核证据和提交。

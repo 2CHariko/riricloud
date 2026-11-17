@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { createServer as createTcpServer, type Socket } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -40,9 +40,9 @@ async function bindPort(port: Port): Promise<boolean> {
     socket.once('error', () => { socket.close(); resolve(false); });
     socket.bind(port.number, LOOPBACK, () => socket.close(() => resolve(true)));
   });
-  return new Promise<boolean>((resolve) => {
+  return new Promise<boolean>((resolve, reject) => {
     const server = createTcpServer();
-    server.once('error', () => resolve(false));
+    server.once('error', (error: NodeJS.ErrnoException) => error.code === 'EADDRINUSE' ? resolve(false) : reject(error));
     server.listen(port.number, LOOPBACK, () => server.close(() => resolve(true)));
   });
 }
@@ -63,15 +63,25 @@ async function freeTcpPort(excluded: Port[]): Promise<Port> {
   while (excluded.some(existing => !existing.udp && existing.number === port.number));
   return port;
 }
-async function assertReleased(port: Port): Promise<void> {
+async function onlyTcpTimeWait(port: number): Promise<boolean> {
+  // Linux 的拨出 socket 不一定设置 SO_REUSEADDR；TIME_WAIT 可阻止重绑，但不是残留监听。
+  // 两张内核表都必须可读，且必须确有该端口的 TIME_WAIT，同时不存在任何 IPv4/IPv6 LISTEN。
+  const tables = await Promise.all(['/proc/net/tcp', '/proc/net/tcp6'].map(file => readFile(file, 'utf8')));
+  const suffix = ':' + port.toString(16).toUpperCase().padStart(4, '0');
+  const sockets = tables.flatMap(table => table.trim().split('\n').slice(1).map(row => row.trim().split(/\s+/)))
+    .filter(fields => fields[1]?.endsWith(suffix));
+  return sockets.some(fields => fields[3] === '06') && sockets.every(fields => fields[3] !== '0A');
+}
+export async function assertReleased(port: Port): Promise<void> {
   for (let attempt = 0; attempt < 30; attempt++) {
     if (await bindPort(port)) return;
+    if (!port.udp && process.platform === 'linux' && await onlyTcpTimeWait(port.number)) return;
     await sleep(50);
   }
   throw new Error('NATIVE_LISTENER_NOT_RELEASED');
 }
 async function stopKernel(child: ManagedKernelProcess, ports: Port[]): Promise<void> {
-  // 同时核验子进程关闭、含秘密的临时目录移除、TCP/UDP 监听可重新绑定。
+  // 同时核验子进程关闭、含秘密的临时目录移除与监听释放；Linux TCP 额外区分 TIME_WAIT。
   await child.stop();
   await child.exited;
   const exited = child.child.exitCode !== null || child.child.signalCode !== null;

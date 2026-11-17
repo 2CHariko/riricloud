@@ -9,7 +9,7 @@ author: "Contributors & Maintainers"
 
 # 节点镜像外部出口与部署验收
 
-承接 [镜像代码计划](./node-mirror-site-proxy.md) 中不能由受控 HTTP/TLS/WS 单测证明的外部端到端与发布事项。全部为未来待验收，本轮没有生产部署授权；不添加功能，不扩大可代理地址，不开放 PUBLIC。
+承接 [镜像代码计划](./archive/2026-11-17-node-mirror-site-proxy.md) 中不能由受控 HTTP/TLS/WS 单测证明的外部端到端与发布事项。全部为未来待验收，本轮没有生产部署授权；不添加功能，不扩大可代理地址，不开放 PUBLIC。
 
 ## 授权与验收清单
 

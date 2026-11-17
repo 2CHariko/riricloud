@@ -24,8 +24,7 @@
 | [无公网 IP 主机（NAT/家宽）作为落地节点与反向穿透隧道全链路实现](./nat-landing-node-reverse-tunnel.md) | `Unreleased` | 2026-09-13 | 25/34 (74%) |
 | [NAT 落地 WireGuard 未来扩展](./nat-wireguard-future.md) | `未排期（未来扩展）` | 2026-11-17 | 0/4 (0%) |
 | [节点镜像外部出口与部署验收](./node-mirror-deployment-acceptance.md) | `部署验收待排期` | 2026-11-17 | 0/12 (0%) |
-| [实时节点镜像站与 Agent 流式代理](./node-mirror-site-proxy.md) | `Unreleased` | 2026-09-09 | 111/112 (99%) |
-| [公开线路与中继落地凭据安全整改](./security-audit-public-relay-credentials.md) | `Unreleased` | 2026-09-08 | 36/43 (84%) |
+| [公开线路与中继落地凭据安全整改](./security-audit-public-relay-credentials.md) | `Unreleased` | 2026-09-08 | 39/43 (91%) |
 | [流量账务与 SQLite 写入链路优化](./traffic-accounting-sqlite-optimization.md) | `现网验收待排期` | 2026-09-03 | 19/20 (95%) |
 
 ---
@@ -35,6 +34,7 @@
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
 | [邮件发送日志统一记录](./archive/2026-11-17-server-mail-logs.md) | `Unreleased` | 2026-11-17 | — |
+| [实时节点镜像站与 Agent 流式代理](./archive/2026-11-17-node-mirror-site-proxy.md) | `Unreleased` | 2026-11-17 | — |
 | [subscription-email-reminders](./archive/2026-11-06-subscription-email-reminders.md) | `Unreleased` | 2026-11-06 | — |
 | [证书关联明细与跳转优化](./archive/2026-10-07-certificate-associations.md) | `Unreleased` | 2026-10-07 | — |
 | [手动证书管理完善](./archive/2026-10-06-certificate-management.md) | `Unreleased` | 2026-10-06 | #253 |

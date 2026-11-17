@@ -117,7 +117,7 @@ describe('订阅拨测资格与写回竞态', () => {
 function taskSetup(f: ReturnType<typeof setup>, beforeResult = () => {}) {
   const engine = { executeBatch: jest.fn(async (requests: ProbeConnectionRequest[], target: ProbeTarget) => {
     beforeResult(); return requests.map((request) => ({ ...measured(request.configHash), targetId: target.id }));
-  }) };
+  }), executeStrictBatch: jest.fn(async () => []) };
   const settings = { getSettings: jest.fn(async () => ({ lineSpeedtestUserId: f.settings.get('lineSpeedtestUserId') ?? null, lineSpeedtestTargetUrl: 'https://example.com/generate_204', lineSpeedtestTimeoutMs: 10000 })) };
   return { engine, tasks: new ProbeTaskService(f.service, engine as unknown as ProbeService, settings as unknown as SettingsService) };
 }
@@ -131,6 +131,7 @@ describe('手动与定时拨测异步流程', () => {
       await tick();
       expect(tasks.results(receipt.taskId).data[0]).toMatchObject({ status: 'UNSUPPORTED', errorCode: 'SPEEDTEST_LINE_UNMETERED', applied: false, latencyMs: null });
       expect(engine.executeBatch).not.toHaveBeenCalled();
+      expect(engine.executeStrictBatch).not.toHaveBeenCalled();
       expect(f.prisma.line.updateMany).not.toHaveBeenCalled();
     } finally { tasks.onModuleDestroy(); }
   });

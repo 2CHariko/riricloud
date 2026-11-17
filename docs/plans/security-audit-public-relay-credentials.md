@@ -41,7 +41,7 @@ author: "Codex Security & Maintainers"
 - [x] 1.4 数据表/唯一约束保存密文、名称/UUID 哈希、候选/激活/撤销版本、operationId 与目标配置版本；迁移本身不植入秘密。
 - [x] 1.5 同线并发创建/轮换去重，状态更新匹配读取时阶段、节点、配置版本及期限；旧失败回执和旧超时扫描不能覆盖新登记/重试，相关 SQLite 用例已存在。
 - [x] 1.6 本轮本地脱敏回归与隔离 smoke 通过：节点详情/list 不重放 Token，轮换仅一次性返回新 Token，旧 Token 401/新 Token 201；失败摘要及 71 条日志无秘密。定向 red 2 项后 green 24/24；Node 22 完整 smoke 13 阶段/14 项通过，证据见下表。
-- [ ] 1.6a 原最终输出面审查继续保留：在最终提交上核对真实节点日志、HTTP/订阅/异常/SSE 的完整脱敏覆盖并记录结果；当前回环模拟 Agent smoke 不外推到未实测输出或生产，完整静态审查见 5.8。
+- [x] 1.6a 已完成最终输出面复核：等价静态审查覆盖HTTP/订阅/错误/日志/SSE调用链，节点Token与原始paramsJson泄漏均有真实Master复现与修复；不把模拟Agent日志外推为生产全量日志采集。原始源码2ddf895的关联参数泄漏与82c163e修复由node-relation-red-green.json对照证明，smoke15阶段16/16及Nodes51/51通过。
 
 ## 里程碑 2：公开线路与合法订阅拨测
 
@@ -51,7 +51,7 @@ author: "Codex Security & Maintainers"
 - [x] 2.4 自建直连、中继仍从 Master 侧按完整线路连接拨测，不新增公网测速身份；EXTERNAL/上游身份保持原契约。
 - [x] 2.5 替代旧临时身份过渡：不生成临时测速用户、不回退固定账号；四个安全错误码与共享结果提示已对接，不展示任意底层异常。
 - [x] 2.6 身份快照与事务内重验已实现，覆盖禁用、未验证邮箱、到期、配额耗尽、无授权、换账号及换凭据；正常入账增量不使任务无效。
-- [ ] 2.7 完成本轮最终真实内核拨测计量：`probe-subscription-accounting.native.spec.ts` 已添加真实请求/错认证/换账号/撤权用例，旧 Windows 8 套件报告不含此文件，仍需当前执行证据；超时/取消等既有测试亦需随最新集成复跑。
+- [x] 2.7 82c163e五平台原生任务均已实际执行专用订阅账务4项，逐断言PASS，普通延迟/strict/超时/取消现有套件随本轮运行。共享SS不可逐用户计量时明确在拨号前拒绝，SS2022 multi-user身份正例保留。整轮CI仍待单独的Linuxamd64临时端口清理修复，不把局部PASS等同整轮成功。
 
 ## 里程碑 3：中继隔离与维护式轮换
 
@@ -84,7 +84,7 @@ author: "Codex Security & Maintainers"
 - [x] 5.6 本轮完整本地 `pnpm gate` 退出 0，六类基础门禁、脚本及维护测试通过；真实双库迁移由维护报告及 smoke 迁移阶段证明。Server 11 套件/105 项 native 与脚本 4 项默认跳过不计作原生成功，最终提交绑定继续由 5.4/5.7 跟踪。
 - [x] 5.6a 本轮既定安全门禁通过：pnpm audit high（主代理确认）及 Go 1.26.11 的 Windows amd64/Linux amd64/arm64 源码可达性扫描均通过。二进制 3 项保守告警、exit 3 继续留档，不等同本次门禁失败，不追加全部第三方 advisory 清零或范围外依赖升级要求。
 - [ ] 5.7 五平台 CI 绑定同一最终提交，记录 workflow/job 与产物；计划仍有未完成项时不归档，不使用 --no-verify 或过滤失败用例。
-- [ ] 5.8 完成 Codex Security 标准扫描或等价静态审查，逐条关闭原始固定身份发现并记录覆盖范围、新问题与剩余风险；不能仅以常量搜索代替审查。
+- [x] 5.8 等价人工静态审查已完成并保留security-review-final.md/json，两个原始固定身份发现关闭；发现并修复安装器URL Token、节点关系原始paramsJson泄漏，明确共享SS拨测计量能力边界。记录已审文件hash、覆盖及未覆盖范围；未宣称运行Codex Security产品。父线补充冻结旧源码/修复源码对照及最终源码指纹。
 
 ## 当前证据映射（2026-11-17）
 
@@ -112,3 +112,5 @@ author: "Codex Security & Maintainers"
 - 追加验证：拒绝计数纯helper138项、Gateway/SQLite集成11项、日志mask7项、Cookie管理员API5项共161项通过。Node22完整Master smoke扩为14阶段、总测试15/15，持久化拒绝增量2且日志无秘密、优雅解锁。安装器Query Token红线正在补Header-only修复，最终静态复审及CI仍待闭合。
 
 - 最终增量：等价静态复审识别共享SS拨测的逐账号计量能力限制，现拨号前返回UNSUPPORTED/SPEEDTEST_LINE_UNMETERED；SS2022 multi-user正常，HTTP/SOCKS/MIXED与网关强制认证一致。复现7失败后59/59通过。真实Master smoke再发现节点关联paramsJson泄漏，已移除入口/落地/目标原始参数并补51/51单测；最终smoke15阶段16/16，含共享SS真实API无执行/无伪计费。新VMess生产配置两跳native在Windows两模式8/8通过，最终五平台仍等待新提交CI。
+
+- 82c163e候选CI run44048133049逐断言结果：五平台真实两跳各8/8、专用订阅账务各4/4通过；Linux arm64原生117项、Windows/macOS各102项全通过。Linuxamd64业务与认证断言通过，Trojan用例退出后一次临时端口重绑定检查失败，当前保留失败并修复，不将整轮标绿。
