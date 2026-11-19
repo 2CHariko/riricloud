@@ -6,6 +6,8 @@ import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { createServer } from 'node:http';
+import { webReady } from './dev-e2e-readiness.mjs';
 
 const scratch = process.env.PI_SCRATCH_DIR || tmpdir();
 const shellHelper = resolve('scripts/dev-e2e-server.sh').replaceAll('\\', '/');
@@ -39,9 +41,33 @@ test('本次监听标记、存活进程和可达 API 缺一不可', async () => 
 });
 
 test('端口冲突和启动错误优先于旧 HTTP 响应及监听标记', async () => {
-  assert.equal(await startState('HTTP listener ready\nError: listen EADDRINUSE\n'), 'PORT_CONFLICT');
+  assert.equal(await startState('Error: listen EADDRINUSE\n'), 'WAIT');
+  assert.equal(await startState('Error: listen EADDRINUSE\n', { alive: false }), 'EXITED');
+  assert.equal(await startState('{"ok":false,"code":"MASTER_PORT_IN_USE","exitCode":10}\n'), 'PORT_CONFLICT');
+  assert.equal(await startState('{"ok":false,"code":"MAINTENANCE_LOCKED","exitCode":3}\n', { alive: false }), 'LOCKED');
   assert.equal(await startState("Error: Cannot find module 'dist/main'\n"), 'FAILED');
   assert.equal(await startState('Found 2 errors. Watching for file changes.\n'), 'FAILED');
+});
+
+test('旧 Web 代理即使返回同一版本，也不能冒充当前主控', async (t) => {
+  async function server(identity, html = true) {
+    const app = createServer((req, res) => {
+      if (req.url === '/') {
+        res.setHeader('Content-Type', html ? 'text/html' : 'application/json');
+        res.end('<html>Vite</html>');
+      } else {
+        if (identity) res.setHeader('X-Riricloud-E2e-Instance', identity);
+        res.end(JSON.stringify({ version: 'same-version' }));
+      }
+    });
+    await new Promise(resolve => app.listen(0, '127.0.0.1', resolve));
+    t.after(() => { app.closeAllConnections(); app.close(); });
+    return 'http://127.0.0.1:' + app.address().port;
+  }
+  const direct = await server('new');
+  assert.equal(await webReady(await server('old'), direct), false);
+  assert.equal(await webReady(await server('new', false), direct), false);
+  assert.equal(await webReady(await server('new'), direct), true);
 });
 
 test('启动脚本调用隔离配置且不再删除其他 watcher 的编译状态', async () => {
@@ -54,7 +80,8 @@ test('启动脚本调用隔离配置且不再删除其他 watcher 的编译状�
   assert.match(script, /e2e_server_start_state/);
   assert.doesNotMatch(script, /rm -f apps\/server\/\*\.tsbuildinfo/);
   const main = await readFile(resolve('apps/server/src/main.ts'), 'utf8');
-  assert.match(main, /await app\.listen\([^;]+;\s*Logger\.log\('HTTP listener ready', 'Bootstrap'\)/);
+  assert.match(main, /await app\.listen\(/);
+  assert.match(main, /Logger\.log\('HTTP listener ready', 'Bootstrap'\)/);
 });
 
 test('并行 E2E 构建使用不同输出，保留手动主控 dist 并继承正式配置', async () => {

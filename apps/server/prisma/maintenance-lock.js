@@ -49,19 +49,20 @@ function acquireLock(config, options = {}) {
   if (options.inherit && process.env.RIRICLOUD_MAINTENANCE_LEASE) fail('INVALID_LEASE', 'Inherited startup requires the private parent IPC channel.', EXIT.LOCKED);
   const owner = { formatVersion: 1, pid: process.pid, role: options.role || 'maintenance', token: randomBytes(32).toString('hex'), createdAt: new Date().toISOString() };
   const acquired = [];
-  let released = false;
+  let released;
   function release() {
-    if (released) return;
+    if (released !== undefined) return released;
     released = true;
     for (const lock of [...acquired].reverse()) {
       // 外部修改过的锁不属于本次操作，保留供维护者检查。
       try {
         const actual = JSON.parse(fs.readFileSync(path.join(lock, 'owner.json'), 'utf8'));
-        if (actual.token !== owner.token) continue;
+        if (actual.token !== owner.token) { released = false; continue; }
         fs.unlinkSync(path.join(lock, 'owner.json'));
         fs.rmdirSync(lock);
-      } catch { /* 禁止自动抢占异常锁。 */ }
+      } catch { released = false; /* 禁止自动抢占异常锁。 */ }
     }
+    return released;
   }
   try {
     for (const lock of paths) {

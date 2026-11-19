@@ -331,6 +331,7 @@ DIRECT 在当前节点执行；BLIND_FORWARD/PROTOCOL_PROXY 仅在最终落地�
 
 ### 1.4 系统模块 (`/system`)
 - `GET /system/version`：返回主控版本、Agent 独立版本与推荐镜像（`{ version, agentVersion, agentImage }`，见 `docs/VERSIONING.md` §3）。⭐
+  - `dev-e2e` 自启实例额外用 `X-Riricloud-E2e-Instance` 响应头核对 Vite 代理目标；该标识不属于生产 API 或鉴权契约。
 - `GET /system/public-info`：站点公开信息。⭐ 响应 `{ siteName, siteDescription, logoUrl, faviconUrl, siteAnnouncement, siteAnnouncementsJson, footerCopyright, supportTelegramUrl, supportDiscordUrl, supportEmail, supportCustomUrl, registrationEnabled, passwordMinLength, passwordRequireLowercase, passwordRequireUppercase, passwordRequireDigit, passwordRequireSpecial, publicBaseUrl, subscriptionBaseUrl, subscriptionShortLinksEnabled, systemTimezone, customCss, customHeadHtml, emailVerificationEnabled, enforceEmailVerification, captchaMode, turnstileSiteKey }`；不包含 SMTP 凭据、Turnstile Secret、套餐、JWT、Agent、二进制和探针运维私密参数。`passwordMinLength` 与 `passwordRequire*` 构成公开的密码复杂度策略，供注册/改密等表单前端动态校验与占位提示。`customHeadHtml` 是管理员可信边界配置，可能读取当前面板 JWT；默认 CSP 禁止任意 inline script，管理员只应配置已审计资源。
 
 ### 1.5 邮箱验证码与人机验证

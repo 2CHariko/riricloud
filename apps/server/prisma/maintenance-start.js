@@ -53,12 +53,18 @@ async function start(options = {}) {
       const session = lock.bindChild(child);
       currentSession = session;
       child.once('error', reject);
-      child.once('exit', (code, signal) => {
+      child.once('close', (code, signal) => {
         session.detach();
-        if (signal || code !== 0 || (application && !session.closed)) safeToRelease = false;
+        const bindConflict = application && !signal && code === 10 && session.closed && session.closeReason === 'http-bind-conflict';
+        if (!bindConflict && (signal || code !== 0 || (application && !session.closed))) safeToRelease = false;
+        if (bindConflict) return resolve(10);
         resolve(signal || (application && !session.closed) ? 1 : code ?? 1);
       });
     });
+    if (result === 10 && safeToRelease && application) {
+      if (!lock.release()) fail('START_FAILED', 'Could not release all startup locks after HTTP bind failure.', EXIT.IO);
+      fail('MASTER_PORT_IN_USE', 'Master HTTP port is occupied; the application closed and its storage locks were released.', 10);
+    }
     if (result !== 0) fail('START_FAILED', 'A protected startup step failed; inspect retained storage locks.', EXIT.IO);
   }
   try {

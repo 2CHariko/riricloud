@@ -4,6 +4,8 @@
 
 RiriCloud 采用 SQLite 配合 Prisma ORM 进行持久化。Master 启动时会为当前数据库显式开启 **WAL (Write-Ahead Logging)**，并设置 10 秒写锁等待上限；生产环境仍应将数据库放在本地持久化文件系统，避免网络文件系统的锁语义和延迟放大问题。
 
+主库、观测库和运行目录在受保护启动时分别取维护锁。HTTP 监听冲突只在应用确认关闭双库后才能释放本次已有锁并重试；残留锁不等同于 SQLite WAL 锁，也不能靠删除 WAL/SHM 解决。详见 [部署与运维指南 §3.7](./DEPLOYMENT_GUIDE.md#37-停服备份校验与隔离恢复)。
+
 > **落地说明（v0.4.20）**：Prisma 对 SQLite 不支持 `enum` 类型，角色、节点状态、协议、线路类型、线路状态、套餐匹配模式、订阅状态、钱包流水类型与卡密状态在 `schema.prisma` 中落地为 **String 字段 + 默认值**，取值约束由应用层完成（DTO 的 class-validator 与服务层校验）。下方 schema 中的 `enum` 定义视为**逻辑枚举**，实际类型以仓库内 schema.prisma 为准。Line 顶层编排已通过迁移 `20260831100000_line_centric_pipeline` 落地。
 
 ---

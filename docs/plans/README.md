@@ -30,6 +30,7 @@
 
 | 归档规划名称 | 达成版本 | 归档日期 | 关联 PR / 提交 |
 | :--- | :--- | :--- | :--- |
+| [本地 E2E 启动恢复与数据面验收](./archive/2026-11-18-dev-e2e-local-acceptance.md) | `Unreleased` | 2026-11-18 | — |
 | [邮件发送日志统一记录](./archive/2026-11-17-server-mail-logs.md) | `Unreleased` | 2026-11-17 | — |
 | [公开线路与中继落地凭据安全整改](./archive/2026-11-17-security-audit-public-relay-credentials.md) | `Unreleased` | 2026-11-17 | #269 |
 | [实时节点镜像站与 Agent 流式代理](./archive/2026-11-17-node-mirror-site-proxy.md) | `Unreleased` | 2026-11-17 | #269 |

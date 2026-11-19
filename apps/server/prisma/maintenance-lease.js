@@ -28,7 +28,10 @@ function attachParentLease(child, owner, paths) {
     if (message.type === REQUEST && !granted && /^[a-f0-9]{64}$/.test(message.challenge || '') && JSON.stringify(message.paths) === JSON.stringify(paths)) {
       granted = true;
       child.send({ type: GRANT, challenge: message.challenge, parentPid: process.pid }, () => {});
-    } else if (message.type === CLOSED && granted) state.closed = true;
+    } else if (message.type === CLOSED && granted && !state.closed) {
+      state.closed = true;
+      state.closeReason = message.reason;
+    }
   };
   child.on('message', receive);
   state.requestShutdown = () => {
@@ -66,9 +69,9 @@ async function inheritParentLease(paths) {
   return {
     inherited: true,
     onParentLost(handler) { parentLost = handler; },
-    async release() {
+    async release(reason) {
       if (!process.connected) return;
-      await new Promise(resolve => process.send({ type: CLOSED, token: lease.token, pid: process.pid }, () => resolve()));
+      await new Promise(resolve => process.send({ type: CLOSED, token: lease.token, pid: process.pid, reason }, () => resolve()));
       process.removeListener('disconnect', disconnected);
       process.removeListener('message', stop);
     }

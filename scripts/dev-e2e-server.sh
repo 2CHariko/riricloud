@@ -3,9 +3,11 @@
 e2e_server_start_state() {
   local log="$1"
   local pid="$2"
-  if grep -q 'EADDRINUSE' "$log" 2>/dev/null; then
+  if grep -q '^{"ok":false,"code":"MAINTENANCE_LOCKED",' "$log" 2>/dev/null; then
+    printf 'LOCKED\n'
+  elif grep -q '^{"ok":false,"code":"MASTER_PORT_IN_USE",' "$log" 2>/dev/null; then
     printf 'PORT_CONFLICT\n'
-  elif grep -Eq 'Error:|MODULE_NOT_FOUND|Found [1-9][0-9]* errors?\.' "$log" 2>/dev/null; then
+  elif grep -E 'Error:|MODULE_NOT_FOUND|Found [1-9][0-9]* errors?\.' "$log" 2>/dev/null | grep -qv 'EADDRINUSE'; then
     printf 'FAILED\n'
   elif ! kill -0 "$pid" 2>/dev/null; then
     printf 'EXITED\n'

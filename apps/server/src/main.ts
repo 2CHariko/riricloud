@@ -15,7 +15,7 @@ async function bootstrap() {
   const maintenanceLease = await acquireMasterMaintenanceLock();
   const { AppModule } = await import('./app.module');
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
-  registerMaintenanceShutdown(app, maintenanceLease);
+  const shutdown = registerMaintenanceShutdown(app, maintenanceLease);
   configureRequestBodyParser(app);
   app.useWebSocketAdapter(new WsAdapter(app));
   app.setGlobalPrefix('api/v1', {
@@ -55,6 +55,9 @@ async function bootstrap() {
   });
   app.use((request: { path?: string }, response: { setHeader: (name: string, value: string) => void }, next: () => void) => {
     applySecurityHeaders(response, request.path, productionLike);
+    if (process.env.RIRICLOUD_E2E_INSTANCE && request.path === '/api/v1/system/version') {
+      response.setHeader('X-Riricloud-E2e-Instance', process.env.RIRICLOUD_E2E_INSTANCE);
+    }
     next();
   });
 
@@ -71,7 +74,17 @@ async function bootstrap() {
   // Web 面板静态托管与 SPA 回退（存在 web dist 时启用，见 static/web-static.ts）
   registerWebStatic(app);
 
-  await app.listen(process.env.PORT ?? 3000);
+  // 只将 HTTP 监听本身的冲突标为可重试；初始化中的其他绑定失败继续保留锁。
+  await app.init();
+  try {
+    const port = process.env.PORT ?? 3000;
+    if (process.env.RIRICLOUD_E2E_LOOPBACK === '1') await app.listen(port, '127.0.0.1');
+    else await app.listen(port);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
+    await shutdown('http-bind-conflict');
+    return;
+  }
   Logger.log('HTTP listener ready', 'Bootstrap');
 }
 
